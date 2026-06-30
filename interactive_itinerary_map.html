@@ -2240,11 +2240,63 @@
       });
     }
 
+    function focusSegmentPanel(segmentIndex) {
+      requestAnimationFrame(() => {
+        const segmentPanel = pointList.querySelector(`[data-segment-panel="${segmentIndex}"]`);
+        if (segmentPanel) {
+          segmentPanel.focus({ preventScroll: true });
+        }
+      });
+    }
+
+    function activateSegment(segmentIndex, fitAfterDraw = false, focusAfterRender = false) {
+      if (segmentIndex < 0 || segmentIndex >= points.length - 1) return;
+
+      activeSegmentIndex = segmentIndex;
+      clearTemporaryPois();
+      drawSegmentBuffer(segmentIndex, fitAfterDraw);
+      drawSegmentWalkingRoute(segmentIndex);
+      renderList();
+      showSegmentPois(segmentIndex);
+      scrollSegmentPanelIntoView(segmentIndex);
+
+      if (focusAfterRender) {
+        focusSegmentPanel(segmentIndex);
+      }
+    }
+
+    function moveActiveSegment(direction) {
+      if (activeSegmentIndex === null) return;
+
+      const nextSegmentIndex = Math.max(
+        0,
+        Math.min(activeSegmentIndex + direction, points.length - 2)
+      );
+
+      if (nextSegmentIndex === activeSegmentIndex) return;
+      activateSegment(nextSegmentIndex, false, true);
+    }
+
     function selectPointSegment(pointIndex) {
       openSegmentForPoint(pointIndex);
       if (activeSegmentIndex !== null) {
         scrollSegmentPanelIntoView(activeSegmentIndex);
       }
+    }
+
+    function activatePointFromMapOrCard(pointIndex) {
+      if (!points[pointIndex]) return;
+
+      openSegmentForPoint(pointIndex);
+      if (activeSegmentIndex !== null) {
+        scrollSegmentPanelIntoView(activeSegmentIndex);
+      }
+
+      requestAnimationFrame(() => {
+        if (markers[pointIndex]) {
+          markers[pointIndex].openPopup();
+        }
+      });
     }
 
     function addPoiToItinerary(poi, segmentIndex) {
@@ -2778,10 +2830,7 @@
         }
 
         marker.on("click", () => {
-          openSegmentForPoint(index);
-          if (activeSegmentIndex !== null) {
-            scrollSegmentPanelIntoView(activeSegmentIndex);
-          }
+          activatePointFromMapOrCard(index);
         });
 
         markers.push(marker);
@@ -2857,6 +2906,7 @@
           const segmentItem = document.createElement("li");
           segmentItem.className = `segment-control${isActive ? " active" : " collapsed"}`;
           segmentItem.dataset.segmentPanel = index;
+          segmentItem.tabIndex = isActive ? 0 : -1;
           segmentItem.innerHTML = isActive ? `
             <div class="segment-header">
               <strong>Segment ${labelForIndex(index)} → ${labelForIndex(index + 1)}</strong>
@@ -3031,6 +3081,21 @@
       }
     });
 
+    pointList.addEventListener("keydown", event => {
+      if (activeSegmentIndex === null) return;
+      if (event.target.closest("input, textarea, select")) return;
+
+      if (event.key === "ArrowUp" || event.key === "Up") {
+        event.preventDefault();
+        moveActiveSegment(-1);
+      }
+
+      if (event.key === "ArrowDown" || event.key === "Down") {
+        event.preventDefault();
+        moveActiveSegment(1);
+      }
+    });
+
     pointList.addEventListener("click", event => {
       const button = event.target.closest("button");
       if (!button) {
@@ -3040,10 +3105,7 @@
         if (!item) return;
 
         const index = Number.parseInt(item.dataset.index, 10);
-        openSegmentForPoint(index);
-        if (markers[index]) {
-          markers[index].openPopup();
-        }
+        activatePointFromMapOrCard(index);
         return;
       }
 
@@ -3059,12 +3121,7 @@
           renderList();
           setRouteStatus("Expand a segment panel to work with its buffer zone.");
         } else {
-          activeSegmentIndex = segmentIndex;
-          clearTemporaryPois();
-          drawSegmentBuffer(segmentIndex, true);
-          drawSegmentWalkingRoute(segmentIndex);
-          renderList();
-          showSegmentPois(segmentIndex);
+          activateSegment(segmentIndex, true, true);
         }
         return;
       }
