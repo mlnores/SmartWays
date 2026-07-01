@@ -10,3 +10,8 @@
 /interactive_itinerary_map copia 5.html
 /interactive_itinerary_map copia 6.html
 /interactive_itinerary_map copia.html
+.gitignore
+POIs/dataset_metadata.jsonld
+POIs/dump-rurallure_db.sql
+POIs/ECHOES_D7.1.pdf
+POIs/poi.jsonld
