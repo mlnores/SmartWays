@@ -1046,6 +1046,15 @@ const mapElement = document.getElementById("mapCanvas");
       }
     }
 
+    function deactivateSegment() {
+      activeSegmentIndex = null;
+      clearSegmentBuffer();
+      clearSegmentWalkingRouteLayer();
+      clearTemporaryPois();
+      renderList();
+      setRouteStatus("Expand a segment panel to work with its buffer zone.");
+    }
+
     function moveActiveSegment(direction) {
       if (activeSegmentIndex === null) return;
 
@@ -1744,6 +1753,15 @@ const mapElement = document.getElementById("mapCanvas");
     }
 
     map.on("click", event => {
+      if (activeSegmentIndex !== null && segmentBufferLayer) {
+        const activeBuffer = segmentBufferGeometry(activeSegmentIndex);
+        const clickedPoint = turf.point([event.latlng.lng, event.latlng.lat]);
+        if (!activeBuffer || !turf.booleanPointInPolygon(clickedPoint, activeBuffer)) {
+          deactivateSegment();
+        }
+        return;
+      }
+
       const index = addPoint(event.latlng.lat, event.latlng.lng);
       if (index >= 0) {
         activateTab("waypoint");
@@ -1902,11 +1920,7 @@ const mapElement = document.getElementById("mapCanvas");
         const segmentIndex = Number.parseInt(button.dataset.segment, 10);
 
         if (activeSegmentIndex === segmentIndex) {
-          activeSegmentIndex = null;
-          clearSegmentBuffer();
-          clearSegmentWalkingRouteLayer();
-          renderList();
-          setRouteStatus("Expand a segment panel to work with its buffer zone.");
+          deactivateSegment();
         } else {
           activateSegment(segmentIndex, true, true);
         }
