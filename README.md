@@ -14,6 +14,8 @@ The backend is under `backend/` and uses Django, Django REST Framework, and GeoD
 - Link-based POI images.
 - Many-to-many POI/category relationship.
 - Filters for language, category, enabled state, and bounding box.
+- One-shot RurAllure SQL dump import command.
+- Server-rendered POI browser with selected POI details, map, and image carousel.
 - Basic Django admin registration.
 
 ## Setup
@@ -50,6 +52,18 @@ cd backend
 python manage.py migrate
 python manage.py createsuperuser
 python manage.py runserver
+```
+
+The root backend page is available at:
+
+```text
+http://127.0.0.1:8000/
+```
+
+The POI browser page is available at:
+
+```text
+http://127.0.0.1:8000/pois/
 ```
 
 ### Alternative Virtualenv Setup
@@ -146,6 +160,17 @@ Endpoints:
 - `GET|POST /api/category-translations/`
 - `GET|POST /api/poi-images/`
 
+Server-rendered pages:
+
+- `GET /`
+- `GET /pois/`
+
+The POI browser supports `q`, `language`, `page`, and `poi` query parameters. Example:
+
+```text
+http://127.0.0.1:8000/pois/?language=en&q=castle
+```
+
 ## Create A POI
 
 ```bash
@@ -212,6 +237,44 @@ Filter enabled POIs:
 curl "http://127.0.0.1:8000/api/pois/?enabled=true"
 ```
 
+## Import RurAllure POIs
+
+The repository includes a RurAllure PostgreSQL dump under `POI_data/`. Import it into the current Django schema with:
+
+```bash
+cd backend
+python manage.py import_rurallure_dump
+```
+
+The importer reads only the relevant `COPY` sections from `POI_data/dump-rurallure_db.sql` and creates:
+
+- categories and category translations
+- POIs with SRID 4326 point locations
+- POI translations
+- POI/category relations
+- linked POI images
+
+Disabled source POIs are skipped. Imported `created_at` and `updated_at` values use the current import time, not the original dump timestamps.
+
+Dry-run the parser without writing rows:
+
+```bash
+python manage.py import_rurallure_dump --dry-run
+```
+
+Clear existing POI data and import again:
+
+```bash
+python manage.py import_rurallure_dump --clear
+```
+
+Use a custom dump path or image base URL:
+
+```bash
+python manage.py import_rurallure_dump /path/to/dump-rurallure_db.sql
+python manage.py import_rurallure_dump --image-base-url "https://example.com/images/"
+```
+
 ## Tests
 
 Tests require a configured spatial database, either the default SQLite/SpatiaLite setup or PostGIS:
@@ -220,7 +283,3 @@ Tests require a configured spatial database, either the default SQLite/SpatiaLit
 cd backend
 python manage.py test
 ```
-
-## Future Data Import
-
-The SQL dump and metadata in `POI_data/` are intentionally not imported yet. A later import task can map the dump data into the `pois` models and preserve the multilingual and geospatial structure introduced here.

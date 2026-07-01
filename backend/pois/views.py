@@ -3,7 +3,9 @@ import time
 from urllib.parse import quote
 
 from django.contrib.gis.geos import Polygon
+from django.core.paginator import Paginator
 from django.http import JsonResponse
+from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import viewsets
 from rest_framework.exceptions import ParseError, ValidationError
@@ -16,6 +18,7 @@ from .serializers import (
     POIImageSerializer,
     POISerializer,
     POITranslationSerializer,
+    select_translation,
 )
 
 
@@ -154,6 +157,89 @@ def parse_bbox(value):
         raise ValidationError({"bbox": "Latitude values must be between -90 and 90."})
 
     return Polygon.from_bbox((min_lon, min_lat, max_lon, max_lat))
+
+
+def poi_display_title(poi, language_code):
+    translation = select_translation(poi.translations.all(), language_code)
+    return translation.title if translation else f"POI {poi.pk}"
+
+
+def category_display_name(category, language_code):
+    translation = select_translation(category.translations.all(), language_code)
+    return translation.name if translation else category.slug
+
+
+def poi_browser(request):
+    language = request.GET.get("language") or request.GET.get("lang") or "en"
+    query = (request.GET.get("q") or "").strip()
+    selected_id = request.GET.get("poi")
+
+    poi_queryset = POI.objects.prefetch_related("translations").order_by("id")
+    if query:
+        poi_queryset = poi_queryset.filter(translations__title__icontains=query).distinct()
+
+    paginator = Paginator(poi_queryset, 100)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    page_pois = list(page_obj.object_list)
+
+    if selected_id:
+        selected_poi = (
+            POI.objects.prefetch_related(
+                "translations",
+                "images",
+                "categories",
+                "categories__translations",
+            )
+            .filter(pk=selected_id)
+            .first()
+        )
+    else:
+        selected_poi = page_pois[0] if page_pois else None
+        if selected_poi:
+            selected_poi = (
+                POI.objects.prefetch_related(
+                    "translations",
+                    "images",
+                    "categories",
+                    "categories__translations",
+                )
+                .filter(pk=selected_poi.pk)
+                .first()
+            )
+
+    selected_translation = select_translation(selected_poi.translations.all(), language) if selected_poi else None
+    selected_categories = []
+    if selected_poi:
+        selected_categories = [
+            {
+                "slug": category.slug,
+                "name": category_display_name(category, language),
+            }
+            for category in selected_poi.categories.all()
+        ]
+
+    context = {
+        "language": language,
+        "query": query,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "page_pois": [
+            {
+                "id": poi.pk,
+                "title": poi_display_title(poi, language),
+                "latitude": poi.gps_latitude,
+                "longitude": poi.gps_longitude,
+                "enabled": poi.enabled,
+            }
+            for poi in page_pois
+        ],
+        "selected_poi": selected_poi,
+        "selected_translation": selected_translation,
+        "selected_categories": selected_categories,
+        "selected_images": list(selected_poi.images.all()) if selected_poi else [],
+        "selected_translations": list(selected_poi.translations.all()) if selected_poi else [],
+    }
+    return render(request, "pois/poi_browser.html", context)
 
 
 class LanguageContextMixin:
