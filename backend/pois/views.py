@@ -64,7 +64,7 @@ def buffer_poi_lookup(request):
 
     queryset = (
         POI.objects.filter(enabled=True, location__within=buffer_geometry)
-        .prefetch_related("translations", "images")
+        .prefetch_related("translations", "images", "categories", "categories__translations")
         .order_by("id")[:limit]
     )
     pois = [poi_for_buffer_response(poi, language) for poi in queryset]
@@ -77,17 +77,27 @@ mock_poi_lookup = buffer_poi_lookup
 def poi_for_buffer_response(poi, language_code):
     translation = select_translation(poi.translations.all(), language_code)
     images = list(poi.images.all())
+    categories = list(poi.categories.all())
     primary_image = next((image for image in images if image.is_primary), None)
     image = primary_image or (images[0] if images else None)
+    image_urls = [image.image_url for image in images]
 
     return {
         "id": str(poi.pk),
         "label": translation.title if translation else f"POI {poi.pk}",
         "snippet": translation.description if translation else "",
         "imageUrl": image.image_url if image else "",
+        "imageUrls": image_urls,
         "lat": poi.gps_latitude,
         "lng": poi.gps_longitude,
         "website": poi.website,
+        "categories": [
+            {
+                "slug": category.slug,
+                "name": category_display_name(category, language_code),
+            }
+            for category in categories
+        ],
     }
 
 

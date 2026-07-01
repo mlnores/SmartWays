@@ -923,7 +923,7 @@ button:disabled:hover {
   width: min(360px, calc(100% - 28px));
   max-height: min(420px, calc(100% - 54px));
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #ffffff;
@@ -972,8 +972,28 @@ button:disabled:hover {
   transform: rotate(180deg);
 }
 
+.poi-browser.collapsed .poi-browser-filters,
 .poi-browser.collapsed .poi-browser-list {
   display: none;
+}
+
+.poi-browser-filters {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.poi-browser-filters label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.poi-browser-filters select {
+  width: 100%;
 }
 
 .poi-browser-list {
@@ -1008,6 +1028,12 @@ button:disabled:hover {
   background: #e5e7eb;
 }
 
+.poi-browser-actions {
+  display: grid;
+  gap: 6px;
+  align-self: end;
+}
+
 .poi-browser-item button,
 .poi-popup-card button {
   width: 38px;
@@ -1018,6 +1044,17 @@ button:disabled:hover {
   place-items: center;
   font-size: 1.2rem;
   line-height: 1;
+}
+
+.poi-browser-item button {
+  height: 30px;
+}
+
+.poi-browser-empty {
+  margin: 0;
+  padding: 14px 10px;
+  color: var(--muted);
+  text-align: center;
 }
 
 .poi-browser-title {
@@ -1033,21 +1070,136 @@ button:disabled:hover {
   line-height: 1.25;
 }
 
-.poi-popup-card {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  min-width: 280px;
-  max-width: 340px;
+.poi-browser-item .poi-browser-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.poi-popup-card img {
-  width: 72px;
-  height: 54px;
-  object-fit: cover;
-  border-radius: 6px;
+.leaflet-popup.poi-popup .leaflet-popup-content {
+  width: 340px !important;
+  max-width: calc(100vw - 80px);
+  box-sizing: border-box;
+  margin: 10px;
+}
+
+.poi-popup-card {
+  display: grid;
+  grid-template-rows: minmax(130px, 48%) minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  height: min(370px, calc(100dvh - 140px));
+  min-height: 260px;
+  overflow: hidden;
+}
+
+.poi-popup-media {
+  min-height: 0;
+  border-radius: 8px;
+  overflow: hidden;
   background: #e5e7eb;
+}
+
+.poi-popup-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.poi-popup-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 0;
+}
+
+.poi-popup-text {
+  min-height: 0;
+  overflow: auto;
+}
+
+.poi-popup-text .poi-browser-snippet {
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.poi-popup-actions {
+  display: grid;
+  gap: 8px;
+  align-content: end;
+}
+
+@media (max-width: 420px) {
+  .leaflet-popup.poi-popup .leaflet-popup-content {
+    width: calc(100vw - 80px) !important;
+  }
+}
+
+.poi-detail-dialog {
+  width: min(980px, calc(100vw - 32px));
+}
+
+.poi-detail-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+  gap: 16px;
+  min-height: min(560px, calc(100dvh - 190px));
+}
+
+.poi-detail-carousel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #e5e7eb;
+}
+
+.poi-detail-track {
+  display: flex;
+  height: min(440px, calc(100dvh - 260px));
+  min-height: 280px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+}
+
+.poi-detail-slide {
+  flex: 0 0 100%;
+  margin: 0;
+  scroll-snap-align: start;
+  background: #f3f4f6;
+}
+
+.poi-detail-slide img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.poi-detail-carousel-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.poi-detail-text {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  font-size: 0.98rem;
+  line-height: 1.5;
+}
+
+.poi-detail-text h3 {
+  margin: 0 0 10px;
 }
 
 @media (max-width: 800px) {
@@ -1064,5 +1216,9 @@ button:disabled:hover {
   #map,
   #mapCanvas {
     height: 100%;
+  }
+
+  .poi-detail-body {
+    grid-template-columns: 1fr;
   }
 }

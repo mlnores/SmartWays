@@ -26,6 +26,7 @@ const mapElement = document.getElementById("mapCanvas");
     let displayedPoiSegmentIndex = null;
     let displayedPoiMarkers = new Map();
     let poiBrowserCollapsed = true;
+    let selectedPoiCategory = "";
     let nextMockPoiId = 1;
     const temporaryPoiLayer = window.L.markerClusterGroup
       ? L.markerClusterGroup({
@@ -56,6 +57,7 @@ const mapElement = document.getElementById("mapCanvas");
     const poiSearchResults = document.getElementById("poiSearchResults");
     const poiBrowser = document.getElementById("poiBrowser");
     const poiBrowserTitle = document.getElementById("poiBrowserTitle");
+    const poiBrowserFilters = document.getElementById("poiBrowserFilters");
     const poiBrowserList = document.getElementById("poiBrowserList");
     const togglePoiBrowser = document.getElementById("togglePoiBrowser");
     const searchHint = document.getElementById("searchHint");
@@ -64,6 +66,12 @@ const mapElement = document.getElementById("mapCanvas");
     const itineraryJsonDialog = document.getElementById("itineraryJsonDialog");
     const itineraryJsonPreview = document.getElementById("itineraryJsonPreview");
     const downloadItineraryJson = document.getElementById("downloadItineraryJson");
+    const poiDetailDialog = document.getElementById("poiDetailDialog");
+    const poiDetailTitle = document.getElementById("poiDetailTitle");
+    const poiDetailBody = document.getElementById("poiDetailBody");
+    const addPoiFromDetail = document.getElementById("addPoiFromDetail");
+    let detailedPoi = null;
+    let detailedPoiSegmentIndex = null;
     let draggedPointIndex = null;
     let armedDragIndex = null;
     let searchTimer = null;
@@ -277,6 +285,7 @@ const mapElement = document.getElementById("mapCanvas");
       displayedPois = [];
       displayedPoiSegmentIndex = null;
       displayedPoiMarkers = new Map();
+      selectedPoiCategory = "";
       renderPoiBrowser();
     }
 
@@ -1227,7 +1236,8 @@ const mapElement = document.getElementById("mapCanvas");
         snippet: `Mock point of interest returned for the current buffer region near segment ${activeSegmentIndex !== null ? activeSegmentIndex + 1 : ""}.`,
         imageUrl: `data:image/svg+xml,${imageSvg}`,
         lat,
-        lng
+        lng,
+        categories: [{ slug: "mock", name: "Mock POIs" }]
       };
     }
 
@@ -1255,9 +1265,34 @@ const mapElement = document.getElementById("mapCanvas");
       ));
     }
 
+    function poiCategories(poi) {
+      return Array.isArray(poi.categories) ? poi.categories.filter(category => category && category.slug) : [];
+    }
+
+    function poiCategoryOptions() {
+      const categories = new Map();
+      displayedPois.forEach(poi => {
+        poiCategories(poi).forEach(category => {
+          if (!categories.has(category.slug)) {
+            categories.set(category.slug, category.name || category.slug);
+          }
+        });
+      });
+      return Array.from(categories, ([slug, name]) => ({ slug, name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function filteredDisplayedPois() {
+      if (!selectedPoiCategory) return displayedPois;
+      return displayedPois.filter(poi => (
+        poiCategories(poi).some(category => category.slug === selectedPoiCategory)
+      ));
+    }
+
     function renderPoiBrowser() {
       if (displayedPois.length === 0 || displayedPoiSegmentIndex === null) {
         poiBrowser.hidden = true;
+        poiBrowserFilters.innerHTML = "";
         poiBrowserList.innerHTML = "";
         return;
       }
@@ -1267,31 +1302,106 @@ const mapElement = document.getElementById("mapCanvas");
       togglePoiBrowser.classList.toggle("expanded", !poiBrowserCollapsed);
       togglePoiBrowser.setAttribute("aria-expanded", String(!poiBrowserCollapsed));
       togglePoiBrowser.title = poiBrowserCollapsed ? "Show POI list" : "Hide POI list";
+      const categoryOptions = poiCategoryOptions();
+      const filteredPois = filteredDisplayedPois();
       poiBrowserTitle.textContent = `POIs for segment ${displayedPoiSegmentIndex + 1} → ${displayedPoiSegmentIndex + 2}`;
+      poiBrowserFilters.innerHTML = `
+        <label>
+          <span>Category</span>
+          <select id="poiCategoryFilter" ${categoryOptions.length === 0 ? "disabled" : ""}>
+            <option value="">All categories</option>
+            ${categoryOptions.map(category => `
+              <option value="${escapeHtml(category.slug)}" ${category.slug === selectedPoiCategory ? "selected" : ""}>${escapeHtml(category.name)}</option>
+            `).join("")}
+          </select>
+        </label>
+      `;
 
-      poiBrowserList.innerHTML = displayedPois.map(poi => `
+      if (filteredPois.length === 0) {
+        poiBrowserList.innerHTML = `
+          <p class="poi-browser-empty">No POIs match this category.</p>
+        `;
+        return;
+      }
+
+      poiBrowserList.innerHTML = filteredPois.map(poi => `
         <article class="poi-browser-item" data-poi-key="${escapeHtml(poi.id)}" tabindex="0">
           <img src="${escapeHtml(poi.imageUrl || "")}" alt="" />
           <div>
             <strong class="poi-browser-title">${escapeHtml(poi.label)}</strong>
             <p class="poi-browser-snippet">${escapeHtml(poi.snippet || "")}</p>
           </div>
-          <button data-action="add-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">＋</button>
+          <div class="poi-browser-actions">
+            <button data-action="center-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Center map on ${escapeHtml(poi.label)}" title="Center map on POI">⌖</button>
+            <button data-action="expand-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Open ${escapeHtml(poi.label)} details" title="Open details">⛶</button>
+            <button data-action="add-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">＋</button>
+          </div>
         </article>
       `).join("");
     }
 
+    function poiImageUrls(poi) {
+      const images = Array.isArray(poi.imageUrls) ? poi.imageUrls.filter(Boolean) : [];
+      if (images.length > 0) return images;
+      return poi.imageUrl ? [poi.imageUrl] : [];
+    }
+
     function poiPopupContent(poi, segmentIndex) {
+      const images = poiImageUrls(poi);
+      const primaryImage = images[0] || "";
       return `
         <article class="poi-popup-card">
-          <img src="${escapeHtml(poi.imageUrl || "")}" alt="" />
-          <div>
-            <strong class="poi-browser-title">${escapeHtml(poi.label)}</strong>
-            <p class="poi-browser-snippet">${escapeHtml(poi.snippet || "")}</p>
+          <div class="poi-popup-media">
+            ${primaryImage ? `<img src="${escapeHtml(primaryImage)}" alt="" />` : ""}
           </div>
-          <button data-action="add-poi" data-segment="${segmentIndex}" data-lat="${poi.lat}" data-lng="${poi.lng}" data-label="${escapeHtml(poi.label)}" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">＋</button>
+          <div class="poi-popup-body">
+            <div class="poi-popup-text">
+              <strong class="poi-browser-title">${escapeHtml(poi.label)}</strong>
+              <p class="poi-browser-snippet">${escapeHtml(poi.snippet || "")}</p>
+            </div>
+            <div class="poi-popup-actions">
+              <button data-action="expand-poi" data-segment="${segmentIndex}" data-poi-key="${escapeHtml(poi.id)}" aria-label="Open ${escapeHtml(poi.label)} details" title="Open details">⛶</button>
+              <button data-action="add-poi" data-segment="${segmentIndex}" data-lat="${poi.lat}" data-lng="${poi.lng}" data-label="${escapeHtml(poi.label)}" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">＋</button>
+            </div>
+          </div>
         </article>
       `;
+    }
+
+    function openPoiDetailDialog(poi, segmentIndex) {
+      const images = poiImageUrls(poi);
+      detailedPoi = poi;
+      detailedPoiSegmentIndex = segmentIndex;
+      poiDetailTitle.textContent = poi.label || "POI";
+      addPoiFromDetail.disabled = !Number.isInteger(segmentIndex);
+
+      poiDetailBody.innerHTML = `
+        <section class="poi-detail-carousel" aria-label="POI images">
+          <div class="poi-detail-track" data-poi-detail-track>
+            ${images.length > 0 ? images.map(imageUrl => `
+              <figure class="poi-detail-slide">
+                <img src="${escapeHtml(imageUrl)}" alt="" />
+              </figure>
+            `).join("") : `
+              <figure class="poi-detail-slide">
+                <div class="empty-state">No images available.</div>
+              </figure>
+            `}
+          </div>
+          <div class="poi-detail-carousel-controls">
+            <button type="button" data-action="poi-detail-prev" ${images.length < 2 ? "disabled" : ""}>Previous</button>
+            <span class="muted">${images.length} image${images.length === 1 ? "" : "s"}</span>
+            <button type="button" data-action="poi-detail-next" ${images.length < 2 ? "disabled" : ""}>Next</button>
+          </div>
+        </section>
+        <section class="poi-detail-text">
+          <h3>${escapeHtml(poi.label || "POI")}</h3>
+          <p>${escapeHtml(poi.snippet || "No description available.")}</p>
+          ${poi.website ? `<p><a href="${escapeHtml(poi.website)}" target="_blank" rel="noopener noreferrer">${escapeHtml(poi.website)}</a></p>` : ""}
+        </section>
+      `;
+
+      poiDetailDialog.showModal();
     }
 
     function bindPoiHoverPopup(marker) {
@@ -1326,6 +1436,9 @@ const mapElement = document.getElementById("mapCanvas");
       displayedPoiMarkers = new Map();
       displayedPois = pois;
       displayedPoiSegmentIndex = segmentIndex;
+      if (selectedPoiCategory && !poiCategoryOptions().some(category => category.slug === selectedPoiCategory)) {
+        selectedPoiCategory = "";
+      }
       renderPoiBrowser();
 
       pois.forEach(poi => {
@@ -1340,9 +1453,12 @@ const mapElement = document.getElementById("mapCanvas");
         })
           .addTo(temporaryPoiLayer)
           .bindPopup(poiPopupContent(poi, segmentIndex), {
+            className: "poi-popup",
             closeButton: false,
             autoClose: false,
-            closeOnClick: false
+            closeOnClick: false,
+            minWidth: 320,
+            maxWidth: 360
           });
         bindPoiHoverPopup(marker);
         displayedPoiMarkers.set(poi.id, marker);
@@ -1780,7 +1896,6 @@ const mapElement = document.getElementById("mapCanvas");
         relabelPointFromGeocoder(index, false);
       }
     });
-
     document.getElementById("clearAll").addEventListener("click", clearAll);
     document.getElementById("fitRoute").addEventListener("click", fitRoute);
     document.getElementById("showRoute").addEventListener("click", showRouteSummary);
@@ -1792,6 +1907,30 @@ const mapElement = document.getElementById("mapCanvas");
     document.getElementById("closeRouteDialogFooter").addEventListener("click", () => routeDialog.close());
     document.getElementById("closeItineraryJsonDialog").addEventListener("click", () => itineraryJsonDialog.close());
     document.getElementById("closeItineraryJsonDialogFooter").addEventListener("click", () => itineraryJsonDialog.close());
+    document.getElementById("closePoiDetailDialog").addEventListener("click", () => poiDetailDialog.close());
+    document.getElementById("closePoiDetailDialogFooter").addEventListener("click", () => poiDetailDialog.close());
+
+    addPoiFromDetail.addEventListener("click", () => {
+      if (!detailedPoi) return;
+      addPoiToItinerary(detailedPoi, detailedPoiSegmentIndex);
+      poiDetailDialog.close();
+    });
+
+    poiDetailBody.addEventListener("click", event => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+
+      const track = poiDetailBody.querySelector("[data-poi-detail-track]");
+      if (!track) return;
+
+      if (button.dataset.action === "poi-detail-prev") {
+        track.scrollBy({ left: -track.clientWidth, behavior: "smooth" });
+      }
+
+      if (button.dataset.action === "poi-detail-next") {
+        track.scrollBy({ left: track.clientWidth, behavior: "smooth" });
+      }
+    });
 
     function activateTab(tabName) {
       tabButtons.forEach(button => {
@@ -1863,7 +2002,38 @@ const mapElement = document.getElementById("mapCanvas");
       renderPoiBrowser();
     });
 
+    poiBrowserFilters.addEventListener("change", event => {
+      const select = event.target.closest("#poiCategoryFilter");
+      if (!select) return;
+      selectedPoiCategory = select.value;
+      renderPoiBrowser();
+    });
+
     poiBrowserList.addEventListener("click", event => {
+      const centerButton = event.target.closest('button[data-action="center-displayed-poi"]');
+      if (centerButton) {
+        const poi = displayedPois.find(candidate => candidate.id === centerButton.dataset.poiKey);
+        if (poi) {
+          map.setView([poi.lat, poi.lng], Math.max(map.getZoom(), 15));
+          const marker = displayedPoiMarkers.get(poi.id);
+          if (marker && temporaryPoiLayer.zoomToShowLayer) {
+            temporaryPoiLayer.zoomToShowLayer(marker, () => marker.openPopup());
+          } else if (marker) {
+            marker.openPopup();
+          }
+        }
+        return;
+      }
+
+      const expandButton = event.target.closest('button[data-action="expand-displayed-poi"]');
+      if (expandButton) {
+        const poi = displayedPois.find(candidate => candidate.id === expandButton.dataset.poiKey);
+        if (poi) {
+          openPoiDetailDialog(poi, displayedPoiSegmentIndex);
+        }
+        return;
+      }
+
       const button = event.target.closest('button[data-action="add-displayed-poi"]');
       if (!button) return;
 
@@ -2009,6 +2179,16 @@ const mapElement = document.getElementById("mapCanvas");
         if (points[index] && window.confirm(`Delete point ${label}?`)) {
           map.closePopup();
           removePoint(index);
+        }
+        return;
+      }
+
+      const expandPoiButton = event.target.closest('button[data-action="expand-poi"]');
+      if (expandPoiButton) {
+        const segmentIndex = Number.parseInt(expandPoiButton.dataset.segment, 10);
+        const poi = displayedPois.find(candidate => candidate.id === expandPoiButton.dataset.poiKey);
+        if (poi) {
+          openPoiDetailDialog(poi, segmentIndex);
         }
         return;
       }

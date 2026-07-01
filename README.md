@@ -16,6 +16,7 @@ The backend is under `backend/` and uses Django, Django REST Framework, and GeoD
 - Filters for language, category, enabled state, and bounding box.
 - One-shot RurAllure SQL dump import command.
 - Server-rendered POI browser with selected POI details, map, and image carousel.
+- Itinerary editor buffer lookups with clustered POI markers.
 - Basic Django admin registration.
 
 ## Setup
@@ -171,6 +172,12 @@ The POI browser supports `q`, `language`, `page`, and `poi` query parameters. Ex
 ```text
 http://127.0.0.1:8000/pois/?language=en&q=castle
 ```
+
+## Itinerary Editor POI Lookup
+
+The static itinerary editor in `interactive_itinerary_map.html` calls `POST /api/buffer-pois/` when a segment buffer is displayed or refreshed. Returned POIs are shown on the map and in the POI browser panel.
+
+When a buffer contains many POIs, the editor clusters markers with `leaflet.markercluster`, loaded from the unpkg CDN alongside Leaflet and Turf.js. If the clustering plugin is unavailable, the editor falls back to plain Leaflet markers.
 
 ## Create A POI
 

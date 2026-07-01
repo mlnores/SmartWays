@@ -112,8 +112,10 @@ class POIAPITests(APITestCase):
         self.assertEqual(result["label"], "Castle")
         self.assertEqual(result["snippet"], "A fortified place.")
         self.assertEqual(result["imageUrl"], "https://example.com/castle.jpg")
+        self.assertEqual(result["imageUrls"], ["https://example.com/castle.jpg"])
         self.assertEqual(result["lat"], self.poi.gps_latitude)
         self.assertEqual(result["lng"], self.poi.gps_longitude)
+        self.assertEqual(result["categories"], [{"slug": "heritage", "name": "Heritage"}])
 
     def test_poi_create_accepts_coordinates_and_nested_content(self):
         payload = {

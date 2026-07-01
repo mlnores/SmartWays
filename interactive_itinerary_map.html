@@ -118,6 +118,7 @@
           <span id="poiBrowserTitle">POIs</span>
           <button id="togglePoiBrowser" type="button" aria-expanded="false" title="Show POI list"></button>
         </div>
+        <div class="poi-browser-filters" id="poiBrowserFilters"></div>
         <div class="poi-browser-list" id="poiBrowserList"></div>
       </aside>
     </section>
@@ -145,6 +146,18 @@
     <div class="route-dialog-footer">
       <a class="button-link" id="downloadItineraryJson" download="itinerary.json">Download JSON</a>
       <button id="closeItineraryJsonDialogFooter">Close</button>
+    </div>
+  </dialog>
+
+  <dialog class="route-dialog poi-detail-dialog" id="poiDetailDialog">
+    <div class="route-dialog-header">
+      <h2 id="poiDetailTitle">POI</h2>
+      <button id="closePoiDetailDialog" aria-label="Close POI details">×</button>
+    </div>
+    <div class="route-dialog-body poi-detail-body" id="poiDetailBody"></div>
+    <div class="route-dialog-footer">
+      <button id="addPoiFromDetail" type="button" class="primary">Add POI</button>
+      <button id="closePoiDetailDialogFooter" type="button">Close</button>
     </div>
   </dialog>
 
