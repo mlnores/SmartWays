@@ -1,6 +1,13 @@
+import random
+import time
+from urllib.parse import quote
+
 from django.contrib.gis.geos import Polygon
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import viewsets
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import ParseError, ValidationError
+from rest_framework.parsers import JSONParser
 
 from .models import Category, CategoryTranslation, POI, POIImage, POITranslation
 from .serializers import (
@@ -10,6 +17,127 @@ from .serializers import (
     POISerializer,
     POITranslationSerializer,
 )
+
+
+MOCK_POI_IMAGE_SVG = (
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"144\" height=\"108\">"
+    "<rect width=\"144\" height=\"108\" fill=\"#dcfce7\"/>"
+    "<circle cx=\"72\" cy=\"44\" r=\"22\" fill=\"#16a34a\"/>"
+    "<text x=\"72\" y=\"86\" text-anchor=\"middle\" font-family=\"Arial\" "
+    "font-size=\"16\" font-weight=\"700\" fill=\"#166534\">POI</text>"
+    "</svg>"
+)
+
+
+def cors_json_response(data, status=200):
+    response = JsonResponse(data, status=status)
+    response["Access-Control-Allow-Origin"] = "*"
+    response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
+def polygon_rings_from_geojson(geometry):
+    if not isinstance(geometry, dict):
+        raise ValueError("Buffer geometry must be a GeoJSON object.")
+
+    geometry_type = geometry.get("type")
+    coordinates = geometry.get("coordinates")
+
+    if geometry_type == "Feature":
+        return polygon_rings_from_geojson(geometry.get("geometry"))
+
+    if geometry_type == "Polygon" and coordinates:
+        return coordinates[0]
+
+    if geometry_type == "MultiPolygon" and coordinates and coordinates[0]:
+        return coordinates[0][0]
+
+    raise ValueError("Buffer geometry must be a Polygon or MultiPolygon.")
+
+
+def point_in_ring(lng, lat, ring):
+    inside = False
+    previous_lng, previous_lat = ring[-1]
+
+    for current_lng, current_lat in ring:
+        crosses_latitude = (current_lat > lat) != (previous_lat > lat)
+        if crosses_latitude:
+            crossing_lng = (
+                (previous_lng - current_lng)
+                * (lat - current_lat)
+                / (previous_lat - current_lat)
+                + current_lng
+            )
+            if lng < crossing_lng:
+                inside = not inside
+
+        previous_lng, previous_lat = current_lng, current_lat
+
+    return inside
+
+
+def random_points_in_ring(ring, count):
+    lngs = [coordinate[0] for coordinate in ring]
+    lats = [coordinate[1] for coordinate in ring]
+    min_lng, max_lng = min(lngs), max(lngs)
+    min_lat, max_lat = min(lats), max(lats)
+    points = []
+    attempts = 0
+
+    while len(points) < count and attempts < 300:
+        lng = random.uniform(min_lng, max_lng)
+        lat = random.uniform(min_lat, max_lat)
+        if point_in_ring(lng, lat, ring):
+            points.append((lat, lng))
+        attempts += 1
+
+    return points
+
+
+@csrf_exempt
+def mock_poi_lookup(request):
+    if request.method == "OPTIONS":
+        return cors_json_response({})
+
+    if request.method != "POST":
+        return cors_json_response({"detail": "Use POST."}, status=405)
+
+    try:
+        payload = JSONParser().parse(request)
+        ring = polygon_rings_from_geojson(payload.get("buffer"))
+        count = int(payload.get("count", 2))
+        if count < 1 or count > 10:
+            raise ValueError("Count must be between 1 and 10.")
+        segment_index = payload.get("segmentIndex")
+        points = random_points_in_ring(ring, count)
+    except (ParseError, TypeError, ValueError) as error:
+        return cors_json_response({"detail": str(error)}, status=400)
+
+    if len(points) < count:
+        return cors_json_response(
+            {"detail": "Could not create random POIs inside this segment buffer."},
+            status=422,
+        )
+
+    image_url = f"data:image/svg+xml,{quote(MOCK_POI_IMAGE_SVG)}"
+    timestamp = int(time.time() * 1000)
+    pois = [
+        {
+            "id": f"mock-poi-{timestamp}-{index + 1}",
+            "label": f"Temporary POI {index + 1}",
+            "snippet": (
+                "Mock point of interest returned for the current buffer region"
+                f"{f' near segment {segment_index + 1}' if isinstance(segment_index, int) else ''}."
+            ),
+            "imageUrl": image_url,
+            "lat": lat,
+            "lng": lng,
+        }
+        for index, (lat, lng) in enumerate(points)
+    ]
+
+    return cors_json_response({"results": pois})
 
 
 def parse_bbox(value):

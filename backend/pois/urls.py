@@ -1,3 +1,4 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
@@ -6,6 +7,7 @@ from .views import (
     POIImageViewSet,
     POITranslationViewSet,
     POIViewSet,
+    mock_poi_lookup,
 )
 
 
@@ -16,4 +18,7 @@ router.register("categories", CategoryViewSet, basename="category")
 router.register("category-translations", CategoryTranslationViewSet, basename="category-translation")
 router.register("poi-images", POIImageViewSet, basename="poi-image")
 
-urlpatterns = router.urls
+urlpatterns = [
+    path("mock-pois/", mock_poi_lookup, name="mock-poi-lookup"),
+    *router.urls,
+]

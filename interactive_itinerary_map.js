@@ -31,6 +31,7 @@ const mapElement = document.getElementById("mapCanvas");
     const DEFAULT_SEGMENT_BUFFER_METERS = 2000;
     const WALKING_SPEED_METERS_PER_SECOND = 1.333;
     const MAX_POI_CACHE_SIZE = 100;
+    const API_BASE_URL = "http://127.0.0.1:8000/api";
     const routeLine = L.polyline([], {
       color: "#1f6feb",
       weight: 2,
@@ -68,7 +69,7 @@ const mapElement = document.getElementById("mapCanvas");
     let editingLabelIndex = null;
     const MAX_HISTORY_STATES = 100;
     const searchHintText = {
-      poi: "POI search currently uses the same placeholder search until the repository is connected.",
+      poi: "POI lookup currently asks the local backend for temporary generated POIs.",
       waypoint: "Waypoint search uses Photon with OpenStreetMap data."
     };
 
@@ -1331,19 +1332,25 @@ const mapElement = document.getElementById("mapCanvas");
       });
     }
 
-    function mockPoiLookup(segmentBuffer, count) {
-      const delay = 1000 + Math.random() * 4000;
-
-      return new Promise((resolve, reject) => {
-        window.setTimeout(() => {
-          try {
-            const pois = randomPointsInPolygon(segmentBuffer, count).map(createMockPoi);
-            resolve(pois);
-          } catch (error) {
-            reject(error);
-          }
-        }, delay);
+    async function fetchSegmentPois(segmentBuffer, segmentIndex, count) {
+      const response = await fetch(`${API_BASE_URL}/mock-pois/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          buffer: segmentBuffer,
+          segmentIndex,
+          count
+        })
       });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || `POI service returned ${response.status}`);
+      }
+
+      return Array.isArray(data.results) ? data.results : [];
     }
 
     async function showSegmentPois(segmentIndex) {
@@ -1378,7 +1385,7 @@ const mapElement = document.getElementById("mapCanvas");
         }
         setRouteStatus(`Looking for POIs inside the ${formatDistance(distanceMeters)} buffer for segment ${segmentIndex + 1} → ${segmentIndex + 2}...`);
 
-        const pois = await mockPoiLookup(segmentBuffer, 2);
+        const pois = await fetchSegmentPois(segmentBuffer, segmentIndex, 2);
         if (requestId !== poiLookupRequestId || activeSegmentIndex !== segmentIndex) {
           return;
         }
