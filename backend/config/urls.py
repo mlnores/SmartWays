@@ -18,6 +18,7 @@ def home(_request):
                 "categories": "/api/categories/",
                 "category_translations": "/api/category-translations/",
                 "poi_images": "/api/poi-images/",
+                "buffer_pois": "/api/buffer-pois/",
             },
         }
     )

@@ -159,6 +159,7 @@ Endpoints:
 - `GET|POST /api/categories/`
 - `GET|POST /api/category-translations/`
 - `GET|POST /api/poi-images/`
+- `POST /api/buffer-pois/`
 
 Server-rendered pages:
 
@@ -235,6 +236,21 @@ Filter enabled POIs:
 
 ```bash
 curl "http://127.0.0.1:8000/api/pois/?enabled=true"
+```
+
+Find POIs inside a GeoJSON buffer region:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/buffer-pois/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "language": "en",
+    "limit": 100,
+    "buffer": {
+      "type": "Polygon",
+      "coordinates": [[[-9,42],[-8,42],[-8,43],[-9,43],[-9,42]]]
+    }
+  }'
 ```
 
 ## Import RurAllure POIs

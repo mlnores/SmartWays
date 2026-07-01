@@ -27,7 +27,15 @@ const mapElement = document.getElementById("mapCanvas");
     let displayedPoiMarkers = new Map();
     let poiBrowserCollapsed = true;
     let nextMockPoiId = 1;
-    const temporaryPoiLayer = L.layerGroup().addTo(map);
+    const temporaryPoiLayer = window.L.markerClusterGroup
+      ? L.markerClusterGroup({
+        chunkedLoading: true,
+        showCoverageOnHover: false,
+        maxClusterRadius: 46,
+        spiderfyOnMaxZoom: true,
+        disableClusteringAtZoom: 17
+      }).addTo(map)
+      : L.layerGroup().addTo(map);
     const DEFAULT_SEGMENT_BUFFER_METERS = 2000;
     const WALKING_SPEED_METERS_PER_SECOND = 1.333;
     const MAX_POI_CACHE_SIZE = 100;
@@ -69,7 +77,7 @@ const mapElement = document.getElementById("mapCanvas");
     let editingLabelIndex = null;
     const MAX_HISTORY_STATES = 100;
     const searchHintText = {
-      poi: "POI lookup currently asks the local backend for temporary generated POIs.",
+      poi: "POI lookup asks the local backend for POIs inside the selected segment buffer.",
       waypoint: "Waypoint search uses Photon with OpenStreetMap data."
     };
 
@@ -1341,8 +1349,8 @@ const mapElement = document.getElementById("mapCanvas");
       });
     }
 
-    async function fetchSegmentPois(segmentBuffer, segmentIndex, count) {
-      const response = await fetch(`${API_BASE_URL}/mock-pois/`, {
+    async function fetchSegmentPois(segmentBuffer, segmentIndex, limit) {
+      const response = await fetch(`${API_BASE_URL}/buffer-pois/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1350,7 +1358,7 @@ const mapElement = document.getElementById("mapCanvas");
         body: JSON.stringify({
           buffer: segmentBuffer,
           segmentIndex,
-          count
+          limit
         })
       });
 
@@ -1394,21 +1402,24 @@ const mapElement = document.getElementById("mapCanvas");
         }
         setRouteStatus(`Looking for POIs inside the ${formatDistance(distanceMeters)} buffer for segment ${segmentIndex + 1} → ${segmentIndex + 2}...`);
 
-        const pois = await fetchSegmentPois(segmentBuffer, segmentIndex, 2);
+        const pois = await fetchSegmentPois(segmentBuffer, segmentIndex, 100);
         if (requestId !== poiLookupRequestId || activeSegmentIndex !== segmentIndex) {
           return;
         }
 
-        if (pois.length < 2) {
-          throw new Error("Could not create random POIs inside this segment buffer.");
+        if (pois.length === 0) {
+          reconcilePoiCache(segmentBuffer, pois);
+          renderTemporaryPois(segmentIndex, pois);
+          setRouteStatus(`No POIs found inside the ${formatDistance(distanceMeters)} buffer for segment ${segmentIndex + 1} → ${segmentIndex + 2}.`);
+          return;
         }
 
         reconcilePoiCache(segmentBuffer, pois);
         renderTemporaryPois(segmentIndex, pois);
 
         setRouteStatus(
-          `<strong>Temporary POIs</strong>` +
-          `Showing ${pois.length} mock POIs inside the ${formatDistance(distanceMeters)} buffer for segment ${segmentIndex + 1} → ${segmentIndex + 2}.`
+          `<strong>POIs</strong>` +
+          `Showing ${pois.length} POIs inside the ${formatDistance(distanceMeters)} buffer for segment ${segmentIndex + 1} → ${segmentIndex + 2}.`
         );
       } catch (error) {
         if (requestId === poiLookupRequestId) {

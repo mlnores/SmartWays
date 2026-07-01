@@ -69,6 +69,52 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
 
+    def test_buffer_poi_lookup_returns_enabled_pois_inside_buffer(self):
+        disabled_poi = POI.objects.create(
+            enabled=False,
+            location=Point(-8.7100, 42.2500, srid=4326),
+        )
+        POITranslation.objects.create(
+            poi=disabled_poi,
+            language_code="en",
+            title="Disabled POI",
+            description="Should not be returned.",
+            slug="disabled-poi",
+        )
+        outside_poi = POI.objects.create(
+            enabled=True,
+            location=Point(-7.5000, 43.0000, srid=4326),
+        )
+        POITranslation.objects.create(
+            poi=outside_poi,
+            language_code="en",
+            title="Outside POI",
+            description="Outside the buffer.",
+            slug="outside-poi",
+        )
+
+        response = self.client.post(
+            reverse("buffer-poi-lookup"),
+            {
+                "language": "en",
+                "buffer": {
+                    "type": "Polygon",
+                    "coordinates": [[[-9, 42], [-8, 42], [-8, 43], [-9, 43], [-9, 42]]],
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()["results"]), 1)
+        result = response.json()["results"][0]
+        self.assertEqual(result["id"], str(self.poi.id))
+        self.assertEqual(result["label"], "Castle")
+        self.assertEqual(result["snippet"], "A fortified place.")
+        self.assertEqual(result["imageUrl"], "https://example.com/castle.jpg")
+        self.assertEqual(result["lat"], self.poi.gps_latitude)
+        self.assertEqual(result["lng"], self.poi.gps_longitude)
+
     def test_poi_create_accepts_coordinates_and_nested_content(self):
         payload = {
             "enabled": True,
