@@ -140,13 +140,29 @@
 
   <dialog class="route-dialog" id="itineraryJsonDialog">
     <div class="route-dialog-header">
-      <h2>Saved Itinerary JSON</h2>
+      <h2>Save Itinerary</h2>
       <button id="closeItineraryJsonDialog" aria-label="Close saved itinerary JSON">×</button>
     </div>
     <div class="route-dialog-body">
+      <div class="itinerary-save-form">
+        <label>
+          <span>Language</span>
+          <input id="itineraryLanguage" type="text" value="en" maxlength="8" autocomplete="off" />
+        </label>
+        <label>
+          <span>Title</span>
+          <input id="itineraryTitle" type="text" maxlength="255" autocomplete="off" placeholder="Itinerary title" required />
+        </label>
+        <label>
+          <span>Description</span>
+          <textarea id="itineraryDescription" rows="3" placeholder="Optional description"></textarea>
+        </label>
+        <p class="save-status" id="itinerarySaveStatus" role="status"></p>
+      </div>
       <pre class="json-preview" id="itineraryJsonPreview" tabindex="0"></pre>
     </div>
     <div class="route-dialog-footer">
+      <button id="saveItineraryToServer" type="button" class="primary">Save to server</button>
       <a class="button-link" id="downloadItineraryJson" download="itinerary.json">Download JSON</a>
       <button id="closeItineraryJsonDialogFooter">Close</button>
     </div>

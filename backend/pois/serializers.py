@@ -1,8 +1,17 @@
 from django.conf import settings
 from django.contrib.gis.geos import Point
+from django.utils.text import slugify
 from rest_framework import serializers
 
-from .models import Category, CategoryTranslation, POI, POIImage, POITranslation
+from .models import (
+    Category,
+    CategoryTranslation,
+    Itinerary,
+    ItineraryTranslation,
+    POI,
+    POIImage,
+    POITranslation,
+)
 
 
 def select_translation(translations, language_code):
@@ -19,6 +28,10 @@ def select_translation(translations, language_code):
             return translation
 
     return translations[0]
+
+
+def slug_from_title(title):
+    return slugify(title or "") or "itinerary"
 
 
 class POITranslationSerializer(serializers.ModelSerializer):
@@ -60,6 +73,20 @@ class NestedPOIImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = POIImage
         fields = ["id", "image_url", "position", "is_primary"]
+        read_only_fields = ["id"]
+
+
+class ItineraryTranslationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ItineraryTranslation
+        fields = ["id", "itinerary", "language_code", "title", "description", "slug"]
+        read_only_fields = ["id"]
+
+
+class NestedItineraryTranslationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ItineraryTranslation
+        fields = ["id", "language_code", "title", "description", "slug"]
         read_only_fields = ["id"]
 
 
@@ -212,5 +239,82 @@ class POISerializer(serializers.ModelSerializer):
             instance.images.all().delete()
             for image_data in images:
                 POIImage.objects.create(poi=instance, **image_data)
+
+        return instance
+
+
+class ItinerarySerializer(serializers.ModelSerializer):
+    title = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
+    slug = serializers.SerializerMethodField()
+    translations = NestedItineraryTranslationSerializer(many=True, required=False)
+
+    class Meta:
+        model = Itinerary
+        fields = [
+            "id",
+            "enabled",
+            "itinerary_json",
+            "created_at",
+            "updated_at",
+            "title",
+            "description",
+            "slug",
+            "translations",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_title(self, obj):
+        translation = self._localized_translation(obj)
+        return translation.title if translation else None
+
+    def get_description(self, obj):
+        translation = self._localized_translation(obj)
+        return translation.description if translation else None
+
+    def get_slug(self, obj):
+        translation = self._localized_translation(obj)
+        return translation.slug if translation else None
+
+    def _localized_translation(self, obj):
+        language = self.context.get("language")
+        return select_translation(obj.translations.all(), language)
+
+    def validate(self, attrs):
+        if not isinstance(attrs.get("itinerary_json", self.instance.itinerary_json if self.instance else None), dict):
+            raise serializers.ValidationError({"itinerary_json": "Expected an itinerary JSON object."})
+
+        translations = attrs.get("translations")
+        if self.instance is None and not translations:
+            raise serializers.ValidationError({"translations": "At least one itinerary translation is required."})
+        if translations is not None:
+            for translation in translations:
+                title = (translation.get("title") or "").strip()
+                if not title:
+                    raise serializers.ValidationError({"translations": "Each itinerary translation needs a title."})
+                translation["title"] = title
+                if not translation.get("slug"):
+                    translation["slug"] = slug_from_title(title)
+
+        return attrs
+
+    def create(self, validated_data):
+        translations = validated_data.pop("translations", [])
+        itinerary = Itinerary.objects.create(**validated_data)
+        for translation_data in translations:
+            ItineraryTranslation.objects.create(itinerary=itinerary, **translation_data)
+        return itinerary
+
+    def update(self, instance, validated_data):
+        translations = validated_data.pop("translations", None)
+
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+
+        if translations is not None:
+            instance.translations.all().delete()
+            for translation_data in translations:
+                ItineraryTranslation.objects.create(itinerary=instance, **translation_data)
 
         return instance

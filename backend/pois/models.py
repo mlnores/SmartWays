@@ -29,8 +29,8 @@ class POI(models.Model):
     class Meta:
         ordering = ["id"]
         indexes = [
-            models.Index(fields=["enabled"]),
-            models.Index(fields=["created_at"]),
+            models.Index(fields=["enabled"], name="pois_poi_enabled_4f9c1f_idx"),
+            models.Index(fields=["created_at"], name="pois_poi_created_67f944_idx"),
         ]
 
     def __str__(self):
@@ -70,8 +70,8 @@ class POITranslation(models.Model):
             ),
         ]
         indexes = [
-            models.Index(fields=["language_code"]),
-            models.Index(fields=["slug"]),
+            models.Index(fields=["language_code"], name="pois_poitra_languag_fbe131_idx"),
+            models.Index(fields=["slug"], name="pois_poitra_slug_f2c1cd_idx"),
         ]
 
     def __str__(self):
@@ -109,7 +109,7 @@ class CategoryTranslation(models.Model):
             ),
         ]
         indexes = [
-            models.Index(fields=["language_code"]),
+            models.Index(fields=["language_code"], name="pois_catego_languag_1ebb08_idx"),
         ]
 
     def __str__(self):
@@ -136,9 +136,56 @@ class POIImage(models.Model):
             ),
         ]
         indexes = [
-            models.Index(fields=["position"]),
-            models.Index(fields=["is_primary"]),
+            models.Index(fields=["position"], name="pois_poiima_positio_8f58b3_idx"),
+            models.Index(fields=["is_primary"], name="pois_poiima_is_prim_9a1275_idx"),
         ]
 
     def __str__(self):
         return f"Image for POI {self.poi_id}"
+
+
+class Itinerary(models.Model):
+    enabled = models.BooleanField(default=True)
+    itinerary_json = models.JSONField()
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["id"]
+        verbose_name_plural = "itineraries"
+        indexes = [
+            models.Index(fields=["enabled"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        translation = self.translations.order_by("language_code").first()
+        return translation.title if translation else f"Itinerary {self.pk}"
+
+
+class ItineraryTranslation(models.Model):
+    itinerary = models.ForeignKey(
+        Itinerary,
+        related_name="translations",
+        on_delete=models.CASCADE,
+    )
+    language_code = models.CharField(max_length=8, validators=[language_code_validator])
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    slug = models.SlugField(max_length=255, validators=[slug_validator], blank=True)
+
+    class Meta:
+        ordering = ["language_code", "title"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["itinerary", "language_code"],
+                name="unique_itinerary_translation_language",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["language_code"]),
+            models.Index(fields=["slug"]),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.language_code})"

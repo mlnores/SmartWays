@@ -1,6 +1,14 @@
 from django.contrib import admin
 
-from .models import Category, CategoryTranslation, POI, POIImage, POITranslation
+from .models import (
+    Category,
+    CategoryTranslation,
+    Itinerary,
+    ItineraryTranslation,
+    POI,
+    POIImage,
+    POITranslation,
+)
 
 
 class POITranslationInline(admin.TabularInline):
@@ -53,3 +61,28 @@ class POIImageAdmin(admin.ModelAdmin):
     list_display = ["id", "poi", "position", "is_primary", "image_url"]
     list_filter = ["is_primary"]
     search_fields = ["image_url"]
+
+
+class ItineraryTranslationInline(admin.TabularInline):
+    model = ItineraryTranslation
+    extra = 1
+
+
+@admin.register(Itinerary)
+class ItineraryAdmin(admin.ModelAdmin):
+    list_display = ["id", "slug", "enabled", "updated_at", "created_at"]
+    list_filter = ["enabled"]
+    search_fields = ["translations__title", "translations__description", "translations__slug"]
+    inlines = [ItineraryTranslationInline]
+
+    @admin.display(description="slug")
+    def slug(self, obj):
+        translation = obj.translations.order_by("language_code").first()
+        return translation.slug if translation else ""
+
+
+@admin.register(ItineraryTranslation)
+class ItineraryTranslationAdmin(admin.ModelAdmin):
+    list_display = ["id", "itinerary", "language_code", "title", "slug"]
+    list_filter = ["language_code"]
+    search_fields = ["title", "description", "slug"]

@@ -955,6 +955,39 @@ button:disabled:hover {
   white-space: pre;
 }
 
+.itinerary-save-form {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.itinerary-save-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.itinerary-save-form input,
+.itinerary-save-form textarea {
+  color: #111111;
+}
+
+.save-status {
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.save-status.error {
+  color: var(--danger);
+}
+
+.save-status.success {
+  color: #166534;
+}
+
 .waypoint-confirm-popup .leaflet-popup-content {
   margin: 10px;
 }

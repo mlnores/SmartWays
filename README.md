@@ -168,6 +168,9 @@ Endpoints:
 - `GET|POST /api/categories/`
 - `GET|POST /api/category-translations/`
 - `GET|POST /api/poi-images/`
+- `GET|POST /api/itineraries/`
+- `GET|PUT|PATCH|DELETE /api/itineraries/{id}/`
+- `GET|POST /api/itinerary-translations/`
 - `POST /api/buffer-pois/`
 
 Server-rendered pages:
@@ -186,6 +189,8 @@ http://127.0.0.1:8000/pois/?language=en&q=castle
 The static itinerary editor in `interactive_itinerary_map.html` calls `POST /api/buffer-pois/` when a segment buffer is displayed or refreshed. Returned POIs are shown on the map and in the POI browser panel.
 
 When a buffer contains many POIs, the editor clusters markers with `leaflet.markercluster`, loaded from the unpkg CDN alongside Leaflet and Turf.js. If the clustering plugin is unavailable, the editor falls back to plain Leaflet markers.
+
+The editor's Save button opens a dialog with the current itinerary JSON, plus language, title, and description fields. Use `Save to server` to create an itinerary through `POST /api/itineraries/`; the JSON remains available for download from the same dialog.
 
 ## Create A POI
 
@@ -265,6 +270,33 @@ curl -X POST http://127.0.0.1:8000/api/buffer-pois/ \
       "type": "Polygon",
       "coordinates": [[[-9,42],[-8,42],[-8,43],[-9,43],[-9,42]]]
     }
+  }'
+```
+
+## Create An Itinerary
+
+Itineraries store the editor export JSON as `itinerary_json`, with localized title and description rows in `translations`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/itineraries/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": true,
+    "itinerary_json": {
+      "savedAt": "2026-07-02T09:00:00Z",
+      "points": [
+        {"type": "waypoint", "label": "Start", "coordinates": {"lat": 42.24, "lng": -8.72}},
+        {"type": "poi", "id": "1"}
+      ],
+      "segments": []
+    },
+    "translations": [
+      {
+        "language_code": "en",
+        "title": "Castle walk",
+        "description": "A short itinerary around the castle."
+      }
+    ]
   }'
 ```
 

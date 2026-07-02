@@ -46,7 +46,7 @@ const mapElement = document.getElementById("mapCanvas");
     const API_BASE_URL = "http://127.0.0.1:8000/api";
     const routeLine = L.polyline([], {
       color: "#1f6feb",
-      weight: 2,
+      weight: 4,
       opacity: 0.35,
       dashArray: "6 8"
     }).addTo(map);
@@ -69,6 +69,11 @@ const mapElement = document.getElementById("mapCanvas");
     const routeDialogBody = document.getElementById("routeDialogBody");
     const itineraryJsonDialog = document.getElementById("itineraryJsonDialog");
     const itineraryJsonPreview = document.getElementById("itineraryJsonPreview");
+    const itineraryLanguage = document.getElementById("itineraryLanguage");
+    const itineraryTitle = document.getElementById("itineraryTitle");
+    const itineraryDescription = document.getElementById("itineraryDescription");
+    const itinerarySaveStatus = document.getElementById("itinerarySaveStatus");
+    const saveItineraryToServer = document.getElementById("saveItineraryToServer");
     const downloadItineraryJson = document.getElementById("downloadItineraryJson");
     const poiDetailDialog = document.getElementById("poiDetailDialog");
     const poiDetailTitle = document.getElementById("poiDetailTitle");
@@ -81,6 +86,7 @@ const mapElement = document.getElementById("mapCanvas");
     let searchTimer = null;
     let searchAbortController = null;
     let savedItineraryState = null;
+    let savedItineraryExport = null;
     let itineraryJsonUrl = null;
     let nextPoiId = 1;
     let nextPointId = 1;
@@ -925,15 +931,73 @@ const mapElement = document.getElementById("mapCanvas");
 
     function saveItinerary() {
       savedItineraryState = currentItineraryState();
-      const exportJson = JSON.stringify(itineraryExportFromState(savedItineraryState), null, 2);
+      savedItineraryExport = itineraryExportFromState(savedItineraryState);
+      const exportJson = JSON.stringify(savedItineraryExport, null, 2);
 
       itineraryJsonPreview.textContent = exportJson;
+      itinerarySaveStatus.textContent = "";
+      itinerarySaveStatus.className = "save-status";
       if (itineraryJsonUrl) {
         URL.revokeObjectURL(itineraryJsonUrl);
       }
       itineraryJsonUrl = URL.createObjectURL(new Blob([exportJson], { type: "application/json" }));
       downloadItineraryJson.href = itineraryJsonUrl;
       itineraryJsonDialog.showModal();
+    }
+
+    async function saveItineraryRecordToServer() {
+      if (!savedItineraryExport) {
+        saveItinerary();
+        return;
+      }
+
+      const languageCode = itineraryLanguage.value.trim() || "en";
+      const title = itineraryTitle.value.trim();
+      const description = itineraryDescription.value.trim();
+
+      itinerarySaveStatus.className = "save-status";
+      if (!title) {
+        itinerarySaveStatus.textContent = "Enter a title before saving to the server.";
+        itinerarySaveStatus.classList.add("error");
+        itineraryTitle.focus();
+        return;
+      }
+
+      saveItineraryToServer.disabled = true;
+      itinerarySaveStatus.textContent = "Saving itinerary...";
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/itineraries/`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            enabled: true,
+            itinerary_json: savedItineraryExport,
+            translations: [
+              {
+                language_code: languageCode,
+                title,
+                description
+              }
+            ]
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(data.detail || JSON.stringify(data) || `Itinerary service returned ${response.status}`);
+        }
+
+        itinerarySaveStatus.textContent = `Saved itinerary #${data.id}.`;
+        itinerarySaveStatus.classList.add("success");
+      } catch (error) {
+        itinerarySaveStatus.textContent = `Could not save itinerary. ${error.message}`;
+        itinerarySaveStatus.classList.add("error");
+      } finally {
+        saveItineraryToServer.disabled = false;
+      }
     }
 
     function updateHistoryButtons() {
@@ -2090,6 +2154,7 @@ const mapElement = document.getElementById("mapCanvas");
     document.getElementById("fitRoute").addEventListener("click", fitRoute);
     document.getElementById("showRoute").addEventListener("click", showRouteSummary);
     document.getElementById("saveItinerary").addEventListener("click", saveItinerary);
+    saveItineraryToServer.addEventListener("click", saveItineraryRecordToServer);
     document.getElementById("revertItinerary").addEventListener("click", revertItinerary);
     document.getElementById("undoItinerary").addEventListener("click", undoItinerary);
     document.getElementById("redoItinerary").addEventListener("click", redoItinerary);

@@ -3,7 +3,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Category, CategoryTranslation, POI, POIImage, POITranslation
+from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation
 
 
 class POIAPITests(APITestCase):
@@ -159,3 +159,87 @@ class POIAPITests(APITestCase):
         self.assertEqual(poi.gps_longitude, -8.6)
         self.assertEqual(poi.translations.count(), 1)
         self.assertEqual(poi.images.count(), 1)
+
+    def test_itinerary_create_accepts_json_and_translations(self):
+        payload = {
+            "enabled": True,
+            "itinerary_json": {
+                "savedAt": "2026-07-02T09:00:00Z",
+                "points": [{"type": "poi", "id": str(self.poi.id)}],
+                "segments": [],
+            },
+            "translations": [
+                {
+                    "language_code": "en",
+                    "title": "Castle walk",
+                    "description": "A short walk by the castle.",
+                },
+                {
+                    "language_code": "es",
+                    "title": "Paseo del castillo",
+                    "description": "Un paseo breve junto al castillo.",
+                },
+            ],
+        }
+
+        response = self.client.post(reverse("itinerary-list"), payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        itinerary = Itinerary.objects.get(id=response.data["id"])
+        self.assertEqual(itinerary.itinerary_json["points"][0]["id"], str(self.poi.id))
+        self.assertEqual(itinerary.translations.count(), 2)
+        self.assertEqual(itinerary.translations.get(language_code="en").slug, "castle-walk")
+        self.assertEqual(itinerary.translations.get(language_code="es").slug, "paseo-del-castillo")
+        self.assertEqual(response["Access-Control-Allow-Origin"], "*")
+
+    def test_itinerary_create_requires_translation_title(self):
+        response = self.client.post(
+            reverse("itinerary-list"),
+            {
+                "enabled": True,
+                "itinerary_json": {
+                    "savedAt": "2026-07-02T09:00:00Z",
+                    "points": [],
+                    "segments": [],
+                },
+                "translations": [
+                    {
+                        "language_code": "en",
+                        "title": "",
+                        "description": "No title.",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_itinerary_list_returns_localized_content_and_searches(self):
+        itinerary = Itinerary.objects.create(
+            itinerary_json={
+                "savedAt": "2026-07-02T09:00:00Z",
+                "points": [],
+                "segments": [],
+            }
+        )
+        itinerary.translations.create(
+            language_code="en",
+            title="Castle walk",
+            description="A short walk by the castle.",
+            slug="castle-walk",
+        )
+        itinerary.translations.create(
+            language_code="es",
+            title="Paseo del castillo",
+            description="Un paseo breve junto al castillo.",
+            slug="paseo-castillo",
+        )
+
+        localized_response = self.client.get(reverse("itinerary-list"), {"language": "es"})
+        search_response = self.client.get(reverse("itinerary-list"), {"q": "castle"})
+
+        self.assertEqual(localized_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(localized_response.data["results"][0]["title"], "Paseo del castillo")
+        self.assertEqual(search_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(search_response.data["count"], 1)

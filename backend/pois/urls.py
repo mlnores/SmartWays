@@ -5,6 +5,8 @@ from .views import (
     buffer_poi_lookup,
     CategoryTranslationViewSet,
     CategoryViewSet,
+    ItineraryTranslationViewSet,
+    ItineraryViewSet,
     POIImageViewSet,
     POITranslationViewSet,
     POIViewSet,
@@ -18,6 +20,8 @@ router.register("poi-translations", POITranslationViewSet, basename="poi-transla
 router.register("categories", CategoryViewSet, basename="category")
 router.register("category-translations", CategoryTranslationViewSet, basename="category-translation")
 router.register("poi-images", POIImageViewSet, basename="poi-image")
+router.register("itineraries", ItineraryViewSet, basename="itinerary")
+router.register("itinerary-translations", ItineraryTranslationViewSet, basename="itinerary-translation")
 
 urlpatterns = [
     path("buffer-pois/", buffer_poi_lookup, name="buffer-poi-lookup"),

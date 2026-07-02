@@ -10,10 +10,12 @@ from rest_framework import viewsets
 from rest_framework.exceptions import ParseError, ValidationError
 from rest_framework.parsers import JSONParser
 
-from .models import Category, CategoryTranslation, POI, POIImage, POITranslation
+from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIImage, POITranslation
 from .serializers import (
     CategorySerializer,
     CategoryTranslationSerializer,
+    ItinerarySerializer,
+    ItineraryTranslationSerializer,
     POIImageSerializer,
     POISerializer,
     POITranslationSerializer,
@@ -278,6 +280,50 @@ class POITranslationViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(language_code=language)
         if poi_id:
             queryset = queryset.filter(poi_id=poi_id)
+
+        return queryset
+
+
+class ItineraryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
+    serializer_class = ItinerarySerializer
+
+    def get_queryset(self):
+        queryset = Itinerary.objects.prefetch_related("translations").distinct()
+
+        enabled = self.request.query_params.get("enabled")
+        if enabled is not None:
+            if enabled.lower() not in {"true", "false", "1", "0"}:
+                raise ValidationError({"enabled": "Use true or false."})
+            queryset = queryset.filter(enabled=enabled.lower() in {"true", "1"})
+
+        language = self.get_language()
+        if language:
+            queryset = queryset.filter(translations__language_code=language)
+
+        query = (self.request.query_params.get("q") or self.request.query_params.get("search") or "").strip()
+        if query:
+            queryset = queryset.filter(
+                Q(translations__title__icontains=query)
+                | Q(translations__description__icontains=query)
+                | Q(translations__slug__icontains=query)
+            )
+
+        return queryset.distinct()
+
+
+class ItineraryTranslationViewSet(viewsets.ModelViewSet):
+    serializer_class = ItineraryTranslationSerializer
+    queryset = ItineraryTranslation.objects.select_related("itinerary").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        language = self.request.query_params.get("language") or self.request.query_params.get("lang")
+        itinerary_id = self.request.query_params.get("itinerary")
+
+        if language:
+            queryset = queryset.filter(language_code=language)
+        if itinerary_id:
+            queryset = queryset.filter(itinerary_id=itinerary_id)
 
         return queryset
 
