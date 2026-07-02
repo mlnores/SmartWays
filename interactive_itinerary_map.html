@@ -76,6 +76,13 @@
           <div class="search-box">
             <label for="poiSearch">Search POI</label>
             <input id="poiSearch" type="search" autocomplete="off" placeholder="Search POI by name or category" />
+            <div class="search-filter-row">
+              <label class="checkbox-row" for="poiSearchVisibleMapOnly">
+                <input id="poiSearchVisibleMapOnly" type="checkbox" />
+                <span>Limit to current map view</span>
+              </label>
+              <button id="refreshPoiSearch" type="button" aria-label="Refresh POI search" title="Refresh POI search" disabled>↻</button>
+            </div>
           </div>
         </section>
 
@@ -92,10 +99,6 @@
             <input id="waypointSearch" type="search" autocomplete="off" placeholder="Search by name or address" />
           </div>
         </section>
-
-        <div class="hint" id="searchHint">
-          POI lookup asks the local backend for POIs inside the selected segment buffer.
-        </div>
       </div>
 
       <div class="point-list-wrap">

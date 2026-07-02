@@ -302,6 +302,38 @@ input {
   min-width: 0;
 }
 
+.search-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin: 0;
+}
+
+#refreshPoiSearch {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 30px;
+  min-width: 0;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  line-height: 1;
+}
+
 .tabs {
   display: flex;
   gap: 6px;
@@ -815,12 +847,6 @@ button:disabled:hover {
 .point-actions button {
   padding: 5px 8px;
   font-size: 0.85rem;
-}
-
-.hint {
-  margin-top: 12px;
-  font-size: 0.85rem;
-  color: var(--muted);
 }
 
 .route-dialog {

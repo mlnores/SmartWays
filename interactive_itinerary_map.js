@@ -29,6 +29,7 @@ const mapElement = document.getElementById("mapCanvas");
     let selectedPoiCategory = "";
     let pendingBufferWaypoint = null;
     let pendingBufferWaypointPopup = null;
+    let lastPoiSearchBbox = null;
     let nextMockPoiId = 1;
     const temporaryPoiLayer = window.L.markerClusterGroup
       ? L.markerClusterGroup({
@@ -56,13 +57,14 @@ const mapElement = document.getElementById("mapCanvas");
     const waypointSearchInput = document.getElementById("waypointSearch");
     const waypointSearchResults = document.getElementById("waypointSearchResults");
     const poiSearchInput = document.getElementById("poiSearch");
+    const poiSearchVisibleMapOnly = document.getElementById("poiSearchVisibleMapOnly");
+    const refreshPoiSearch = document.getElementById("refreshPoiSearch");
     const poiSearchResults = document.getElementById("poiSearchResults");
     const poiBrowser = document.getElementById("poiBrowser");
     const poiBrowserTitle = document.getElementById("poiBrowserTitle");
     const poiBrowserFilters = document.getElementById("poiBrowserFilters");
     const poiBrowserList = document.getElementById("poiBrowserList");
     const togglePoiBrowser = document.getElementById("togglePoiBrowser");
-    const searchHint = document.getElementById("searchHint");
     const routeDialog = document.getElementById("routeDialog");
     const routeDialogBody = document.getElementById("routeDialogBody");
     const itineraryJsonDialog = document.getElementById("itineraryJsonDialog");
@@ -86,11 +88,6 @@ const mapElement = document.getElementById("mapCanvas");
     let redoStack = [];
     let editingLabelIndex = null;
     const MAX_HISTORY_STATES = 100;
-    const searchHintText = {
-      poi: "POI lookup asks the local backend for POIs inside the selected segment buffer.",
-      waypoint: "Waypoint search uses Photon with OpenStreetMap data."
-    };
-
     function labelForIndex(index) {
       return String(index + 1);
     }
@@ -320,6 +317,11 @@ const mapElement = document.getElementById("mapCanvas");
       resultLists.forEach(element => {
         element.innerHTML = "";
       });
+
+      if (!resultsElement || resultsElement === poiSearchResults) {
+        lastPoiSearchBbox = null;
+        updatePoiSearchRefreshButton();
+      }
     }
 
     function renderPlaceSearchResults(features, resultsElement) {
@@ -388,6 +390,24 @@ const mapElement = document.getElementById("mapCanvas");
       }
     }
 
+    function currentMapBboxParam() {
+      const bounds = map.getBounds();
+      return [
+        bounds.getWest().toFixed(6),
+        bounds.getSouth().toFixed(6),
+        bounds.getEast().toFixed(6),
+        bounds.getNorth().toFixed(6)
+      ].join(",");
+    }
+
+    function updatePoiSearchRefreshButton() {
+      const query = poiSearchInput.value.trim();
+      refreshPoiSearch.disabled = !poiSearchVisibleMapOnly.checked ||
+        query.length < 3 ||
+        !lastPoiSearchBbox ||
+        currentMapBboxParam() === lastPoiSearchBbox;
+    }
+
     async function searchPlaces(query, resultsElement) {
       if (searchAbortController) {
         searchAbortController.abort();
@@ -437,6 +457,11 @@ const mapElement = document.getElementById("mapCanvas");
         enabled: "true",
         language: "en"
       });
+      let searchBbox = null;
+      if (poiSearchVisibleMapOnly.checked) {
+        searchBbox = currentMapBboxParam();
+        params.set("bbox", searchBbox);
+      }
 
       try {
         const response = await fetch(`${API_BASE_URL}/pois/?${params}`, {
@@ -450,6 +475,8 @@ const mapElement = document.getElementById("mapCanvas");
         const data = await response.json();
         const pois = Array.isArray(data.results) ? data.results : [];
         renderPoiSearchResults(pois, resultsElement);
+        lastPoiSearchBbox = searchBbox;
+        updatePoiSearchRefreshButton();
       } catch (error) {
         if (error.name === "AbortError") return;
         resultsElement.innerHTML = `
@@ -460,6 +487,7 @@ const mapElement = document.getElementById("mapCanvas");
             </button>
           </li>
         `;
+        updatePoiSearchRefreshButton();
       }
     }
 
@@ -2056,6 +2084,8 @@ const mapElement = document.getElementById("mapCanvas");
 
       addWaypointFromMapClick(event.latlng);
     });
+    map.on("moveend", updatePoiSearchRefreshButton);
+    map.on("zoomend", updatePoiSearchRefreshButton);
     document.getElementById("clearAll").addEventListener("click", clearAll);
     document.getElementById("fitRoute").addEventListener("click", fitRoute);
     document.getElementById("showRoute").addEventListener("click", showRouteSummary);
@@ -2120,7 +2150,6 @@ const mapElement = document.getElementById("mapCanvas");
         panel.hidden = panel.dataset.tabPanel !== tabName;
       });
 
-      searchHint.textContent = searchHintText[tabName] || "";
       window.clearTimeout(searchTimer);
       clearSearchResults();
       if (searchAbortController) {
@@ -2137,6 +2166,11 @@ const mapElement = document.getElementById("mapCanvas");
         if (query.length < 3) {
           clearSearchResults(resultsElement);
           return;
+        }
+
+        if (type === "poi") {
+          lastPoiSearchBbox = null;
+          updatePoiSearchRefreshButton();
         }
 
         searchTimer = window.setTimeout(() => {
@@ -2189,6 +2223,17 @@ const mapElement = document.getElementById("mapCanvas");
     tabButtons.forEach(button => {
       button.addEventListener("click", () => activateTab(button.dataset.tab));
     });
+
+    function refreshPoiSearchResults() {
+      const query = poiSearchInput.value.trim();
+      clearSearchResults(poiSearchResults);
+      if (query.length >= 3) {
+        searchPois(query, poiSearchResults);
+      }
+    }
+
+    poiSearchVisibleMapOnly.addEventListener("change", refreshPoiSearchResults);
+    refreshPoiSearch.addEventListener("click", refreshPoiSearchResults);
 
     bindSearch(poiSearchInput, poiSearchResults, "poi");
     bindSearch(waypointSearchInput, waypointSearchResults, "waypoint");
