@@ -10,7 +10,7 @@ from rest_framework import viewsets
 from rest_framework.exceptions import ParseError, ValidationError
 from rest_framework.parsers import JSONParser
 
-from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIImage, POITranslation
+from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIImage, POITranslation, Route, RouteTranslation
 from .serializers import (
     CategorySerializer,
     CategoryTranslationSerializer,
@@ -19,6 +19,8 @@ from .serializers import (
     POIImageSerializer,
     POISerializer,
     POITranslationSerializer,
+    RouteSerializer,
+    RouteTranslationSerializer,
     select_translation,
 )
 
@@ -288,7 +290,43 @@ class ItineraryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
     serializer_class = ItinerarySerializer
 
     def get_queryset(self):
-        queryset = Itinerary.objects.prefetch_related("translations").distinct()
+        queryset = Itinerary.objects.select_related("route").prefetch_related("translations", "route__translations").distinct()
+
+        enabled = self.request.query_params.get("enabled")
+        if enabled is not None:
+            if enabled.lower() not in {"true", "false", "1", "0"}:
+                raise ValidationError({"enabled": "Use true or false."})
+            queryset = queryset.filter(enabled=enabled.lower() in {"true", "1"})
+
+        language = self.get_language()
+        if language:
+            queryset = queryset.filter(translations__language_code=language)
+
+        route = self.request.query_params.get("route")
+        if route:
+            if route.lower() in {"none", "null", "unassigned"}:
+                queryset = queryset.filter(route__isnull=True)
+            elif route.isdigit():
+                queryset = queryset.filter(route_id=int(route))
+            else:
+                raise ValidationError({"route": "Use a route id or null."})
+
+        query = (self.request.query_params.get("q") or self.request.query_params.get("search") or "").strip()
+        if query:
+            queryset = queryset.filter(
+                Q(translations__title__icontains=query)
+                | Q(translations__description__icontains=query)
+                | Q(translations__slug__icontains=query)
+            )
+
+        return queryset.distinct()
+
+
+class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
+    serializer_class = RouteSerializer
+
+    def get_queryset(self):
+        queryset = Route.objects.prefetch_related("translations", "itineraries", "itineraries__translations").distinct()
 
         enabled = self.request.query_params.get("enabled")
         if enabled is not None:
@@ -309,6 +347,23 @@ class ItineraryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             )
 
         return queryset.distinct()
+
+
+class RouteTranslationViewSet(viewsets.ModelViewSet):
+    serializer_class = RouteTranslationSerializer
+    queryset = RouteTranslation.objects.select_related("route").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        language = self.request.query_params.get("language") or self.request.query_params.get("lang")
+        route_id = self.request.query_params.get("route")
+
+        if language:
+            queryset = queryset.filter(language_code=language)
+        if route_id:
+            queryset = queryset.filter(route_id=route_id)
+
+        return queryset
 
 
 class ItineraryTranslationViewSet(viewsets.ModelViewSet):

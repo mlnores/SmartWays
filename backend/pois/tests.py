@@ -3,7 +3,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation
+from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation, Route
 
 
 class POIAPITests(APITestCase):
@@ -214,6 +214,68 @@ class POIAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_route_create_accepts_translations(self):
+        response = self.client.post(
+            reverse("route-list"),
+            {
+                "enabled": True,
+                "translations": [
+                    {
+                        "language_code": "en",
+                        "title": "Camino route",
+                        "description": "A multi-stage route.",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        route = Route.objects.get(id=response.data["id"])
+        self.assertEqual(route.translations.get(language_code="en").slug, "camino-route")
+
+    def test_itinerary_can_be_route_stage(self):
+        route = Route.objects.create(enabled=True)
+        route.translations.create(
+            language_code="en",
+            title="Camino route",
+            description="A multi-stage route.",
+            slug="camino-route",
+        )
+
+        response = self.client.post(
+            reverse("itinerary-list"),
+            {
+                "enabled": True,
+                "route": route.id,
+                "stage_number": 1,
+                "itinerary_json": {
+                    "savedAt": "2026-07-02T09:00:00Z",
+                    "points": [],
+                    "segments": [],
+                },
+                "translations": [
+                    {
+                        "language_code": "en",
+                        "title": "Stage one",
+                        "description": "First day.",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["route"], route.id)
+        self.assertEqual(response.data["route_title"], "Camino route")
+        self.assertEqual(response.data["route_slug"], "camino-route")
+        self.assertEqual(response.data["stage_number"], 1)
+
+        route_response = self.client.get(reverse("itinerary-list"), {"route": route.id})
+        unassigned_response = self.client.get(reverse("itinerary-list"), {"route": "null"})
+        self.assertEqual(route_response.data["count"], 1)
+        self.assertEqual(unassigned_response.data["count"], 0)
 
     def test_itinerary_list_returns_localized_content_and_searches(self):
         itinerary = Itinerary.objects.create(

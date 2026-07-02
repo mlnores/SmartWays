@@ -10,6 +10,8 @@ from .views import (
     POIImageViewSet,
     POITranslationViewSet,
     POIViewSet,
+    RouteTranslationViewSet,
+    RouteViewSet,
     mock_poi_lookup,
 )
 
@@ -20,6 +22,8 @@ router.register("poi-translations", POITranslationViewSet, basename="poi-transla
 router.register("categories", CategoryViewSet, basename="category")
 router.register("category-translations", CategoryTranslationViewSet, basename="category-translation")
 router.register("poi-images", POIImageViewSet, basename="poi-image")
+router.register("routes", RouteViewSet, basename="route")
+router.register("route-translations", RouteTranslationViewSet, basename="route-translation")
 router.register("itineraries", ItineraryViewSet, basename="itinerary")
 router.register("itinerary-translations", ItineraryTranslationViewSet, basename="itinerary-translation")
 

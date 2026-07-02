@@ -11,6 +11,8 @@ from .models import (
     POI,
     POIImage,
     POITranslation,
+    Route,
+    RouteTranslation,
 )
 
 
@@ -88,6 +90,35 @@ class NestedItineraryTranslationSerializer(serializers.ModelSerializer):
         model = ItineraryTranslation
         fields = ["id", "language_code", "title", "description", "slug"]
         read_only_fields = ["id"]
+
+
+class RouteTranslationSerializer(serializers.ModelSerializer):
+    slug = serializers.SlugField(required=False, allow_blank=True)
+
+    class Meta:
+        model = RouteTranslation
+        fields = ["id", "route", "language_code", "title", "description", "slug"]
+        read_only_fields = ["id"]
+        validators = []
+
+    def validate(self, attrs):
+        title = (attrs.get("title") or "").strip()
+        if not title:
+            raise serializers.ValidationError({"title": "This field may not be blank."})
+        attrs["title"] = title
+        if not attrs.get("slug"):
+            attrs["slug"] = slug_from_title(title)
+        return attrs
+
+
+class NestedRouteTranslationSerializer(serializers.ModelSerializer):
+    slug = serializers.SlugField(required=False, allow_blank=True)
+
+    class Meta:
+        model = RouteTranslation
+        fields = ["id", "language_code", "title", "description", "slug"]
+        read_only_fields = ["id"]
+        validators = []
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -247,6 +278,8 @@ class ItinerarySerializer(serializers.ModelSerializer):
     title = serializers.SerializerMethodField()
     description = serializers.SerializerMethodField()
     slug = serializers.SerializerMethodField()
+    route_title = serializers.SerializerMethodField()
+    route_slug = serializers.SerializerMethodField()
     translations = NestedItineraryTranslationSerializer(many=True, required=False)
 
     class Meta:
@@ -254,6 +287,10 @@ class ItinerarySerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "enabled",
+            "route",
+            "route_title",
+            "route_slug",
+            "stage_number",
             "itinerary_json",
             "created_at",
             "updated_at",
@@ -276,6 +313,18 @@ class ItinerarySerializer(serializers.ModelSerializer):
         translation = self._localized_translation(obj)
         return translation.slug if translation else None
 
+    def get_route_title(self, obj):
+        if not obj.route_id:
+            return None
+        translation = select_translation(obj.route.translations.all(), self.context.get("language"))
+        return translation.title if translation else None
+
+    def get_route_slug(self, obj):
+        if not obj.route_id:
+            return None
+        translation = select_translation(obj.route.translations.all(), self.context.get("language"))
+        return translation.slug if translation else None
+
     def _localized_translation(self, obj):
         language = self.context.get("language")
         return select_translation(obj.translations.all(), language)
@@ -283,6 +332,13 @@ class ItinerarySerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if not isinstance(attrs.get("itinerary_json", self.instance.itinerary_json if self.instance else None), dict):
             raise serializers.ValidationError({"itinerary_json": "Expected an itinerary JSON object."})
+
+        route = attrs.get("route", self.instance.route if self.instance else None)
+        stage_number = attrs.get("stage_number", self.instance.stage_number if self.instance else None)
+        if route is not None and stage_number is None:
+            raise serializers.ValidationError({"stage_number": "Stage number is required when an itinerary belongs to a route."})
+        if route is None and stage_number is not None:
+            raise serializers.ValidationError({"route": "Route is required when a stage number is set."})
 
         translations = attrs.get("translations")
         if self.instance is None and not translations:
@@ -316,5 +372,83 @@ class ItinerarySerializer(serializers.ModelSerializer):
             instance.translations.all().delete()
             for translation_data in translations:
                 ItineraryTranslation.objects.create(itinerary=instance, **translation_data)
+
+        return instance
+
+
+class RouteSerializer(serializers.ModelSerializer):
+    title = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
+    slug = serializers.SerializerMethodField()
+    itinerary_count = serializers.SerializerMethodField()
+    translations = NestedRouteTranslationSerializer(many=True, required=False)
+
+    class Meta:
+        model = Route
+        fields = [
+            "id",
+            "enabled",
+            "created_at",
+            "updated_at",
+            "title",
+            "description",
+            "slug",
+            "itinerary_count",
+            "translations",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_title(self, obj):
+        translation = self._localized_translation(obj)
+        return translation.title if translation else None
+
+    def get_description(self, obj):
+        translation = self._localized_translation(obj)
+        return translation.description if translation else None
+
+    def get_slug(self, obj):
+        translation = self._localized_translation(obj)
+        return translation.slug if translation else None
+
+    def get_itinerary_count(self, obj):
+        return obj.itineraries.count()
+
+    def _localized_translation(self, obj):
+        language = self.context.get("language")
+        return select_translation(obj.translations.all(), language)
+
+    def validate(self, attrs):
+        translations = attrs.get("translations")
+        if self.instance is None and not translations:
+            raise serializers.ValidationError({"translations": "At least one route translation is required."})
+        if translations is not None:
+            for translation in translations:
+                title = (translation.get("title") or "").strip()
+                if not title:
+                    raise serializers.ValidationError({"translations": "Each route translation needs a title."})
+                translation["title"] = title
+                if not translation.get("slug"):
+                    translation["slug"] = slug_from_title(title)
+
+        return attrs
+
+    def create(self, validated_data):
+        translations = validated_data.pop("translations", [])
+        route = Route.objects.create(**validated_data)
+        for translation_data in translations:
+            RouteTranslation.objects.create(route=route, **translation_data)
+        return route
+
+    def update(self, instance, validated_data):
+        translations = validated_data.pop("translations", None)
+
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+
+        if translations is not None:
+            instance.translations.all().delete()
+            for translation_data in translations:
+                RouteTranslation.objects.create(route=instance, **translation_data)
 
         return instance

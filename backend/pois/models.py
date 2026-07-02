@@ -144,8 +144,65 @@ class POIImage(models.Model):
         return f"Image for POI {self.poi_id}"
 
 
+class Route(models.Model):
+    enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["id"]
+        indexes = [
+            models.Index(fields=["enabled"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        translation = self.translations.order_by("language_code").first()
+        return translation.title if translation else f"Route {self.pk}"
+
+
+class RouteTranslation(models.Model):
+    route = models.ForeignKey(
+        Route,
+        related_name="translations",
+        on_delete=models.CASCADE,
+    )
+    language_code = models.CharField(max_length=8, validators=[language_code_validator])
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    slug = models.SlugField(max_length=255, validators=[slug_validator], blank=True)
+
+    class Meta:
+        ordering = ["language_code", "title"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["route", "language_code"],
+                name="unique_route_translation_language",
+            ),
+            models.UniqueConstraint(
+                fields=["language_code", "slug"],
+                name="unique_route_translation_slug_per_language",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["language_code"]),
+            models.Index(fields=["slug"]),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.language_code})"
+
+
 class Itinerary(models.Model):
     enabled = models.BooleanField(default=True)
+    route = models.ForeignKey(
+        Route,
+        related_name="itineraries",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+    )
+    stage_number = models.PositiveIntegerField(blank=True, null=True)
     itinerary_json = models.JSONField()
     created_at = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(auto_now=True)
@@ -156,6 +213,14 @@ class Itinerary(models.Model):
         indexes = [
             models.Index(fields=["enabled"]),
             models.Index(fields=["created_at"]),
+            models.Index(fields=["route", "stage_number"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["route", "stage_number"],
+                condition=models.Q(route__isnull=False, stage_number__isnull=False),
+                name="unique_itinerary_stage_per_route",
+            ),
         ]
 
     def __str__(self):
