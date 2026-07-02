@@ -3,6 +3,7 @@ import json
 from django.contrib.gis.geos import GEOSGeometry, Polygon
 from django.core.paginator import Paginator
 from django.http import JsonResponse
+from django.db.models import Q
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import viewsets
@@ -209,6 +210,13 @@ class LanguageContextMixin:
         context["language"] = self.get_language()
         return context
 
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response["Access-Control-Allow-Origin"] = "*"
+        response["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
+
 
 class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
     serializer_class = POISerializer
@@ -242,11 +250,19 @@ class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             else:
                 queryset = queryset.filter(categories__slug=category)
 
+        query = (self.request.query_params.get("q") or self.request.query_params.get("search") or "").strip()
+        if query:
+            queryset = queryset.filter(
+                Q(translations__title__icontains=query)
+                | Q(categories__slug__icontains=query)
+                | Q(categories__translations__name__icontains=query)
+            )
+
         bbox = self.request.query_params.get("bbox")
         if bbox:
             queryset = queryset.filter(location__within=parse_bbox(bbox))
 
-        return queryset
+        return queryset.distinct()
 
 
 class POITranslationViewSet(viewsets.ModelViewSet):

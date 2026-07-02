@@ -322,7 +322,7 @@ const mapElement = document.getElementById("mapCanvas");
       });
     }
 
-    function renderSearchResults(features, resultsElement) {
+    function renderPlaceSearchResults(features, resultsElement) {
       resultsElement.innerHTML = "";
 
       features.forEach((feature, index) => {
@@ -345,6 +345,43 @@ const mapElement = document.getElementById("mapCanvas");
         item.innerHTML = `
           <button type="button" disabled>
             <span class="search-result-name">No results</span>
+          </button>
+        `;
+        resultsElement.appendChild(item);
+      }
+    }
+
+    function poiSearchDetail(poi) {
+      const categories = Array.isArray(poi.categories) ? poi.categories : [];
+      const categoryNames = categories
+        .map(category => category.name || category.slug)
+        .filter(Boolean);
+      if (categoryNames.length > 0) return categoryNames.join(", ");
+      return poi.description || "";
+    }
+
+    function renderPoiSearchResults(pois, resultsElement) {
+      resultsElement.innerHTML = "";
+
+      pois.forEach(poi => {
+        const title = poi.title || `POI ${poi.id}`;
+        const detail = poiSearchDetail(poi);
+        const item = document.createElement("li");
+
+        item.innerHTML = `
+          <button type="button" data-action="select-poi-search-result" data-poi-id="${escapeHtml(String(poi.id))}" data-label="${escapeHtml(title)}" data-lat="${poi.gps_latitude}" data-lng="${poi.gps_longitude}">
+            <span class="search-result-name">${escapeHtml(title)}</span>
+            ${detail ? `<span class="search-result-detail">${escapeHtml(detail)}</span>` : ""}
+          </button>
+        `;
+        resultsElement.appendChild(item);
+      });
+
+      if (pois.length === 0) {
+        const item = document.createElement("li");
+        item.innerHTML = `
+          <button type="button" disabled>
+            <span class="search-result-name">No POIs found</span>
           </button>
         `;
         resultsElement.appendChild(item);
@@ -375,13 +412,50 @@ const mapElement = document.getElementById("mapCanvas");
         }
 
         const data = await response.json();
-        renderSearchResults(Array.isArray(data.features) ? data.features : [], resultsElement);
+        renderPlaceSearchResults(Array.isArray(data.features) ? data.features : [], resultsElement);
       } catch (error) {
         if (error.name === "AbortError") return;
         resultsElement.innerHTML = `
           <li>
             <button type="button" disabled>
               <span class="search-result-name">Search unavailable</span>
+              <span class="search-result-detail">${escapeHtml(error.message)}</span>
+            </button>
+          </li>
+        `;
+      }
+    }
+
+    async function searchPois(query, resultsElement) {
+      if (searchAbortController) {
+        searchAbortController.abort();
+      }
+
+      searchAbortController = new AbortController();
+      const params = new URLSearchParams({
+        q: query,
+        enabled: "true",
+        language: "en"
+      });
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/pois/?${params}`, {
+          signal: searchAbortController.signal
+        });
+
+        if (!response.ok) {
+          throw new Error(`POI service returned ${response.status}`);
+        }
+
+        const data = await response.json();
+        const pois = Array.isArray(data.results) ? data.results : [];
+        renderPoiSearchResults(pois, resultsElement);
+      } catch (error) {
+        if (error.name === "AbortError") return;
+        resultsElement.innerHTML = `
+          <li>
+            <button type="button" disabled>
+              <span class="search-result-name">POI search unavailable</span>
               <span class="search-result-detail">${escapeHtml(error.message)}</span>
             </button>
           </li>
@@ -2066,11 +2140,30 @@ const mapElement = document.getElementById("mapCanvas");
         }
 
         searchTimer = window.setTimeout(() => {
-          searchPlaces(query, resultsElement);
+          if (type === "poi") {
+            searchPois(query, resultsElement);
+          } else {
+            searchPlaces(query, resultsElement);
+          }
         }, 500);
       });
 
       resultsElement.addEventListener("click", event => {
+        const poiButton = event.target.closest('button[data-action="select-poi-search-result"]');
+        if (poiButton) {
+          const lat = Number.parseFloat(poiButton.dataset.lat);
+          const lng = Number.parseFloat(poiButton.dataset.lng);
+          const index = addPoint(lat, lng, poiButton.dataset.label || "", "manual", "poi", poiButton.dataset.poiId || null);
+          inputElement.value = "";
+          clearSearchResults(resultsElement);
+          fitRoute();
+          if (index >= 0) {
+            activateTab("poi");
+            selectPointSegment(index);
+          }
+          return;
+        }
+
         const button = event.target.closest('button[data-action="select-search-result"]');
         if (!button) return;
 

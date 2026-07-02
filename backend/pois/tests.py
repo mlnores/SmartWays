@@ -63,6 +63,16 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
 
+    def test_poi_list_searches_titles_and_categories(self):
+        title_response = self.client.get(reverse("poi-list"), {"q": "cast"})
+        category_response = self.client.get(reverse("poi-list"), {"q": "heritage"})
+
+        self.assertEqual(title_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(title_response.data["count"], 1)
+        self.assertEqual(title_response["Access-Control-Allow-Origin"], "*")
+        self.assertEqual(category_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(category_response.data["count"], 1)
+
     def test_poi_list_filters_by_bbox(self):
         response = self.client.get(reverse("poi-list"), {"bbox": "-9,42,-8,43"})
 

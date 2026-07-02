@@ -76,7 +76,6 @@
           <div class="search-box">
             <label for="poiSearch">Search POI</label>
             <input id="poiSearch" type="search" autocomplete="off" placeholder="Search POI by name or category" />
-            <ol class="search-results" id="poiSearchResults"></ol>
           </div>
         </section>
 
@@ -91,7 +90,6 @@
           <div class="search-box">
             <label for="waypointSearch">Search place</label>
             <input id="waypointSearch" type="search" autocomplete="off" placeholder="Search by name or address" />
-            <ol class="search-results" id="waypointSearchResults"></ol>
           </div>
         </section>
 
@@ -101,6 +99,8 @@
       </div>
 
       <div class="point-list-wrap">
+        <ol class="search-results" id="poiSearchResults"></ol>
+        <ol class="search-results" id="waypointSearchResults"></ol>
         <ol class="point-list" id="pointList"></ol>
       </div>
 
