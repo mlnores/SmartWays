@@ -192,6 +192,31 @@ When a buffer contains many POIs, the editor clusters markers with `leaflet.mark
 
 The editor's Save button opens a dialog with the current itinerary JSON, plus language, title, and description fields. Use `Save to server` to create an itinerary through `POST /api/itineraries/`; the JSON remains available for download from the same dialog.
 
+## Angular Frontend
+
+The repository includes an incremental Angular frontend under `frontend/`. It keeps Django as the API/backend and currently provides:
+
+- `/itineraries` to browse saved itineraries from `GET /api/itineraries/`
+- `/itineraries/new` to open the existing itinerary editor for a new itinerary
+- `/itineraries/:id/edit` to open the existing editor and load a saved itinerary by id
+- `/pois` to browse enabled POIs from `GET /api/pois/`
+
+The existing editor is served inside the Angular app from `frontend/public/editor/` during this migration. After changing `interactive_itinerary_map.html`, `.css`, or `.js`, copy the updated files into `frontend/public/editor/` until the editor is fully refactored into Angular components.
+
+Run the Angular app with:
+
+```bash
+cd frontend
+npm install
+npm start
+```
+
+Then open:
+
+```text
+http://127.0.0.1:4200/
+```
+
 ## Create A POI
 
 ```bash

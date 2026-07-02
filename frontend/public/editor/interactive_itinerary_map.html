@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Itinerary Editor</title>
+
+  <!-- Leaflet CSS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIINfQnNVwYkzA7I2D+Jw6UD0bs4kNLAJjI="
+    crossorigin=""
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
+  />
+
+  <link rel="stylesheet" href="interactive_itinerary_map.css" />
+</head>
+<body>
+  <main class="app">
+    <aside>
+      <div class="panel-content">
+        <div class="panel-header">
+          <h1>Itinerary Editor</h1>
+          <div class="panel-header-actions" aria-label="Itinerary state actions">
+            <button id="revertItinerary" type="button" title="Revert to last saved itinerary">Revert</button>
+            <button id="undoItinerary" type="button" aria-label="Undo last itinerary change" title="Undo last itinerary change (Cmd/Ctrl+Z)">↺</button>
+            <button id="redoItinerary" type="button" aria-label="Redo last undone itinerary change" title="Redo last undone itinerary change (Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)">↻</button>
+            <button id="saveItinerary" type="button" class="primary" title="Save current itinerary">Save</button>
+          </div>
+        </div>
+        <p>
+          Click the map to add points, or search for a place below.
+          The sequence is drawn in the order 1 → 2 → 3 → … Drag points to reorder them.
+        </p>
+
+        <div class="tabs" role="tablist" aria-label="Add itinerary items">
+          <button
+            class="tab-button active"
+            id="poiTab"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="poiPanel"
+            data-tab="poi"
+          >
+            Add POI
+          </button>
+          <button
+            class="tab-button"
+            id="waypointTab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="waypointPanel"
+            data-tab="waypoint"
+          >
+            Add waypoint
+          </button>
+        </div>
+
+        <section
+          class="tab-panel"
+          id="poiPanel"
+          role="tabpanel"
+          aria-labelledby="poiTab"
+          data-tab-panel="poi"
+        >
+          <div class="search-box">
+            <label for="poiSearch">Search POI</label>
+            <input id="poiSearch" type="search" autocomplete="off" placeholder="Search POI by name or category" />
+            <div class="search-filter-row">
+              <label class="checkbox-row" for="poiSearchVisibleMapOnly">
+                <input id="poiSearchVisibleMapOnly" type="checkbox" />
+                <span>Limit to current map view</span>
+              </label>
+              <button id="refreshPoiSearch" type="button" aria-label="Refresh POI search" title="Refresh POI search" disabled>↻</button>
+            </div>
+          </div>
+        </section>
+
+        <section
+          class="tab-panel"
+          id="waypointPanel"
+          role="tabpanel"
+          aria-labelledby="waypointTab"
+          data-tab-panel="waypoint"
+          hidden
+        >
+          <div class="search-box">
+            <label for="waypointSearch">Search place</label>
+            <input id="waypointSearch" type="search" autocomplete="off" placeholder="Search by name or address" />
+          </div>
+        </section>
+      </div>
+
+      <div class="point-list-wrap">
+        <ol class="search-results" id="poiSearchResults"></ol>
+        <ol class="search-results" id="waypointSearchResults"></ol>
+        <ol class="point-list" id="pointList"></ol>
+      </div>
+
+      <div class="panel-footer">
+        <button class="danger" id="clearAll">Clear all</button>
+        <button id="fitRoute">Fit points</button>
+        <button id="showRoute">Route summary</button>
+      </div>
+    </aside>
+
+    <section id="map" aria-label="Interactive itinerary map">
+      <div id="mapCanvas"></div>
+      <aside class="poi-browser collapsed" id="poiBrowser" hidden aria-label="POIs in current buffer">
+        <div class="poi-browser-header">
+          <span id="poiBrowserTitle">POIs</span>
+          <button id="togglePoiBrowser" type="button" aria-expanded="false" title="Show POI list"></button>
+        </div>
+        <div class="poi-browser-filters" id="poiBrowserFilters"></div>
+        <div class="poi-browser-list" id="poiBrowserList"></div>
+      </aside>
+    </section>
+  </main>
+
+  <dialog class="route-dialog" id="routeDialog">
+    <div class="route-dialog-header">
+      <h2>Route Summary</h2>
+      <button id="closeRouteDialog" aria-label="Close route summary">×</button>
+    </div>
+    <div class="route-dialog-body" id="routeDialogBody"></div>
+    <div class="route-dialog-footer">
+      <button id="closeRouteDialogFooter">Close</button>
+    </div>
+  </dialog>
+
+  <dialog class="route-dialog" id="itineraryJsonDialog">
+    <div class="route-dialog-header">
+      <h2>Save Itinerary</h2>
+      <button id="closeItineraryJsonDialog" aria-label="Close saved itinerary JSON">×</button>
+    </div>
+    <div class="route-dialog-body">
+      <div class="itinerary-save-form">
+        <label>
+          <span>Language</span>
+          <input id="itineraryLanguage" type="text" value="en" maxlength="8" autocomplete="off" />
+        </label>
+        <label>
+          <span>Title</span>
+          <input id="itineraryTitle" type="text" maxlength="255" autocomplete="off" placeholder="Itinerary title" required />
+        </label>
+        <label>
+          <span>Description</span>
+          <textarea id="itineraryDescription" rows="3" placeholder="Optional description"></textarea>
+        </label>
+        <p class="save-status" id="itinerarySaveStatus" role="status"></p>
+      </div>
+      <pre class="json-preview" id="itineraryJsonPreview" tabindex="0"></pre>
+    </div>
+    <div class="route-dialog-footer">
+      <button id="saveItineraryToServer" type="button" class="primary">Save to server</button>
+      <a class="button-link" id="downloadItineraryJson" download="itinerary.json">Download JSON</a>
+      <button id="closeItineraryJsonDialogFooter">Close</button>
+    </div>
+  </dialog>
+
+  <dialog class="route-dialog poi-detail-dialog" id="poiDetailDialog">
+    <div class="route-dialog-header">
+      <h2 id="poiDetailTitle">POI</h2>
+      <button id="closePoiDetailDialog" aria-label="Close POI details">×</button>
+    </div>
+    <div class="route-dialog-body poi-detail-body" id="poiDetailBody"></div>
+    <div class="route-dialog-footer">
+      <button id="addPoiFromDetail" type="button" class="primary">Add POI</button>
+      <button id="closePoiDetailDialogFooter" type="button">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Leaflet JS -->
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin="">
+  </script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
+  <script src="interactive_itinerary_map.js"></script>
+</body>
+</html>
