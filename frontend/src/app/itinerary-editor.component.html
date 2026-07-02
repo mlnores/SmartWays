@@ -1,0 +1,49 @@
+<main class="app" #editorRoot>
+  <app-itinerary-editor-sidebar
+    (revertItinerary)="revertItinerary()"
+    (undoItinerary)="undoItinerary()"
+    (redoItinerary)="redoItinerary()"
+    (saveItinerary)="saveItinerary()"
+    (tabSelected)="activateTab($event)"
+    (searchInput)="handleSearchInput($event)"
+    (searchKeydown)="handleSearchKeydown($event.type, $event.event)"
+    (poiSearchRefresh)="refreshPoiSearchResults()"
+    (searchResultsClick)="handleSearchResultsClick($event.type, $event.event)"
+    (pointListKeydown)="handlePointListKeydown($event)"
+    (pointListClick)="handlePointListClick($event)"
+    (pointListInput)="handlePointListInput($event)"
+    (pointListChange)="handlePointListChange($event)"
+    (pointListFocusout)="handlePointListFocusout($event)"
+    (pointListPointerdown)="handlePointListPointerdown($event)"
+    (pointListPointerup)="handlePointListPointerup()"
+    (pointListDragstart)="handlePointListDragstart($event)"
+    (pointListDragover)="handlePointListDragover($event)"
+    (pointListDragleave)="handlePointListDragleave($event)"
+    (pointListDrop)="handlePointListDrop($event)"
+    (pointListDragend)="handlePointListDragend()"
+    (clearAll)="clearAll()"
+    (fitRoute)="fitRoute()"
+    (showRouteSummary)="showRouteSummary()"
+  ></app-itinerary-editor-sidebar>
+
+  <app-itinerary-editor-map
+    #mapComponent
+    (mapCanvasClick)="handleMapCanvasClick($event)"
+    (togglePoiBrowser)="togglePoiBrowser()"
+    (poiBrowserFiltersChange)="handlePoiBrowserFiltersChange($event)"
+    (poiBrowserListClick)="handlePoiBrowserListClick($event)"
+    (poiBrowserListMouseover)="handlePoiBrowserListMouseover($event)"
+    (poiBrowserListMouseout)="handlePoiBrowserListMouseout($event)"
+    (poiBrowserListFocusin)="handlePoiBrowserListFocusin($event)"
+    (poiBrowserListFocusout)="handlePoiBrowserListFocusout($event)"
+  ></app-itinerary-editor-map>
+</main>
+
+<app-itinerary-editor-dialogs
+  (closeRouteDialog)="closeRouteDialog()"
+  (closeItineraryJsonDialog)="closeItineraryJsonDialog()"
+  (saveItineraryToServer)="saveItineraryToServer()"
+  (closePoiDetailDialog)="closePoiDetailDialog()"
+  (poiDetailBodyClick)="handlePoiDetailBodyClick($event)"
+  (addPoiFromDetail)="addPoiFromDetail()"
+></app-itinerary-editor-dialogs>

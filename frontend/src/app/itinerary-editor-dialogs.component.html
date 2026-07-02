@@ -1,0 +1,52 @@
+<dialog class="route-dialog" id="routeDialog">
+  <div class="route-dialog-header">
+    <h2>Route Summary</h2>
+    <button id="closeRouteDialog" aria-label="Close route summary" (click)="closeRouteDialog.emit()">×</button>
+  </div>
+  <div class="route-dialog-body" id="routeDialogBody"></div>
+  <div class="route-dialog-footer">
+    <button id="closeRouteDialogFooter" (click)="closeRouteDialog.emit()">Close</button>
+  </div>
+</dialog>
+
+<dialog class="route-dialog" id="itineraryJsonDialog">
+  <div class="route-dialog-header">
+    <h2>Save Itinerary</h2>
+    <button id="closeItineraryJsonDialog" aria-label="Close saved itinerary JSON" (click)="closeItineraryJsonDialog.emit()">×</button>
+  </div>
+  <div class="route-dialog-body">
+    <div class="itinerary-save-form">
+      <label>
+        <span>Language</span>
+        <input id="itineraryLanguage" type="text" value="en" maxlength="8" autocomplete="off" />
+      </label>
+      <label>
+        <span>Title</span>
+        <input id="itineraryTitle" type="text" maxlength="255" autocomplete="off" placeholder="Itinerary title" required />
+      </label>
+      <label>
+        <span>Description</span>
+        <textarea id="itineraryDescription" rows="3" placeholder="Optional description"></textarea>
+      </label>
+      <p class="save-status" id="itinerarySaveStatus" role="status"></p>
+    </div>
+    <pre class="json-preview" id="itineraryJsonPreview" tabindex="0"></pre>
+  </div>
+  <div class="route-dialog-footer">
+    <button id="saveItineraryToServer" type="button" class="primary" (click)="saveItineraryToServer.emit()">Save to server</button>
+    <a class="button-link" id="downloadItineraryJson" download="itinerary.json">Download JSON</a>
+    <button id="closeItineraryJsonDialogFooter" (click)="closeItineraryJsonDialog.emit()">Close</button>
+  </div>
+</dialog>
+
+<dialog class="route-dialog poi-detail-dialog" id="poiDetailDialog">
+  <div class="route-dialog-header">
+    <h2 id="poiDetailTitle">POI</h2>
+    <button id="closePoiDetailDialog" aria-label="Close POI details" (click)="closePoiDetailDialog.emit()">×</button>
+  </div>
+  <div class="route-dialog-body poi-detail-body" id="poiDetailBody" (click)="poiDetailBodyClick.emit($event)"></div>
+  <div class="route-dialog-footer">
+    <button id="addPoiFromDetail" type="button" class="primary" (click)="addPoiFromDetail.emit()">Add POI</button>
+    <button id="closePoiDetailDialogFooter" type="button" (click)="closePoiDetailDialog.emit()">Close</button>
+  </div>
+</dialog>

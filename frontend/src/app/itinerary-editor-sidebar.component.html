@@ -1,0 +1,109 @@
+<aside>
+  <div class="panel-content">
+    <div class="panel-header">
+      <div class="panel-title">
+        <h1>Itinerary Editor</h1>
+      </div>
+      <div class="panel-header-actions" aria-label="Itinerary state actions">
+        <button class="editor-help" type="button" aria-label="Editor help">
+          ?
+          <span class="editor-help-tooltip" role="tooltip">
+            Click the map to add points, or search for a place below.
+            The sequence is drawn in the order 1 → 2 → 3 → … Drag points to reorder them.
+          </span>
+        </button>
+        <button id="revertItinerary" type="button" title="Revert to last saved itinerary" (click)="revertItinerary.emit()">Revert</button>
+        <button id="undoItinerary" type="button" aria-label="Undo last itinerary change" title="Undo last itinerary change (Cmd/Ctrl+Z)" (click)="undoItinerary.emit()">↺</button>
+        <button id="redoItinerary" type="button" aria-label="Redo last undone itinerary change" title="Redo last undone itinerary change (Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)" (click)="redoItinerary.emit()">↻</button>
+        <button id="saveItinerary" type="button" class="primary" title="Save current itinerary" (click)="saveItinerary.emit()">Save</button>
+      </div>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Add itinerary items">
+      <button
+        class="tab-button active"
+        id="poiTab"
+        type="button"
+        role="tab"
+        aria-selected="true"
+        aria-controls="poiPanel"
+        data-tab="poi"
+        (click)="tabSelected.emit('poi')"
+      >
+        Add POI
+      </button>
+      <button
+        class="tab-button"
+        id="waypointTab"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        aria-controls="waypointPanel"
+        data-tab="waypoint"
+        (click)="tabSelected.emit('waypoint')"
+      >
+        Add waypoint
+      </button>
+    </div>
+
+    <section
+      class="tab-panel"
+      id="poiPanel"
+      role="tabpanel"
+      aria-labelledby="poiTab"
+      data-tab-panel="poi"
+    >
+      <div class="search-box">
+        <label for="poiSearch">Search POI</label>
+        <input id="poiSearch" type="search" autocomplete="off" placeholder="Search POI by name or category" (input)="searchInput.emit('poi')" (keydown)="searchKeydown.emit({ type: 'poi', event: $event })" />
+        <ol class="search-results" id="poiSearchResults" (click)="searchResultsClick.emit({ type: 'poi', event: $event })"></ol>
+        <div class="search-filter-row">
+          <label class="checkbox-row" for="poiSearchVisibleMapOnly">
+            <input id="poiSearchVisibleMapOnly" type="checkbox" (change)="poiSearchRefresh.emit()" />
+            <span>Limit to current map view</span>
+          </label>
+          <button id="refreshPoiSearch" type="button" aria-label="Refresh POI search" title="Refresh POI search" disabled (click)="poiSearchRefresh.emit()">↻</button>
+        </div>
+      </div>
+    </section>
+
+    <section
+      class="tab-panel"
+      id="waypointPanel"
+      role="tabpanel"
+      aria-labelledby="waypointTab"
+      data-tab-panel="waypoint"
+      hidden
+    >
+      <div class="search-box">
+        <label for="waypointSearch">Search place</label>
+        <input id="waypointSearch" type="search" autocomplete="off" placeholder="Search by name or address" (input)="searchInput.emit('waypoint')" (keydown)="searchKeydown.emit({ type: 'waypoint', event: $event })" />
+        <ol class="search-results" id="waypointSearchResults" (click)="searchResultsClick.emit({ type: 'waypoint', event: $event })"></ol>
+      </div>
+    </section>
+  </div>
+
+  <div class="point-list-wrap">
+    <ol
+      class="point-list"
+      id="pointList"
+      (keydown)="pointListKeydown.emit($event)"
+      (click)="pointListClick.emit($event)"
+      (input)="pointListInput.emit($event)"
+      (change)="pointListChange.emit($event)"
+      (focusout)="pointListFocusout.emit($event)"
+      (pointerdown)="pointListPointerdown.emit($event)"
+      (pointerup)="pointListPointerup.emit()"
+      (dragstart)="pointListDragstart.emit($event)"
+      (dragover)="pointListDragover.emit($event)"
+      (dragleave)="pointListDragleave.emit($event)"
+      (drop)="pointListDrop.emit($event)"
+      (dragend)="pointListDragend.emit()"
+    ></ol>
+  </div>
+
+  <div class="panel-footer">
+    <button class="danger" id="clearAll" (click)="clearAll.emit()">Clear all</button>
+    <button id="fitRoute" (click)="fitRoute.emit()">Fit points</button>
+    <button id="showRoute" (click)="showRouteSummary.emit()">Route summary</button>
+  </div>
+</aside>

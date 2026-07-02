@@ -197,11 +197,11 @@ The editor's Save button opens a dialog with the current itinerary JSON, plus la
 The repository includes an incremental Angular frontend under `frontend/`. It keeps Django as the API/backend and currently provides:
 
 - `/itineraries` to browse saved itineraries from `GET /api/itineraries/`
-- `/itineraries/new` to open the existing itinerary editor for a new itinerary
-- `/itineraries/:id/edit` to open the existing editor and load a saved itinerary by id
+- `/itineraries/new` to open the Angular itinerary editor for a new itinerary
+- `/itineraries/:id/edit` to open the Angular itinerary editor and load a saved itinerary by id
 - `/pois` to browse enabled POIs from `GET /api/pois/`
 
-The existing editor is served inside the Angular app from `frontend/public/editor/` during this migration. After changing `interactive_itinerary_map.html`, `.css`, or `.js`, copy the updated files into `frontend/public/editor/` until the editor is fully refactored into Angular components.
+The Angular itinerary editor currently keeps the former editor behavior in one large component and a generated runtime initializer. The root `interactive_itinerary_map.html`, `.css`, and `.js` files remain as a static fallback while the editor is incrementally refactored into smaller Angular pieces.
 
 Run the Angular app with:
 

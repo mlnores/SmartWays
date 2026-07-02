@@ -1,0 +1,19 @@
+<section id="map" aria-label="Interactive itinerary map">
+  <div id="mapCanvas" #mapCanvas (click)="mapCanvasClick.emit($event)"></div>
+  <aside class="poi-browser collapsed" id="poiBrowser" hidden aria-label="POIs in current buffer">
+    <div class="poi-browser-header">
+      <span id="poiBrowserTitle">POIs</span>
+      <button id="togglePoiBrowser" type="button" aria-expanded="false" title="Show POI list" (click)="togglePoiBrowser.emit()"></button>
+    </div>
+    <div class="poi-browser-filters" id="poiBrowserFilters" (change)="poiBrowserFiltersChange.emit($event)"></div>
+    <div
+      class="poi-browser-list"
+      id="poiBrowserList"
+      (click)="poiBrowserListClick.emit($event)"
+      (mouseover)="poiBrowserListMouseover.emit($event)"
+      (mouseout)="poiBrowserListMouseout.emit($event)"
+      (focusin)="poiBrowserListFocusin.emit($event)"
+      (focusout)="poiBrowserListFocusout.emit($event)"
+    ></div>
+  </aside>
+</section>
