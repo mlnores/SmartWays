@@ -915,6 +915,35 @@ button:disabled:hover {
   white-space: pre;
 }
 
+.waypoint-confirm-popup .leaflet-popup-content {
+  margin: 10px;
+}
+
+.waypoint-confirm-card {
+  display: grid;
+  gap: 8px;
+}
+
+.waypoint-confirm-card strong {
+  font-size: 1rem;
+}
+
+.waypoint-confirm-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.waypoint-confirm-card div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.waypoint-confirm-card button {
+  padding: 6px 12px;
+}
+
 .poi-browser {
   position: absolute;
   right: 14px;

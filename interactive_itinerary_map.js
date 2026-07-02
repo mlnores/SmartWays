@@ -27,6 +27,8 @@ const mapElement = document.getElementById("mapCanvas");
     let displayedPoiMarkers = new Map();
     let poiBrowserCollapsed = true;
     let selectedPoiCategory = "";
+    let pendingBufferWaypoint = null;
+    let pendingBufferWaypointPopup = null;
     let nextMockPoiId = 1;
     const temporaryPoiLayer = window.L.markerClusterGroup
       ? L.markerClusterGroup({
@@ -888,6 +890,36 @@ const mapElement = document.getElementById("mapCanvas");
       undoStack.push(currentItineraryState());
       restoreItineraryState(redoStack.pop());
       updateHistoryButtons();
+    }
+
+    function isEditableShortcutTarget(target) {
+      if (!(target instanceof Element)) return false;
+      return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+    }
+
+    function handleHistoryShortcut(event) {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || isEditableShortcutTarget(event.target)) {
+        return false;
+      }
+
+      const key = event.key.toLowerCase();
+      const isUndo = key === "z" && !event.shiftKey;
+      const isRedo = (key === "z" && event.shiftKey) || key === "y";
+
+      if (!isUndo && !isRedo) {
+        return false;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (isUndo) {
+        undoItinerary();
+      } else {
+        redoItinerary();
+      }
+
+      return true;
     }
 
     function revertItinerary() {
@@ -1879,22 +1911,76 @@ const mapElement = document.getElementById("mapCanvas");
       renderList();
     }
 
-    map.on("click", event => {
-      if (activeSegmentIndex !== null && segmentBufferLayer) {
-        const activeBuffer = segmentBufferGeometry(activeSegmentIndex);
-        const clickedPoint = turf.point([event.latlng.lng, event.latlng.lat]);
-        if (!activeBuffer || !turf.booleanPointInPolygon(clickedPoint, activeBuffer)) {
-          deactivateSegment();
-        }
-        return;
-      }
-
-      const index = addPoint(event.latlng.lat, event.latlng.lng);
+    function addWaypointFromMapClick(latlng) {
+      const index = addPoint(latlng.lat, latlng.lng);
       if (index >= 0) {
         activateTab("waypoint");
         selectPointSegment(index);
         relabelPointFromGeocoder(index, false);
       }
+    }
+
+    function confirmPendingBufferWaypoint(shouldAdd) {
+      const waypoint = pendingBufferWaypoint;
+      const popup = pendingBufferWaypointPopup;
+      pendingBufferWaypoint = null;
+      pendingBufferWaypointPopup = null;
+
+      if (popup) {
+        map.closePopup(popup);
+      }
+
+      if (shouldAdd && waypoint) {
+        addWaypointFromMapClick(waypoint);
+      }
+    }
+
+    function openBufferWaypointPrompt(latlng) {
+      const popup = L.popup({
+        className: "waypoint-confirm-popup",
+        closeButton: false,
+        closeOnClick: false,
+        autoClose: true,
+        minWidth: 220
+      });
+
+      pendingBufferWaypoint = latlng;
+      pendingBufferWaypointPopup = popup;
+      popup
+        .on("remove", () => {
+          if (pendingBufferWaypointPopup === popup) {
+            pendingBufferWaypoint = null;
+            pendingBufferWaypointPopup = null;
+          }
+        })
+        .setLatLng(latlng)
+        .setContent(`
+          <article class="waypoint-confirm-card">
+            <strong>Add waypoint here?</strong>
+            <p>Press Enter for yes or Esc for no.</p>
+            <div>
+              <button type="button" class="primary" data-action="confirm-buffer-waypoint" data-choice="yes">Yes</button>
+              <button type="button" data-action="confirm-buffer-waypoint" data-choice="no">No</button>
+            </div>
+          </article>
+        `)
+        .openOn(map);
+    }
+
+    map.on("click", event => {
+      if (activeSegmentIndex !== null && segmentBufferLayer) {
+        const activeBuffer = segmentBufferGeometry(activeSegmentIndex);
+        const clickedPoint = turf.point([event.latlng.lng, event.latlng.lat]);
+        if (!activeBuffer || !turf.booleanPointInPolygon(clickedPoint, activeBuffer)) {
+          confirmPendingBufferWaypoint(false);
+          deactivateSegment();
+        } else {
+          openBufferWaypointPrompt(event.latlng);
+        }
+        return;
+      }
+
+      addWaypointFromMapClick(event.latlng);
     });
     document.getElementById("clearAll").addEventListener("click", clearAll);
     document.getElementById("fitRoute").addEventListener("click", fitRoute);
@@ -1909,6 +1995,23 @@ const mapElement = document.getElementById("mapCanvas");
     document.getElementById("closeItineraryJsonDialogFooter").addEventListener("click", () => itineraryJsonDialog.close());
     document.getElementById("closePoiDetailDialog").addEventListener("click", () => poiDetailDialog.close());
     document.getElementById("closePoiDetailDialogFooter").addEventListener("click", () => poiDetailDialog.close());
+
+    document.addEventListener("keydown", event => {
+      if (handleHistoryShortcut(event)) return;
+
+      if (!pendingBufferWaypoint) return;
+      if (event.target.closest("input, textarea, select")) return;
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        confirmPendingBufferWaypoint(true);
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        confirmPendingBufferWaypoint(false);
+      }
+    });
 
     addPoiFromDetail.addEventListener("click", () => {
       if (!detailedPoi) return;
@@ -2164,6 +2267,12 @@ const mapElement = document.getElementById("mapCanvas");
     });
 
     mapElement.addEventListener("click", event => {
+      const confirmBufferWaypointButton = event.target.closest('button[data-action="confirm-buffer-waypoint"]');
+      if (confirmBufferWaypointButton) {
+        confirmPendingBufferWaypoint(confirmBufferWaypointButton.dataset.choice === "yes");
+        return;
+      }
+
       const relabelButton = event.target.closest('button[data-action="relabel-map-point"]');
       if (relabelButton) {
         const index = Number.parseInt(relabelButton.dataset.index, 10);

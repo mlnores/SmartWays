@@ -55,6 +55,14 @@ python manage.py createsuperuser
 python manage.py runserver
 ```
 
+Open the Django admin panel at:
+
+```text
+http://127.0.0.1:8000/admin/
+```
+
+For local development, keep `DJANGO_DEBUG=1` when starting the server. Without it, Django will not serve admin static assets and the admin panel may appear unstyled.
+
 The root backend page is available at:
 
 ```text
