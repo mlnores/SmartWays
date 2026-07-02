@@ -2168,17 +2168,23 @@ const mapElement = document.getElementById("mapCanvas");
     document.addEventListener("keydown", event => {
       if (handleHistoryShortcut(event)) return;
 
-      if (!pendingBufferWaypoint) return;
       if (event.target.closest("input, textarea, select")) return;
 
-      if (event.key === "Enter") {
+      if (pendingBufferWaypoint && event.key === "Enter") {
         event.preventDefault();
         confirmPendingBufferWaypoint(true);
+        return;
       }
 
       if (event.key === "Escape") {
         event.preventDefault();
-        confirmPendingBufferWaypoint(false);
+        if (pendingBufferWaypoint) {
+          confirmPendingBufferWaypoint(false);
+          return;
+        }
+        if (activeSegmentIndex !== null && segmentBufferLayer) {
+          deactivateSegment();
+        }
       }
     });
 
