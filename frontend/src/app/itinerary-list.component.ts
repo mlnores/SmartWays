@@ -1,7 +1,7 @@
 import { AsyncPipe, DatePipe, NgTemplateOutlet } from '@angular/common';
 import { Component, ElementRef, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Itinerary, Route, Translation } from './api.service';
@@ -67,7 +67,9 @@ interface ItineraryJsonExport {
           <p>{{ routeSlug ? 'Browse the constituent itineraries of this route.' : 'Browse saved itinerary definitions and open the editor.' }}</p>
         </div>
         @if (!routeSlug) {
-          <button type="button" class="primary" (click)="openNewItineraryDialog()">New itinerary</button>
+          <button type="button" class="primary icon-action" title="New itinerary" aria-label="New itinerary" (click)="openNewItineraryDialog()">+</button>
+        } @else {
+          <button type="button" class="primary icon-action" title="New itinerary for this route" aria-label="New itinerary for this route" (click)="openNewItineraryForCurrentRoute()">+</button>
         }
       </header>
 
@@ -93,18 +95,14 @@ interface ItineraryJsonExport {
         @if (state.error) {
           <p class="status error">{{ state.error }}</p>
         } @else {
-          <p class="status">{{ state.count }} itineraries</p>
           @if (routeSlug || viewMode === 'flat') {
-            <ng-container *ngTemplateOutlet="itineraryTable; context: { items: state.items, routes: state.routes, showAssignment: !routeSlug }"></ng-container>
+            <ng-container *ngTemplateOutlet="itineraryTable; context: { items: state.items, routes: state.routes }"></ng-container>
           } @else {
             <div class="route-group-list">
               @for (group of groupsFor(state.items); track groupKey(group)) {
                 <section class="route-group">
                   <header class="route-group-header">
                     <h2>{{ group.title }}</h2>
-                    @if (group.slug) {
-                      <p class="muted">{{ group.slug }}</p>
-                    }
                   </header>
                   <div class="table-wrap">
                     <table class="resource-table">
@@ -112,53 +110,45 @@ interface ItineraryJsonExport {
                         <tr>
                           <th>Stage</th>
                           <th>Title</th>
-                          <th>Description</th>
                           <th>First point</th>
                           <th>Last point</th>
                           <th>Estimated distance</th>
+                          <th class="enabled-column">Enabled</th>
                           <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         @for (itinerary of group.items; track itinerary.id) {
-                          <tr>
+                          <tr [attr.id]="itineraryRowId(itinerary)" [class.highlight-row]="highlightedItineraryId === itinerary.id">
                             <td>{{ itinerary.stage_number || '-' }}</td>
                             <td>
                               {{ itinerary.title || 'Untitled itinerary' }}
-                              <p class="muted">{{ itinerary.slug || 'no slug' }}</p>
+                              <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
                             </td>
-                            <td>{{ itinerary.description || 'No description' }}</td>
                             <td>{{ firstPointName(itinerary) }}</td>
                             <td>{{ lastPointName(itinerary) }}</td>
                             <td>{{ estimatedDistance(itinerary) }}</td>
+                            <td class="enabled-column">
+                              <input
+                                class="enabled-checkbox"
+                                type="checkbox"
+                                title="Enable"
+                                aria-label="Enable"
+                                [checked]="itinerary.enabled"
+                                (change)="setItineraryEnabled(itinerary, $any($event.target).checked)"
+                              />
+                            </td>
                             <td>
                               <div class="table-actions">
-                                <button type="button" class="secondary" (click)="toggleItinerary(itinerary)">
-                                  {{ itinerary.enabled ? 'Disable' : 'Enable' }}
+                                <button type="button" class="secondary icon-action double-icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">✎▤</button>
+                                <a class="secondary icon-action double-icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">✎⌖</a>
+                                <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
+                                  ⧉
                                 </button>
-                                <button type="button" class="secondary" (click)="openTranslationDialog(itinerary)">Edit translations</button>
-                                <button type="button" class="secondary" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
-                                  {{ duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate' }}
-                                </button>
-                                <a class="secondary" [routerLink]="['/itineraries', itinerary.id, 'edit']">Open editor</a>
-                              </div>
-                              <div class="assignment-row compact">
-                                <label>
-                                  <span>Route</span>
-                                  <select [ngModel]="assignmentDraftFor(itinerary).routeId" (ngModelChange)="setAssignmentRoute(itinerary, $event)">
-                                    <option [ngValue]="null">No route</option>
-                                    @for (route of state.routes; track route.id) {
-                                      <option [ngValue]="route.id">{{ route.title || 'Route ' + route.id }}</option>
-                                    }
-                                  </select>
-                                </label>
-                                <label>
-                                  <span>Stage</span>
-                                  <input type="number" min="1" step="1" [disabled]="assignmentDraftFor(itinerary).routeId === null" [ngModel]="assignmentDraftFor(itinerary).stageNumber" (ngModelChange)="setAssignmentStage(itinerary, $event)" />
-                                </label>
-                                <button type="button" class="secondary" [disabled]="assigningIds.has(itinerary.id)" (click)="saveAssignment(itinerary)">
-                                  {{ assigningIds.has(itinerary.id) ? 'Saving...' : 'Assign' }}
-                                </button>
+                                @if (itinerary.route !== null) {
+                                  <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [disabled]="assigningIds.has(itinerary.id)" (click)="unassignItinerary(itinerary)">⊘</button>
+                                }
+                                <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteItinerary(itinerary)">⌫</button>
                               </div>
                             </td>
                           </tr>
@@ -175,7 +165,7 @@ interface ItineraryJsonExport {
         }
       }
 
-      <ng-template #itineraryTable let-items="items" let-routes="routes" let-showAssignment="showAssignment">
+      <ng-template #itineraryTable let-items="items" let-routes="routes">
         <div class="table-wrap">
           <table class="resource-table">
             <thead>
@@ -183,73 +173,83 @@ interface ItineraryJsonExport {
                 @if (!routeSlug) {
                   <th>Route</th>
                 } @else {
+                  <th class="drag-handle-column" aria-label="Reorder"></th>
                   <th>Stage</th>
                 }
                 <th>Title</th>
-                <th>Description</th>
                 <th>First point</th>
                 <th>Last point</th>
                 <th>Estimated distance</th>
+                <th class="enabled-column">Enabled</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               @for (itinerary of items; track itinerary.id) {
-                <tr>
+                <tr
+                  [attr.id]="itineraryRowId(itinerary)"
+                  [class.highlight-row]="highlightedItineraryId === itinerary.id"
+                  [class.dragging-row]="draggedItineraryId === itinerary.id"
+                  [attr.draggable]="routeSlug ? true : null"
+                  (dragstart)="startStageDrag(itinerary)"
+                  (dragover)="allowStageDrop($event)"
+                  (drop)="dropStage(itinerary, items)"
+                  (dragend)="endStageDrag()"
+                >
                   @if (!routeSlug) {
                     <td>
-                      {{ itinerary.route_title || 'No route' }}
-                      @if (itinerary.stage_number) {
-                        <p class="muted">Stage {{ itinerary.stage_number }}</p>
-                      }
+                      <div class="route-assignment-cell">
+                        <select [ngModel]="assignmentDraftFor(itinerary).routeId" (ngModelChange)="setAssignmentRoute(itinerary, $event)">
+                          <option [ngValue]="null">No route</option>
+                          @for (route of routes; track route.id) {
+                            <option [ngValue]="route.id">{{ route.title || 'Route ' + route.id }}</option>
+                          }
+                        </select>
+                        <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Assign'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Assign'" [disabled]="assigningIds.has(itinerary.id)" (click)="saveAssignment(itinerary)">
+                          ✓
+                        </button>
+                      </div>
                     </td>
                   } @else {
+                    <td class="drag-handle-cell" aria-label="Drag to reorder stage">
+                      <span class="drag-handle" aria-hidden="true">☰</span>
+                    </td>
                     <td>{{ itinerary.stage_number || '-' }}</td>
                   }
                   <td>
                     {{ itinerary.title || 'Untitled itinerary' }}
-                    <p class="muted">{{ itinerary.slug || 'no slug' }}</p>
+                    <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
                   </td>
-                  <td>{{ itinerary.description || 'No description' }}</td>
                   <td>{{ firstPointName(itinerary) }}</td>
                   <td>{{ lastPointName(itinerary) }}</td>
                   <td>{{ estimatedDistance(itinerary) }}</td>
+                  <td class="enabled-column">
+                    <input
+                      class="enabled-checkbox"
+                      type="checkbox"
+                      title="Enable"
+                      aria-label="Enable"
+                      [checked]="itinerary.enabled"
+                      (change)="setItineraryEnabled(itinerary, $any($event.target).checked)"
+                    />
+                  </td>
                   <td>
                     <div class="table-actions">
-                      <button type="button" class="secondary" (click)="toggleItinerary(itinerary)">
-                        {{ itinerary.enabled ? 'Disable' : 'Enable' }}
+                      <button type="button" class="secondary icon-action double-icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">✎▤</button>
+                      <a class="secondary icon-action double-icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">✎⌖</a>
+                      <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
+                        ⧉
                       </button>
-                      <button type="button" class="secondary" (click)="openTranslationDialog(itinerary)">Edit translations</button>
-                      <button type="button" class="secondary" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
-                        {{ duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate' }}
-                      </button>
-                      <a class="secondary" [routerLink]="['/itineraries', itinerary.id, 'edit']">Open editor</a>
+                      @if (routeSlug && itinerary.route !== null) {
+                        <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [disabled]="assigningIds.has(itinerary.id)" (click)="unassignItinerary(itinerary)">⊘</button>
+                      }
+                      <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteItinerary(itinerary)">⌫</button>
                     </div>
-                    @if (showAssignment) {
-                      <div class="assignment-row compact">
-                        <label>
-                          <span>Route</span>
-                          <select [ngModel]="assignmentDraftFor(itinerary).routeId" (ngModelChange)="setAssignmentRoute(itinerary, $event)">
-                            <option [ngValue]="null">No route</option>
-                            @for (route of routes; track route.id) {
-                              <option [ngValue]="route.id">{{ route.title || 'Route ' + route.id }}</option>
-                            }
-                          </select>
-                        </label>
-                        <label>
-                          <span>Stage</span>
-                          <input type="number" min="1" step="1" [disabled]="assignmentDraftFor(itinerary).routeId === null" [ngModel]="assignmentDraftFor(itinerary).stageNumber" (ngModelChange)="setAssignmentStage(itinerary, $event)" />
-                        </label>
-                        <button type="button" class="secondary" [disabled]="assigningIds.has(itinerary.id)" (click)="saveAssignment(itinerary)">
-                          {{ assigningIds.has(itinerary.id) ? 'Saving...' : 'Assign' }}
-                        </button>
-                      </div>
-                    }
                   </td>
                 </tr>
               } @empty {
                 <tr>
-                  <td [attr.colspan]="routeSlug ? 7 : 7">No itineraries found.</td>
+                  <td [attr.colspan]="routeSlug ? 8 : 7">No itineraries found.</td>
                 </tr>
               }
             </tbody>
@@ -276,25 +276,38 @@ interface ItineraryJsonExport {
               <input type="checkbox" [(ngModel)]="newItinerary.enabled" name="newItineraryEnabled" />
               <span>Enabled</span>
             </label>
-            <div class="form-grid two-column">
-              <label>
-                <span>Route</span>
-                <select [ngModel]="newItinerary.routeId" (ngModelChange)="setNewItineraryRoute($event)" name="newItineraryRoute">
-                  <option [ngValue]="null">No route</option>
-                  @for (route of availableRoutes; track route.id) {
-                    <option [ngValue]="route.id">{{ route.title || 'Route ' + route.id }}</option>
-                  }
-                </select>
-              </label>
-              <label>
-                <span>Stage</span>
-                <input type="number" min="1" step="1" [disabled]="newItinerary.routeId === null" [ngModel]="newItinerary.stageNumber" (ngModelChange)="setNewItineraryStage($event)" name="newItineraryStage" />
-              </label>
-            </div>
+            <label>
+              <span>Route</span>
+              <select [ngModel]="newItinerary.routeId" (ngModelChange)="setNewItineraryRoute($event)" name="newItineraryRoute">
+                <option [ngValue]="null">No route</option>
+                @for (route of availableRoutes; track route.id) {
+                  <option [ngValue]="route.id">{{ route.title || 'Route ' + route.id }}</option>
+                }
+              </select>
+            </label>
           </div>
           <footer class="metadata-dialog-footer">
             <button type="button" class="secondary" (click)="closeNewItineraryDialog()">Cancel</button>
             <button type="submit" class="primary">Create itinerary</button>
+          </footer>
+        </form>
+      </dialog>
+
+      <dialog class="metadata-dialog" #duplicateDialog>
+        <form method="dialog" class="metadata-dialog-content">
+          <header class="metadata-dialog-header">
+            <h2>Itinerary copied</h2>
+            <button type="button" class="icon-button" aria-label="Close duplicate confirmation dialog" (click)="closeDuplicateDialog()">x</button>
+          </header>
+          <div class="form-stack">
+            <p>
+              The copy of the itinerary has been created as an unassigned itinerary.
+              You can find it in the main itinerary list.
+            </p>
+          </div>
+          <footer class="metadata-dialog-footer">
+            <button type="button" class="secondary" (click)="closeDuplicateDialog()">Stay here</button>
+            <button type="button" class="primary" (click)="goToDuplicatedItinerary()">Go to itineraries</button>
           </footer>
         </form>
       </dialog>
@@ -336,32 +349,42 @@ interface ItineraryJsonExport {
 })
 export class ItineraryListComponent {
   @ViewChild('newItineraryDialog') private readonly newItineraryDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('duplicateDialog') private readonly duplicateDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('translationDialog') private readonly translationDialog?: ElementRef<HTMLDialogElement>;
 
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
   query = '';
   routeSlug: string | null = null;
   routeTitle: string | null = null;
+  currentRouteId: number | null = null;
   viewMode: 'flat' | 'grouped' = 'flat';
   statusMessage = '';
   statusIsError = false;
   availableRoutes: Route[] = [];
   newItinerary: NewItineraryDraft = { title: '', description: '', enabled: true, routeId: null, stageNumber: null };
+  duplicatedItinerary: Itinerary | null = null;
+  highlightedItineraryId: number | null = null;
+  pendingHighlightItineraryId: number | null = null;
+  currentItineraries: Itinerary[] = [];
   editingItinerary: Itinerary | null = null;
   translationDrafts: TranslationDraft[] = [];
   readonly duplicatingIds = new Set<number>();
   readonly assigningIds = new Set<number>();
   readonly assignmentDrafts = new Map<number, AssignmentDraft>();
+  draggedItineraryId: number | null = null;
+  reorderingStages = false;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
     this.refresh$,
-    this.activatedRoute.paramMap.pipe(map(params => params.get('slug')))
+    this.activatedRoute.paramMap.pipe(map(params => params.get('slug'))),
+    this.activatedRoute.queryParamMap.pipe(map(params => Number(params.get('highlight')) || null))
   ]).pipe(
-    switchMap(([query, , routeSlug]) => {
+    switchMap(([query, , routeSlug, highlightedItineraryId]) => {
       this.routeSlug = routeSlug;
       return combineLatest([
         this.api.listAllRoutes(''),
@@ -369,6 +392,7 @@ export class ItineraryListComponent {
       ]).pipe(
         switchMap(([routes, selectedRoute]) => {
           this.availableRoutes = routes;
+          this.currentRouteId = selectedRoute?.id || null;
           this.routeTitle = selectedRoute?.title || null;
           if (routeSlug && !selectedRoute) {
             return of({
@@ -380,13 +404,21 @@ export class ItineraryListComponent {
             });
           }
           return this.api.listAllItineraries(query, 'en', selectedRoute?.id).pipe(
-            map(itineraries => ({
-              items: this.sortedItineraries(itineraries),
-              routes,
-              groups: this.groupItineraries(itineraries),
-              count: itineraries.length,
-              error: ''
-            }))
+            map(itineraries => {
+              const items = this.sortedItineraries(itineraries);
+              this.currentItineraries = items;
+              return {
+                items,
+                routes,
+                groups: this.groupItineraries(itineraries),
+                count: itineraries.length,
+                error: ''
+              };
+            }),
+            map(state => {
+              this.scheduleHighlight(highlightedItineraryId || this.pendingHighlightItineraryId, state.items);
+              return state;
+            })
           );
         }),
         catchError(error => of({
@@ -405,6 +437,13 @@ export class ItineraryListComponent {
     this.newItineraryDialog?.nativeElement.showModal();
   }
 
+  openNewItineraryForCurrentRoute(): void {
+    if (this.currentRouteId === null) return;
+    this.newItinerary.routeId = this.currentRouteId;
+    this.newItinerary.stageNumber = null;
+    this.newItineraryDialog?.nativeElement.showModal();
+  }
+
   closeNewItineraryDialog(): void {
     this.newItineraryDialog?.nativeElement.close();
   }
@@ -413,8 +452,8 @@ export class ItineraryListComponent {
     this.newItinerary.routeId = routeId;
     if (routeId === null) {
       this.newItinerary.stageNumber = null;
-    } else if (!this.newItinerary.stageNumber) {
-      this.newItinerary.stageNumber = 1;
+    } else {
+      this.newItinerary.stageNumber = null;
     }
   }
 
@@ -429,16 +468,14 @@ export class ItineraryListComponent {
       this.showStatus('Enter an itinerary title before creating it.', true);
       return;
     }
-    if (this.newItinerary.routeId !== null && !this.newItinerary.stageNumber) {
-      this.showStatus('Enter a stage number before assigning this itinerary to a route.', true);
-      return;
-    }
 
     try {
+      const routeId = this.newItinerary.routeId;
+      const stageNumber = routeId === null ? null : await this.nextStageNumberForRoute(routeId);
       const itinerary = await firstValueFrom(this.api.createItinerary({
         enabled: this.newItinerary.enabled,
-        route: this.newItinerary.routeId,
-        stage_number: this.newItinerary.routeId === null ? null : this.newItinerary.stageNumber,
+        route: routeId,
+        stage_number: stageNumber,
         itinerary_json: { points: [], segments: [] },
         translations: [{
           language_code: 'en',
@@ -449,6 +486,7 @@ export class ItineraryListComponent {
       this.newItinerary = { title: '', description: '', enabled: true, routeId: null, stageNumber: null };
       this.closeNewItineraryDialog();
       this.showStatus(`Created itinerary "${itinerary.title || title}".`, false);
+      this.pendingHighlightItineraryId = itinerary.id;
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not create itinerary. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
@@ -471,7 +509,12 @@ export class ItineraryListComponent {
         itinerary_json: this.cloneItineraryJson(itinerary.itinerary_json),
         translations: this.duplicateTranslations(itinerary, title)
       }));
-      this.showStatus(`Duplicated itinerary as "${duplicate.title || title}".`, false);
+      if (this.routeSlug) {
+        this.duplicatedItinerary = duplicate;
+        this.duplicateDialog?.nativeElement.showModal();
+      } else {
+        this.showStatus(`Duplicated itinerary as "${duplicate.title || title}".`, false);
+      }
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not duplicate itinerary. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
@@ -481,12 +524,31 @@ export class ItineraryListComponent {
   }
 
   async toggleItinerary(itinerary: Itinerary): Promise<void> {
+    await this.setItineraryEnabled(itinerary, !itinerary.enabled);
+  }
+
+  async setItineraryEnabled(itinerary: Itinerary, enabled: boolean): Promise<void> {
     try {
-      await firstValueFrom(this.api.updateItinerary(itinerary.id, { enabled: !itinerary.enabled }));
-      this.showStatus(`Itinerary ${itinerary.enabled ? 'disabled' : 'enabled'}.`, false);
+      await firstValueFrom(this.api.updateItinerary(itinerary.id, { enabled }));
+      this.clearStatus();
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not update itinerary. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async deleteItinerary(itinerary: Itinerary): Promise<void> {
+    const confirmed = window.confirm(
+      `Delete itinerary "${itinerary.title || 'Untitled itinerary'}"? POIs referenced by this itinerary will not be deleted.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await firstValueFrom(this.api.deleteItinerary(itinerary.id));
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not delete itinerary. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
@@ -542,22 +604,29 @@ export class ItineraryListComponent {
   setAssignmentRoute(itinerary: Itinerary, routeId: number | null): void {
     const draft = this.assignmentDraftFor(itinerary);
     draft.routeId = routeId;
-    if (routeId === null) {
-      draft.stageNumber = null;
-    } else if (!draft.stageNumber) {
-      draft.stageNumber = itinerary.stage_number || 1;
-    }
+    draft.stageNumber = null;
   }
 
-  setAssignmentStage(itinerary: Itinerary, stageNumber: string | number | null): void {
-    const parsed = Number(stageNumber);
-    this.assignmentDraftFor(itinerary).stageNumber = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  async unassignItinerary(itinerary: Itinerary): Promise<void> {
+    const draft = this.assignmentDraftFor(itinerary);
+    draft.routeId = null;
+    draft.stageNumber = null;
+    await this.saveAssignment(itinerary);
   }
 
   async saveAssignment(itinerary: Itinerary): Promise<void> {
     const draft = this.assignmentDraftFor(itinerary);
-    if (draft.routeId !== null && !draft.stageNumber) {
-      this.showStatus('Enter a stage number before assigning this itinerary to a route.', true);
+    if (draft.routeId === itinerary.route) return;
+
+    const currentRouteName = itinerary.route_title || 'No route';
+    const targetRouteName = this.routeNameForId(draft.routeId);
+    const confirmationMessage = draft.routeId === null
+      ? `Unassign "${itinerary.title || 'Untitled itinerary'}" from "${currentRouteName}"?`
+      : `Move "${itinerary.title || 'Untitled itinerary'}" from "${currentRouteName}" to "${targetRouteName}"?`;
+    const confirmed = window.confirm(confirmationMessage);
+    if (!confirmed) {
+      draft.routeId = itinerary.route;
+      draft.stageNumber = itinerary.stage_number;
       return;
     }
 
@@ -565,10 +634,19 @@ export class ItineraryListComponent {
     this.clearStatus();
 
     try {
-      await firstValueFrom(this.api.updateItinerary(itinerary.id, {
-        route: draft.routeId,
-        stage_number: draft.routeId === null ? null : draft.stageNumber
-      }));
+      if (draft.routeId === null && itinerary.route !== null) {
+        await firstValueFrom(this.api.removeItineraryFromRoute(itinerary.route, itinerary.id));
+      } else {
+        const stageNumber = draft.routeId === null
+          ? null
+          : draft.routeId === itinerary.route
+            ? itinerary.stage_number
+            : await this.nextStageNumberForRoute(draft.routeId, itinerary.id);
+        await firstValueFrom(this.api.updateItinerary(itinerary.id, {
+          route: draft.routeId,
+          stage_number: stageNumber
+        }));
+      }
       this.showStatus('Itinerary route assignment saved.', false);
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
@@ -576,6 +654,57 @@ export class ItineraryListComponent {
     } finally {
       this.assigningIds.delete(itinerary.id);
     }
+  }
+
+  startStageDrag(itinerary: Itinerary): void {
+    if (!this.routeSlug || this.currentRouteId === null) return;
+    this.draggedItineraryId = itinerary.id;
+  }
+
+  allowStageDrop(event: DragEvent): void {
+    if (this.draggedItineraryId === null || this.reorderingStages) return;
+    event.preventDefault();
+  }
+
+  async dropStage(targetItinerary: Itinerary, visibleItineraries: Itinerary[]): Promise<void> {
+    if (this.draggedItineraryId === null || this.currentRouteId === null || this.reorderingStages) return;
+    if (this.draggedItineraryId === targetItinerary.id) {
+      this.endStageDrag();
+      return;
+    }
+
+    const orderedItineraries = this.sortedItineraries(visibleItineraries);
+    const draggedIndex = orderedItineraries.findIndex(itinerary => itinerary.id === this.draggedItineraryId);
+    const targetIndex = orderedItineraries.findIndex(itinerary => itinerary.id === targetItinerary.id);
+    if (draggedIndex < 0 || targetIndex < 0) {
+      this.endStageDrag();
+      return;
+    }
+
+    const [draggedItinerary] = orderedItineraries.splice(draggedIndex, 1);
+    orderedItineraries.splice(targetIndex, 0, draggedItinerary);
+
+    this.reorderingStages = true;
+    this.clearStatus();
+    try {
+      await firstValueFrom(this.api.reorderRouteItineraries(
+        this.currentRouteId,
+        orderedItineraries.map((itinerary, index) => ({
+          id: itinerary.id,
+          stage_number: index + 1
+        }))
+      ));
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not reorder stages. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    } finally {
+      this.reorderingStages = false;
+      this.endStageDrag();
+    }
+  }
+
+  endStageDrag(): void {
+    this.draggedItineraryId = null;
   }
 
   firstPointName(itinerary: Itinerary): string {
@@ -600,6 +729,23 @@ export class ItineraryListComponent {
     return `${Math.round(totalMeters)} m`;
   }
 
+  itineraryRowId(itinerary: Itinerary): string {
+    return `itinerary-row-${itinerary.id}`;
+  }
+
+  closeDuplicateDialog(): void {
+    this.duplicateDialog?.nativeElement.close();
+  }
+
+  async goToDuplicatedItinerary(): Promise<void> {
+    if (!this.duplicatedItinerary) return;
+    const itineraryId = this.duplicatedItinerary.id;
+    this.closeDuplicateDialog();
+    await this.router.navigate(['/itineraries'], {
+      queryParams: { highlight: itineraryId }
+    });
+  }
+
   groupKey(group: ItineraryGroup): string {
     return group.routeId === null ? 'unassigned' : String(group.routeId);
   }
@@ -613,6 +759,40 @@ export class ItineraryListComponent {
     return this.api.listAllRoutes(routeSlug).pipe(
       map(routes => routes.find(route => route.slug === routeSlug || String(route.id) === routeSlug) || null)
     );
+  }
+
+  private routeNameForId(routeId: number | null): string {
+    if (routeId === null) return 'No route';
+    const route = this.availableRoutes.find(candidate => candidate.id === routeId);
+    return route?.title || `Route ${routeId}`;
+  }
+
+  private scheduleHighlight(itineraryId: number | null, itineraries: Itinerary[]): void {
+    if (!itineraryId || !itineraries.some(itinerary => itinerary.id === itineraryId)) return;
+
+    this.highlightedItineraryId = itineraryId;
+    this.pendingHighlightItineraryId = null;
+    window.setTimeout(() => {
+      document.getElementById(`itinerary-row-${itineraryId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    }, 80);
+    window.setTimeout(() => {
+      if (this.highlightedItineraryId === itineraryId) {
+        this.highlightedItineraryId = null;
+      }
+    }, 4500);
+  }
+
+  private async nextStageNumberForRoute(routeId: number, excludeItineraryId: number | null = null): Promise<number> {
+    const routeItineraries = await firstValueFrom(this.api.listAllItineraries('', 'en', routeId));
+    const maxStage = routeItineraries.reduce((max, itinerary) => {
+      if (excludeItineraryId !== null && itinerary.id === excludeItineraryId) return max;
+      const stageNumber = itinerary.stage_number || 0;
+      return stageNumber > max ? stageNumber : max;
+    }, 0);
+    return maxStage + 1;
   }
 
   private duplicateTranslations(itinerary: Itinerary, title: string): Array<{ language_code: string; title: string; description?: string }> {

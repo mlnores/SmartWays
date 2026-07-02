@@ -69,6 +69,11 @@ export interface RoutePayload {
   }>;
 }
 
+export interface ItineraryStageAssignment {
+  id: number;
+  stage_number: number;
+}
+
 export interface Poi {
   id: number;
   enabled: boolean;
@@ -107,6 +112,10 @@ export class ApiService {
     return this.http.patch<Itinerary>(`${API_BASE_URL}/itineraries/${id}/`, payload);
   }
 
+  deleteItinerary(id: number): Observable<void> {
+    return this.http.delete<void>(`${API_BASE_URL}/itineraries/${id}/`);
+  }
+
   listRoutes(query = '', language = 'en'): Observable<ApiPage<Route>> {
     let params = new HttpParams().set('language', language);
     if (query.trim()) {
@@ -125,6 +134,18 @@ export class ApiService {
 
   updateRoute(id: number, payload: Partial<RoutePayload>): Observable<Route> {
     return this.http.patch<Route>(`${API_BASE_URL}/routes/${id}/`, payload);
+  }
+
+  deleteRoute(id: number): Observable<void> {
+    return this.http.delete<void>(`${API_BASE_URL}/routes/${id}/`);
+  }
+
+  reorderRouteItineraries(routeId: number, itineraries: ItineraryStageAssignment[]): Observable<Itinerary[]> {
+    return this.http.post<Itinerary[]>(`${API_BASE_URL}/routes/${routeId}/reorder-itineraries/`, { itineraries });
+  }
+
+  removeItineraryFromRoute(routeId: number, itineraryId: number): Observable<Itinerary> {
+    return this.http.post<Itinerary>(`${API_BASE_URL}/routes/${routeId}/remove-itinerary/`, { itinerary: itineraryId });
   }
 
   listPois(query = '', language = 'en'): Observable<ApiPage<Poi>> {

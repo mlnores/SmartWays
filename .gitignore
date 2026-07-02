@@ -6,14 +6,6 @@ __pycache__/
 .venv/
 db.sqlite3
 staticfiles/
-/interactive_itinerary_map before POI panel.html
-/interactive_itinerary_map copia 2.html
-/interactive_itinerary_map copia 3.html
-/interactive_itinerary_map copia 4.html
-/interactive_itinerary_map copia 5 - OK before refactoring.html
-/interactive_itinerary_map copia 5.html
-/interactive_itinerary_map copia 6.html
-/interactive_itinerary_map copia.html
 .gitignore
 POI_data/dataset_metadata.jsonld
 POI_data/dump-rurallure_db.sql

@@ -29,7 +29,7 @@ interface TranslationDraft {
           <h1>Routes</h1>
           <p>Browse multi-stage routes.</p>
         </div>
-        <button type="button" class="primary" (click)="openNewRouteDialog()">New route</button>
+        <button type="button" class="primary icon-action" title="New route" aria-label="New route" (click)="openNewRouteDialog()">+</button>
       </header>
 
       <div class="toolbar">
@@ -49,15 +49,14 @@ interface TranslationDraft {
         @if (state.error) {
           <p class="status error">{{ state.error }}</p>
         } @else {
-          <p class="status">{{ state.routes.length }} routes</p>
           <div class="table-wrap">
             <table class="resource-table">
               <thead>
                 <tr>
                   <th>Title</th>
-                  <th>Description</th>
                   <th>Last updated</th>
                   <th>Segments</th>
+                  <th class="enabled-column">Enabled</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -66,17 +65,25 @@ interface TranslationDraft {
                   <tr>
                     <td>
                       <a [routerLink]="['/route', route.slug || route.id]">{{ route.title || 'Untitled route' }}</a>
-                      <p class="muted">{{ route.slug || 'no slug' }}</p>
+                      <p class="description-preview">{{ route.description || 'No description' }}</p>
                     </td>
-                    <td>{{ route.description || 'No description' }}</td>
                     <td>{{ route.updated_at | date:'medium' }}</td>
                     <td>{{ route.itinerary_count }}</td>
                     <td>
+                      <input
+                        class="enabled-checkbox"
+                        type="checkbox"
+                        title="Enable"
+                        aria-label="Enable"
+                        [checked]="route.enabled"
+                        (change)="setRouteEnabled(route, $any($event.target).checked)"
+                      />
+                    </td>
+                    <td>
                       <div class="table-actions">
-                        <button type="button" class="secondary" (click)="toggleRoute(route)">
-                          {{ route.enabled ? 'Disable' : 'Enable' }}
-                        </button>
-                        <button type="button" class="secondary" (click)="openTranslationDialog(route)">Edit translations</button>
+                        <a class="secondary icon-action" title="View itineraries" aria-label="View itineraries" [routerLink]="['/route', route.slug || route.id]">☷</a>
+                        <button type="button" class="secondary icon-action double-icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(route)">✎▤</button>
+                        <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteRoute(route)">⌫</button>
                       </div>
                     </td>
                   </tr>
@@ -210,12 +217,31 @@ export class RouteListComponent {
   }
 
   async toggleRoute(route: Route): Promise<void> {
+    await this.setRouteEnabled(route, !route.enabled);
+  }
+
+  async setRouteEnabled(route: Route, enabled: boolean): Promise<void> {
     try {
-      await firstValueFrom(this.api.updateRoute(route.id, { enabled: !route.enabled }));
-      this.showStatus(`Route ${route.enabled ? 'disabled' : 'enabled'}.`, false);
+      await firstValueFrom(this.api.updateRoute(route.id, { enabled }));
+      this.clearStatus();
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not update route. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async deleteRoute(route: Route): Promise<void> {
+    const confirmed = window.confirm(
+      `Delete route "${route.title || 'Untitled route'}"? Its constituent itineraries will not be deleted.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await firstValueFrom(this.api.deleteRoute(route.id));
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not delete route. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
@@ -288,5 +314,10 @@ export class RouteListComponent {
   private showStatus(message: string, isError: boolean): void {
     this.statusMessage = message;
     this.statusIsError = isError;
+  }
+
+  private clearStatus(): void {
+    this.statusMessage = '';
+    this.statusIsError = false;
   }
 }

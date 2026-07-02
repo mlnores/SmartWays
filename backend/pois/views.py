@@ -2,13 +2,16 @@ import json
 
 from django.contrib.gis.geos import GEOSGeometry, Polygon
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.http import JsonResponse
 from django.db.models import Q
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework import viewsets
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import ParseError, ValidationError
 from rest_framework.parsers import JSONParser
+from rest_framework.response import Response
 
 from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIImage, POITranslation, Route, RouteTranslation
 from .serializers import (
@@ -347,6 +350,94 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             )
 
         return queryset.distinct()
+
+    @action(detail=True, methods=["post"], url_path="reorder-itineraries")
+    def reorder_itineraries(self, request, pk=None):
+        route = self.get_object()
+        raw_items = request.data.get("itineraries")
+        if not isinstance(raw_items, list) or not raw_items:
+            raise ValidationError({"itineraries": "Provide a non-empty list of itinerary stage assignments."})
+
+        assignments = []
+        seen_ids = set()
+        seen_stages = set()
+        for item in raw_items:
+            if not isinstance(item, dict):
+                raise ValidationError({"itineraries": "Each assignment must be an object."})
+            itinerary_id = item.get("id")
+            stage_number = item.get("stage_number")
+            if not isinstance(itinerary_id, int) or not isinstance(stage_number, int):
+                raise ValidationError({"itineraries": "Each assignment needs integer id and stage_number values."})
+            if stage_number < 1:
+                raise ValidationError({"stage_number": "Stage numbers must be positive."})
+            if itinerary_id in seen_ids:
+                raise ValidationError({"itineraries": "Itinerary ids must not repeat."})
+            if stage_number in seen_stages:
+                raise ValidationError({"stage_number": "Stage numbers must not repeat."})
+            seen_ids.add(itinerary_id)
+            seen_stages.add(stage_number)
+            assignments.append((itinerary_id, stage_number))
+
+        route_itineraries = {
+            itinerary.id: itinerary
+            for itinerary in route.itineraries.filter(id__in=seen_ids)
+        }
+        missing_ids = seen_ids - set(route_itineraries)
+        if missing_ids:
+            raise ValidationError({"itineraries": "All itineraries must belong to this route."})
+
+        with transaction.atomic():
+            temporary_offset = 1000000
+            for index, (itinerary_id, _) in enumerate(assignments, start=1):
+                itinerary = route_itineraries[itinerary_id]
+                itinerary.stage_number = temporary_offset + index
+                itinerary.save(update_fields=["stage_number", "updated_at"])
+
+            for itinerary_id, stage_number in assignments:
+                itinerary = route_itineraries[itinerary_id]
+                itinerary.stage_number = stage_number
+                itinerary.save(update_fields=["stage_number", "updated_at"])
+
+        queryset = (
+            route.itineraries.select_related("route")
+            .prefetch_related("translations", "route__translations")
+            .order_by("stage_number", "id")
+        )
+        serializer = ItinerarySerializer(queryset, many=True, context=self.get_serializer_context())
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="remove-itinerary")
+    def remove_itinerary(self, request, pk=None):
+        route = self.get_object()
+        itinerary_id = request.data.get("itinerary")
+        if not isinstance(itinerary_id, int):
+            raise ValidationError({"itinerary": "Provide an itinerary id."})
+
+        with transaction.atomic():
+            itinerary = route.itineraries.select_for_update().filter(id=itinerary_id).first()
+            if itinerary is None:
+                raise ValidationError({"itinerary": "Itinerary does not belong to this route."})
+
+            itinerary.route = None
+            itinerary.stage_number = None
+            itinerary.save(update_fields=["route", "stage_number", "updated_at"])
+
+            remaining_itineraries = list(
+                route.itineraries.select_for_update()
+                .exclude(id=itinerary_id)
+                .order_by("stage_number", "id")
+            )
+            temporary_offset = 1000000
+            for index, remaining in enumerate(remaining_itineraries, start=1):
+                remaining.stage_number = temporary_offset + index
+                remaining.save(update_fields=["stage_number", "updated_at"])
+
+            for index, remaining in enumerate(remaining_itineraries, start=1):
+                remaining.stage_number = index
+                remaining.save(update_fields=["stage_number", "updated_at"])
+
+        serializer = ItinerarySerializer(itinerary, context=self.get_serializer_context())
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class RouteTranslationViewSet(viewsets.ModelViewSet):

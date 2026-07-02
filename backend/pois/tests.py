@@ -277,6 +277,74 @@ class POIAPITests(APITestCase):
         self.assertEqual(route_response.data["count"], 1)
         self.assertEqual(unassigned_response.data["count"], 0)
 
+    def test_route_reorders_itinerary_stages(self):
+        route = Route.objects.create(enabled=True)
+        route.translations.create(
+            language_code="en",
+            title="Camino route",
+            description="A multi-stage route.",
+            slug="camino-route",
+        )
+        first = Itinerary.objects.create(
+            route=route,
+            stage_number=1,
+            itinerary_json={"points": [], "segments": []},
+        )
+        first.translations.create(language_code="en", title="First", slug="first")
+        second = Itinerary.objects.create(
+            route=route,
+            stage_number=2,
+            itinerary_json={"points": [], "segments": []},
+        )
+        second.translations.create(language_code="en", title="Second", slug="second")
+
+        response = self.client.post(
+            reverse("route-reorder-itineraries", args=[route.id]),
+            {
+                "itineraries": [
+                    {"id": second.id, "stage_number": 1},
+                    {"id": first.id, "stage_number": 2},
+                ]
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.stage_number, 2)
+        self.assertEqual(second.stage_number, 1)
+
+    def test_route_remove_itinerary_compacts_stages(self):
+        route = Route.objects.create(enabled=True)
+        route.translations.create(
+            language_code="en",
+            title="Camino route",
+            description="A multi-stage route.",
+            slug="camino-route",
+        )
+        first = Itinerary.objects.create(route=route, stage_number=1, itinerary_json={"points": [], "segments": []})
+        first.translations.create(language_code="en", title="First", slug="first")
+        second = Itinerary.objects.create(route=route, stage_number=2, itinerary_json={"points": [], "segments": []})
+        second.translations.create(language_code="en", title="Second", slug="second")
+        third = Itinerary.objects.create(route=route, stage_number=3, itinerary_json={"points": [], "segments": []})
+        third.translations.create(language_code="en", title="Third", slug="third")
+
+        response = self.client.post(
+            reverse("route-remove-itinerary", args=[route.id]),
+            {"itinerary": second.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        third.refresh_from_db()
+        self.assertEqual(first.stage_number, 1)
+        self.assertIsNone(second.route)
+        self.assertIsNone(second.stage_number)
+        self.assertEqual(third.stage_number, 2)
+
     def test_itinerary_list_returns_localized_content_and_searches(self):
         itinerary = Itinerary.objects.create(
             itinerary_json={
