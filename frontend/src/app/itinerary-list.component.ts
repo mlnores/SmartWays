@@ -22,6 +22,7 @@ interface TranslationDraft {
   language_code: string;
   title: string;
   description: string;
+  is_reference: boolean;
 }
 
 interface NewItineraryDraft {
@@ -319,8 +320,17 @@ interface ItineraryJsonExport {
             <button type="button" class="icon-button" aria-label="Close translation dialog" (click)="closeTranslationDialog()">x</button>
           </header>
           <div class="translation-list">
-            @for (translation of translationDrafts; track translation.language_code) {
+            @for (translation of translationDrafts; track $index) {
               <div class="translation-row">
+                <label class="reference-radio">
+                  <span>Reference</span>
+                  <input
+                    type="radio"
+                    name="itineraryReferenceTranslation"
+                    [checked]="translation.is_reference"
+                    (change)="setReferenceTranslation($index)"
+                  />
+                </label>
                 <label>
                   <span>Language</span>
                   <input type="text" [(ngModel)]="translation.language_code" [name]="'itineraryLanguage' + $index" />
@@ -403,7 +413,7 @@ export class ItineraryListComponent {
               error: `Could not find route "${routeSlug}".`
             });
           }
-          return this.api.listAllItineraries(query, 'en', selectedRoute?.id).pipe(
+          return this.api.listAllItineraries(query, '', selectedRoute?.id).pipe(
             map(itineraries => {
               const items = this.sortedItineraries(itineraries);
               this.currentItineraries = items;
@@ -480,7 +490,8 @@ export class ItineraryListComponent {
         translations: [{
           language_code: 'en',
           title,
-          description: this.newItinerary.description.trim()
+          description: this.newItinerary.description.trim(),
+          is_reference: true
         }]
       }));
       this.newItinerary = { title: '', description: '', enabled: true, routeId: null, stageNumber: null };
@@ -565,7 +576,19 @@ export class ItineraryListComponent {
   }
 
   addTranslationDraft(): void {
-    this.translationDrafts.push({ language_code: '', title: '', description: '' });
+    this.translationDrafts.push({
+      language_code: '',
+      title: '',
+      description: '',
+      is_reference: this.translationDrafts.length === 0
+    });
+  }
+
+  setReferenceTranslation(index: number): void {
+    this.translationDrafts = this.translationDrafts.map((translation, currentIndex) => ({
+      ...translation,
+      is_reference: currentIndex === index
+    }));
   }
 
   async saveTranslationDialog(): Promise<void> {
@@ -786,7 +809,7 @@ export class ItineraryListComponent {
   }
 
   private async nextStageNumberForRoute(routeId: number, excludeItineraryId: number | null = null): Promise<number> {
-    const routeItineraries = await firstValueFrom(this.api.listAllItineraries('', 'en', routeId));
+    const routeItineraries = await firstValueFrom(this.api.listAllItineraries('', '', routeId));
     const maxStage = routeItineraries.reduce((max, itinerary) => {
       if (excludeItineraryId !== null && itinerary.id === excludeItineraryId) return max;
       const stageNumber = itinerary.stage_number || 0;
@@ -795,10 +818,15 @@ export class ItineraryListComponent {
     return maxStage + 1;
   }
 
-  private duplicateTranslations(itinerary: Itinerary, title: string): Array<{ language_code: string; title: string; description?: string }> {
+  private duplicateTranslations(itinerary: Itinerary, title: string): Array<{
+    language_code: string;
+    title: string;
+    description?: string;
+    is_reference?: boolean;
+  }> {
     const translations = itinerary.translations.length > 0
       ? itinerary.translations
-      : [{ language_code: 'en', title: itinerary.title || '', description: itinerary.description || '' }];
+      : [{ language_code: 'en', title: itinerary.title || '', description: itinerary.description || '', is_reference: true }];
     let hasEnglishTranslation = false;
 
     const duplicatedTranslations = translations
@@ -810,7 +838,8 @@ export class ItineraryListComponent {
         return {
           language_code: languageCode,
           title: isEnglish ? title : this.translationTitle(translation, itinerary),
-          description: translation.description || ''
+          description: translation.description || '',
+          is_reference: Boolean(translation.is_reference)
         };
       });
 
@@ -818,8 +847,12 @@ export class ItineraryListComponent {
       duplicatedTranslations.unshift({
         language_code: 'en',
         title,
-        description: itinerary.description || ''
+        description: itinerary.description || '',
+        is_reference: !duplicatedTranslations.some(translation => translation.is_reference)
       });
+    }
+    if (!duplicatedTranslations.some(translation => translation.is_reference) && duplicatedTranslations.length > 0) {
+      duplicatedTranslations[0].is_reference = true;
     }
 
     return duplicatedTranslations;
@@ -831,23 +864,33 @@ export class ItineraryListComponent {
 
   private translationDraftsFrom(translations: Translation[], title: string | null, description: string | null): TranslationDraft[] {
     if (translations.length === 0) {
-      return [{ language_code: 'en', title: title || '', description: description || '' }];
+      return [{ language_code: 'en', title: title || '', description: description || '', is_reference: true }];
     }
-    return translations.map(translation => ({
+    const drafts = translations.map(translation => ({
       language_code: translation.language_code,
       title: translation.title || '',
-      description: translation.description || ''
+      description: translation.description || '',
+      is_reference: Boolean(translation.is_reference)
     }));
+    if (!drafts.some(translation => translation.is_reference)) {
+      drafts[0].is_reference = true;
+    }
+    return drafts;
   }
 
   private normalizedTranslations(): TranslationDraft[] {
-    return this.translationDrafts
+    const translations = this.translationDrafts
       .map(translation => ({
         language_code: translation.language_code.trim(),
         title: translation.title.trim(),
-        description: translation.description.trim()
+        description: translation.description.trim(),
+        is_reference: translation.is_reference
       }))
       .filter(translation => translation.language_code || translation.title || translation.description);
+    if (!translations.some(translation => translation.is_reference) && translations.length > 0) {
+      translations[0].is_reference = true;
+    }
+    return translations;
   }
 
   private itineraryJson(itinerary: Itinerary): ItineraryJsonExport {

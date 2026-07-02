@@ -34,7 +34,9 @@ class POI(models.Model):
         ]
 
     def __str__(self):
-        translation = self.translations.order_by("language_code").first()
+        translation = self.translations.filter(is_reference=True).first() or self.translations.order_by(
+            "language_code"
+        ).first()
         return translation.title if translation else f"POI {self.pk}"
 
     @property
@@ -56,6 +58,7 @@ class POITranslation(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     slug = models.SlugField(max_length=255, validators=[slug_validator])
+    is_reference = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["language_code", "title"]
@@ -68,6 +71,11 @@ class POITranslation(models.Model):
                 fields=["language_code", "slug"],
                 name="unique_poi_translation_slug_per_language",
             ),
+            models.UniqueConstraint(
+                fields=["poi"],
+                condition=models.Q(is_reference=True),
+                name="unique_reference_poi_translation",
+            ),
         ]
         indexes = [
             models.Index(fields=["language_code"], name="pois_poitra_languag_fbe131_idx"),
@@ -76,6 +84,13 @@ class POITranslation(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.language_code})"
+
+    def save(self, *args, **kwargs):
+        if self.is_reference and self.poi_id:
+            POITranslation.objects.filter(poi_id=self.poi_id, is_reference=True).exclude(pk=self.pk).update(
+                is_reference=False
+            )
+        super().save(*args, **kwargs)
 
 
 class Category(models.Model):
@@ -157,7 +172,9 @@ class Route(models.Model):
         ]
 
     def __str__(self):
-        translation = self.translations.order_by("language_code").first()
+        translation = self.translations.filter(is_reference=True).first() or self.translations.order_by(
+            "language_code"
+        ).first()
         return translation.title if translation else f"Route {self.pk}"
 
 
@@ -171,6 +188,7 @@ class RouteTranslation(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     slug = models.SlugField(max_length=255, validators=[slug_validator], blank=True)
+    is_reference = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["language_code", "title"]
@@ -183,6 +201,11 @@ class RouteTranslation(models.Model):
                 fields=["language_code", "slug"],
                 name="unique_route_translation_slug_per_language",
             ),
+            models.UniqueConstraint(
+                fields=["route"],
+                condition=models.Q(is_reference=True),
+                name="unique_reference_route_translation",
+            ),
         ]
         indexes = [
             models.Index(fields=["language_code"]),
@@ -191,6 +214,13 @@ class RouteTranslation(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.language_code})"
+
+    def save(self, *args, **kwargs):
+        if self.is_reference and self.route_id:
+            RouteTranslation.objects.filter(route_id=self.route_id, is_reference=True).exclude(pk=self.pk).update(
+                is_reference=False
+            )
+        super().save(*args, **kwargs)
 
 
 class Itinerary(models.Model):
@@ -224,7 +254,9 @@ class Itinerary(models.Model):
         ]
 
     def __str__(self):
-        translation = self.translations.order_by("language_code").first()
+        translation = self.translations.filter(is_reference=True).first() or self.translations.order_by(
+            "language_code"
+        ).first()
         return translation.title if translation else f"Itinerary {self.pk}"
 
 
@@ -238,6 +270,7 @@ class ItineraryTranslation(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     slug = models.SlugField(max_length=255, validators=[slug_validator], blank=True)
+    is_reference = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["language_code", "title"]
@@ -245,6 +278,11 @@ class ItineraryTranslation(models.Model):
             models.UniqueConstraint(
                 fields=["itinerary", "language_code"],
                 name="unique_itinerary_translation_language",
+            ),
+            models.UniqueConstraint(
+                fields=["itinerary"],
+                condition=models.Q(is_reference=True),
+                name="unique_reference_itinerary_translation",
             ),
         ]
         indexes = [
@@ -254,3 +292,10 @@ class ItineraryTranslation(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.language_code})"
+
+    def save(self, *args, **kwargs):
+        if self.is_reference and self.itinerary_id:
+            ItineraryTranslation.objects.filter(
+                itinerary_id=self.itinerary_id, is_reference=True
+            ).exclude(pk=self.pk).update(is_reference=False)
+        super().save(*args, **kwargs)

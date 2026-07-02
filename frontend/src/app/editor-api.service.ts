@@ -20,6 +20,7 @@ export interface EditorItineraryPayload {
     language_code: string;
     title: string;
     description: string;
+    is_reference?: boolean;
   }>;
 }
 

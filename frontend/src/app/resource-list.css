@@ -418,11 +418,15 @@ label span {
 
 .translation-row {
   display: grid;
-  grid-template-columns: minmax(90px, 120px) minmax(180px, 1fr) minmax(220px, 1.5fr);
+  grid-template-columns: minmax(86px, 100px) minmax(90px, 120px) minmax(180px, 1fr) minmax(220px, 1.5fr);
   gap: 12px;
   align-items: start;
   padding-bottom: 14px;
   border-bottom: 1px solid #edf1f7;
+}
+
+.reference-radio input {
+  width: auto;
 }
 
 .icon-button {

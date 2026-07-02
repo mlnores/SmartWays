@@ -18,6 +18,7 @@ export interface Translation {
   name?: string;
   description?: string;
   slug?: string;
+  is_reference?: boolean;
 }
 
 export interface Itinerary {
@@ -45,6 +46,7 @@ export interface ItineraryPayload {
     language_code: string;
     title: string;
     description?: string;
+    is_reference?: boolean;
   }>;
 }
 
@@ -66,6 +68,7 @@ export interface RoutePayload {
     language_code: string;
     title: string;
     description?: string;
+    is_reference?: boolean;
   }>;
 }
 
@@ -89,8 +92,11 @@ export interface Poi {
 export class ApiService {
   constructor(private readonly http: HttpClient) {}
 
-  listItineraries(query = '', language = 'en', route?: number | 'null'): Observable<ApiPage<Itinerary>> {
-    let params = new HttpParams().set('language', language);
+  listItineraries(query = '', language = '', route?: number | 'null'): Observable<ApiPage<Itinerary>> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
     if (query.trim()) {
       params = params.set('q', query.trim());
     }
@@ -100,7 +106,7 @@ export class ApiService {
     return this.http.get<ApiPage<Itinerary>>(`${API_BASE_URL}/itineraries/`, { params });
   }
 
-  listAllItineraries(query = '', language = 'en', route?: number | 'null'): Observable<Itinerary[]> {
+  listAllItineraries(query = '', language = '', route?: number | 'null'): Observable<Itinerary[]> {
     return this.collectPages(this.listItineraries(query, language, route));
   }
 
@@ -116,15 +122,18 @@ export class ApiService {
     return this.http.delete<void>(`${API_BASE_URL}/itineraries/${id}/`);
   }
 
-  listRoutes(query = '', language = 'en'): Observable<ApiPage<Route>> {
-    let params = new HttpParams().set('language', language);
+  listRoutes(query = '', language = ''): Observable<ApiPage<Route>> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
     if (query.trim()) {
       params = params.set('q', query.trim());
     }
     return this.http.get<ApiPage<Route>>(`${API_BASE_URL}/routes/`, { params });
   }
 
-  listAllRoutes(query = '', language = 'en'): Observable<Route[]> {
+  listAllRoutes(query = '', language = ''): Observable<Route[]> {
     return this.collectPages(this.listRoutes(query, language));
   }
 
@@ -148,10 +157,11 @@ export class ApiService {
     return this.http.post<Itinerary>(`${API_BASE_URL}/routes/${routeId}/remove-itinerary/`, { itinerary: itineraryId });
   }
 
-  listPois(query = '', language = 'en'): Observable<ApiPage<Poi>> {
-    let params = new HttpParams()
-      .set('language', language)
-      .set('enabled', 'true');
+  listPois(query = '', language = ''): Observable<ApiPage<Poi>> {
+    let params = new HttpParams().set('enabled', 'true');
+    if (language) {
+      params = params.set('language', language);
+    }
     if (query.trim()) {
       params = params.set('q', query.trim());
     }

@@ -159,6 +159,36 @@ class POIAPITests(APITestCase):
         self.assertEqual(poi.gps_longitude, -8.6)
         self.assertEqual(poi.translations.count(), 1)
         self.assertEqual(poi.images.count(), 1)
+        self.assertTrue(poi.translations.get(language_code="en").is_reference)
+
+    def test_poi_create_rejects_multiple_reference_translations(self):
+        response = self.client.post(
+            reverse("poi-list"),
+            {
+                "enabled": True,
+                "gps_latitude": 42.1,
+                "gps_longitude": -8.6,
+                "translations": [
+                    {
+                        "language_code": "en",
+                        "title": "Viewpoint",
+                        "description": "Open landscape views.",
+                        "slug": "viewpoint",
+                        "is_reference": True,
+                    },
+                    {
+                        "language_code": "es",
+                        "title": "Mirador",
+                        "description": "Vistas abiertas.",
+                        "slug": "mirador",
+                        "is_reference": True,
+                    },
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_itinerary_create_accepts_json_and_translations(self):
         payload = {
@@ -190,6 +220,7 @@ class POIAPITests(APITestCase):
         self.assertEqual(itinerary.translations.count(), 2)
         self.assertEqual(itinerary.translations.get(language_code="en").slug, "castle-walk")
         self.assertEqual(itinerary.translations.get(language_code="es").slug, "paseo-del-castillo")
+        self.assertTrue(itinerary.translations.get(language_code="en").is_reference)
         self.assertEqual(response["Access-Control-Allow-Origin"], "*")
 
     def test_itinerary_create_requires_translation_title(self):
@@ -234,6 +265,29 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         route = Route.objects.get(id=response.data["id"])
         self.assertEqual(route.translations.get(language_code="en").slug, "camino-route")
+        self.assertTrue(route.translations.get(language_code="en").is_reference)
+
+    def test_route_list_uses_reference_translation_without_language_filter(self):
+        route = Route.objects.create(enabled=True)
+        route.translations.create(
+            language_code="en",
+            title="English route",
+            description="English description.",
+            slug="english-route",
+        )
+        route.translations.create(
+            language_code="es",
+            title="Ruta española",
+            description="Descripción española.",
+            slug="ruta-espanola",
+            is_reference=True,
+        )
+
+        response = self.client.get(reverse("route-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["results"][0]["title"], "Ruta española")
+        self.assertEqual(response.data["results"][0]["description"], "Descripción española.")
 
     def test_itinerary_can_be_route_stage(self):
         route = Route.objects.create(enabled=True)

@@ -21,8 +21,13 @@ def select_translation(translations, language_code):
     if not translations:
         return None
 
+    if language_code:
+        for translation in translations:
+            if translation.language_code == language_code:
+                return translation
+
     for translation in translations:
-        if translation.language_code == language_code:
+        if getattr(translation, "is_reference", False):
             return translation
 
     for translation in translations:
@@ -36,10 +41,23 @@ def slug_from_title(title):
     return slugify(title or "") or "itinerary"
 
 
+def normalize_reference_translation(translations):
+    if translations is None or not translations:
+        return
+
+    reference_count = sum(1 for translation in translations if translation.get("is_reference"))
+    if reference_count > 1:
+        raise serializers.ValidationError(
+            {"translations": "Only one translation can be marked as reference."}
+        )
+    if reference_count == 0:
+        translations[0]["is_reference"] = True
+
+
 class POITranslationSerializer(serializers.ModelSerializer):
     class Meta:
         model = POITranslation
-        fields = ["id", "poi", "language_code", "title", "description", "slug"]
+        fields = ["id", "poi", "language_code", "title", "description", "slug", "is_reference"]
         read_only_fields = ["id"]
 
 
@@ -67,7 +85,7 @@ class POIImageSerializer(serializers.ModelSerializer):
 class NestedPOITranslationSerializer(serializers.ModelSerializer):
     class Meta:
         model = POITranslation
-        fields = ["id", "language_code", "title", "description", "slug"]
+        fields = ["id", "language_code", "title", "description", "slug", "is_reference"]
         read_only_fields = ["id"]
 
 
@@ -81,14 +99,14 @@ class NestedPOIImageSerializer(serializers.ModelSerializer):
 class ItineraryTranslationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItineraryTranslation
-        fields = ["id", "itinerary", "language_code", "title", "description", "slug"]
+        fields = ["id", "itinerary", "language_code", "title", "description", "slug", "is_reference"]
         read_only_fields = ["id"]
 
 
 class NestedItineraryTranslationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItineraryTranslation
-        fields = ["id", "language_code", "title", "description", "slug"]
+        fields = ["id", "language_code", "title", "description", "slug", "is_reference"]
         read_only_fields = ["id"]
 
 
@@ -97,7 +115,7 @@ class RouteTranslationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RouteTranslation
-        fields = ["id", "route", "language_code", "title", "description", "slug"]
+        fields = ["id", "route", "language_code", "title", "description", "slug", "is_reference"]
         read_only_fields = ["id"]
         validators = []
 
@@ -116,7 +134,7 @@ class NestedRouteTranslationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RouteTranslation
-        fields = ["id", "language_code", "title", "description", "slug"]
+        fields = ["id", "language_code", "title", "description", "slug", "is_reference"]
         read_only_fields = ["id"]
         validators = []
 
@@ -216,6 +234,7 @@ class POISerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         latitude = attrs.pop("gps_latitude", None)
         longitude = attrs.pop("gps_longitude", None)
+        normalize_reference_translation(attrs.get("translations"))
 
         if self.instance is None and (latitude is None or longitude is None):
             raise serializers.ValidationError(
@@ -344,6 +363,7 @@ class ItinerarySerializer(serializers.ModelSerializer):
         if self.instance is None and not translations:
             raise serializers.ValidationError({"translations": "At least one itinerary translation is required."})
         if translations is not None:
+            normalize_reference_translation(translations)
             for translation in translations:
                 title = (translation.get("title") or "").strip()
                 if not title:
@@ -422,6 +442,7 @@ class RouteSerializer(serializers.ModelSerializer):
         if self.instance is None and not translations:
             raise serializers.ValidationError({"translations": "At least one route translation is required."})
         if translations is not None:
+            normalize_reference_translation(translations)
             for translation in translations:
                 title = (translation.get("title") or "").strip()
                 if not title:

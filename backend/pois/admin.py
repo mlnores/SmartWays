@@ -15,6 +15,7 @@ from .models import (
 
 class POITranslationInline(admin.TabularInline):
     model = POITranslation
+    fields = ["language_code", "title", "description", "slug", "is_reference"]
     extra = 1
 
 
@@ -46,8 +47,8 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(POITranslation)
 class POITranslationAdmin(admin.ModelAdmin):
-    list_display = ["id", "poi", "language_code", "title", "slug"]
-    list_filter = ["language_code"]
+    list_display = ["id", "poi", "language_code", "title", "slug", "is_reference"]
+    list_filter = ["language_code", "is_reference"]
     search_fields = ["title", "description", "slug"]
 
 
@@ -67,11 +68,13 @@ class POIImageAdmin(admin.ModelAdmin):
 
 class ItineraryTranslationInline(admin.TabularInline):
     model = ItineraryTranslation
+    fields = ["language_code", "title", "description", "slug", "is_reference"]
     extra = 1
 
 
 class RouteTranslationInline(admin.TabularInline):
     model = RouteTranslation
+    fields = ["language_code", "title", "description", "slug", "is_reference"]
     extra = 1
 
 
@@ -84,12 +87,16 @@ class RouteAdmin(admin.ModelAdmin):
 
     @admin.display(description="title")
     def title(self, obj):
-        translation = obj.translations.order_by("language_code").first()
+        translation = obj.translations.filter(is_reference=True).first() or obj.translations.order_by(
+            "language_code"
+        ).first()
         return translation.title if translation else ""
 
     @admin.display(description="slug")
     def slug(self, obj):
-        translation = obj.translations.order_by("language_code").first()
+        translation = obj.translations.filter(is_reference=True).first() or obj.translations.order_by(
+            "language_code"
+        ).first()
         return translation.slug if translation else ""
 
 
@@ -102,19 +109,21 @@ class ItineraryAdmin(admin.ModelAdmin):
 
     @admin.display(description="slug")
     def slug(self, obj):
-        translation = obj.translations.order_by("language_code").first()
+        translation = obj.translations.filter(is_reference=True).first() or obj.translations.order_by(
+            "language_code"
+        ).first()
         return translation.slug if translation else ""
 
 
 @admin.register(ItineraryTranslation)
 class ItineraryTranslationAdmin(admin.ModelAdmin):
-    list_display = ["id", "itinerary", "language_code", "title", "slug"]
-    list_filter = ["language_code"]
+    list_display = ["id", "itinerary", "language_code", "title", "slug", "is_reference"]
+    list_filter = ["language_code", "is_reference"]
     search_fields = ["title", "description", "slug"]
 
 
 @admin.register(RouteTranslation)
 class RouteTranslationAdmin(admin.ModelAdmin):
-    list_display = ["id", "route", "language_code", "title", "slug"]
-    list_filter = ["language_code"]
+    list_display = ["id", "route", "language_code", "title", "slug", "is_reference"]
+    list_filter = ["language_code", "is_reference"]
     search_fields = ["title", "description", "slug"]

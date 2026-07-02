@@ -333,6 +333,7 @@ class Command(BaseCommand):
     def import_poi_translations(self, rows, language_codes, pois_by_source_id):
         used_slugs_by_language = defaultdict(set)
         seen_poi_languages = set()
+        reference_pois = set()
         translations = []
         skipped = 0
 
@@ -356,6 +357,8 @@ class Command(BaseCommand):
                 f"poi-{row['point_of_interest_id']}",
                 255,
             )
+            is_reference = poi.pk not in reference_pois
+            reference_pois.add(poi.pk)
             translations.append(
                 POITranslation(
                     poi=poi,
@@ -363,6 +366,7 @@ class Command(BaseCommand):
                     title=title,
                     description=row["description"] or "",
                     slug=slug,
+                    is_reference=is_reference,
                 )
             )
 

@@ -16,6 +16,7 @@ interface TranslationDraft {
   language_code: string;
   title: string;
   description: string;
+  is_reference: boolean;
 }
 
 @Component({
@@ -132,8 +133,17 @@ interface TranslationDraft {
             <button type="button" class="icon-button" aria-label="Close translation dialog" (click)="closeTranslationDialog()">x</button>
           </header>
           <div class="translation-list">
-            @for (translation of translationDrafts; track translation.language_code) {
+            @for (translation of translationDrafts; track $index) {
               <div class="translation-row">
+                <label class="reference-radio">
+                  <span>Reference</span>
+                  <input
+                    type="radio"
+                    name="routeReferenceTranslation"
+                    [checked]="translation.is_reference"
+                    (change)="setReferenceTranslation($index)"
+                  />
+                </label>
                 <label>
                   <span>Language</span>
                   <input type="text" [(ngModel)]="translation.language_code" [name]="'routeLanguage' + $index" />
@@ -204,7 +214,8 @@ export class RouteListComponent {
         translations: [{
           language_code: 'en',
           title,
-          description: this.newRoute.description.trim()
+          description: this.newRoute.description.trim(),
+          is_reference: true
         }]
       }));
       this.newRoute = { title: '', description: '', enabled: true };
@@ -266,7 +277,19 @@ export class RouteListComponent {
   }
 
   addTranslationDraft(): void {
-    this.translationDrafts.push({ language_code: '', title: '', description: '' });
+    this.translationDrafts.push({
+      language_code: '',
+      title: '',
+      description: '',
+      is_reference: this.translationDrafts.length === 0
+    });
+  }
+
+  setReferenceTranslation(index: number): void {
+    this.translationDrafts = this.translationDrafts.map((translation, currentIndex) => ({
+      ...translation,
+      is_reference: currentIndex === index
+    }));
   }
 
   async saveTranslationDialog(): Promise<void> {
@@ -292,23 +315,33 @@ export class RouteListComponent {
 
   private translationDraftsFrom(translations: Translation[], title: string | null, description: string | null): TranslationDraft[] {
     if (translations.length === 0) {
-      return [{ language_code: 'en', title: title || '', description: description || '' }];
+      return [{ language_code: 'en', title: title || '', description: description || '', is_reference: true }];
     }
-    return translations.map(translation => ({
+    const drafts = translations.map(translation => ({
       language_code: translation.language_code,
       title: translation.title || '',
-      description: translation.description || ''
+      description: translation.description || '',
+      is_reference: Boolean(translation.is_reference)
     }));
+    if (!drafts.some(translation => translation.is_reference)) {
+      drafts[0].is_reference = true;
+    }
+    return drafts;
   }
 
   private normalizedTranslations(): TranslationDraft[] {
-    return this.translationDrafts
+    const translations = this.translationDrafts
       .map(translation => ({
         language_code: translation.language_code.trim(),
         title: translation.title.trim(),
-        description: translation.description.trim()
+        description: translation.description.trim(),
+        is_reference: translation.is_reference
       }))
       .filter(translation => translation.language_code || translation.title || translation.description);
+    if (!translations.some(translation => translation.is_reference) && translations.length > 0) {
+      translations[0].is_reference = true;
+    }
+    return translations;
   }
 
   private showStatus(message: string, isError: boolean): void {
