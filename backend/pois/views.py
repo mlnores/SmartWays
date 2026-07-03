@@ -512,6 +512,29 @@ class CategoryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
 
         return queryset.distinct()
 
+    @action(detail=True, methods=["post"], url_path="merge")
+    def merge(self, request, pk=None):
+        source = self.get_object()
+        target_id = request.data.get("target")
+        if not target_id:
+            raise ValidationError({"target": "Select the category to merge into."})
+
+        try:
+            target = Category.objects.get(pk=target_id)
+        except Category.DoesNotExist as exc:
+            raise ValidationError({"target": "Target category does not exist."}) from exc
+
+        if source.pk == target.pk:
+            raise ValidationError({"target": "Choose a different target category."})
+
+        with transaction.atomic():
+            for poi in source.pois.all():
+                poi.categories.add(target)
+            source.delete()
+
+        serializer = self.get_serializer(target)
+        return Response(serializer.data)
+
 
 class CategoryTranslationViewSet(viewsets.ModelViewSet):
     serializer_class = CategoryTranslationSerializer

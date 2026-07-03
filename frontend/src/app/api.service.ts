@@ -84,6 +84,14 @@ export interface Category {
   translations: Translation[];
 }
 
+export interface CategoryPayload {
+  slug: string;
+  translations: Array<{
+    language_code: string;
+    name: string;
+  }>;
+}
+
 export interface PoiImage {
   id?: number;
   image_url: string;
@@ -264,6 +272,22 @@ export class ApiService {
 
   listAllCategories(query = '', language = ''): Observable<Category[]> {
     return this.collectPages(this.listCategories(query, language));
+  }
+
+  createCategory(payload: CategoryPayload): Observable<Category> {
+    return this.http.post<Category>(`${API_BASE_URL}/categories/`, payload);
+  }
+
+  updateCategory(id: number, payload: Partial<CategoryPayload>): Observable<Category> {
+    return this.http.patch<Category>(`${API_BASE_URL}/categories/${id}/`, payload);
+  }
+
+  deleteCategory(id: number): Observable<void> {
+    return this.http.delete<void>(`${API_BASE_URL}/categories/${id}/`);
+  }
+
+  mergeCategory(sourceId: number, targetId: number): Observable<Category> {
+    return this.http.post<Category>(`${API_BASE_URL}/categories/${sourceId}/merge/`, { target: targetId });
   }
 
   private collectPages<T>(firstPage: Observable<ApiPage<T>>): Observable<T[]> {

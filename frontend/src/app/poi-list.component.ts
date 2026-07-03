@@ -23,6 +23,15 @@ interface PoiDraft {
   category_ids: number[];
 }
 
+interface CategoryTranslationDraft {
+  language_code: string;
+  name: string;
+}
+
+interface CategoryDraft {
+  slug: string;
+}
+
 interface ItineraryPointExport {
   type?: string;
   id?: number | string;
@@ -51,6 +60,11 @@ interface ItineraryJsonExport {
         </div>
         @if (itineraryId) {
           <a class="secondary" [routerLink]="['/itineraries']">Back to itineraries</a>
+        } @else {
+          <div class="list-actions">
+            <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
+            <button type="button" class="primary icon-action" title="New POI" aria-label="New POI" (click)="openNewPoiDialog()">+</button>
+          </div>
         }
       </header>
 
@@ -155,7 +169,7 @@ interface ItineraryJsonExport {
       <dialog class="metadata-dialog wide" #metadataDialog>
         <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveMetadataDialog()">
           <header class="metadata-dialog-header">
-            <h2>Edit POI metadata</h2>
+            <h2>{{ editingPoi ? 'Edit POI metadata' : 'New POI' }}</h2>
             <button type="button" class="icon-button" aria-label="Close metadata dialog" (click)="closeMetadataDialog()">x</button>
           </header>
 
@@ -229,7 +243,82 @@ interface ItineraryJsonExport {
 
           <footer class="metadata-dialog-footer">
             <button type="button" class="secondary" (click)="closeMetadataDialog()">Cancel</button>
-            <button type="submit" class="primary">Save metadata</button>
+            <button type="submit" class="primary">{{ editingPoi ? 'Save metadata' : 'Create POI' }}</button>
+          </footer>
+        </form>
+      </dialog>
+
+      <dialog class="metadata-dialog wide" #categoryManagerDialog>
+        <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveCategoryDialog()">
+          <header class="metadata-dialog-header">
+            <h2>Manage categories</h2>
+            <button type="button" class="icon-button" aria-label="Close category manager" (click)="closeCategoryManagerDialog()">x</button>
+          </header>
+
+          <div class="metadata-scroll category-manager-grid">
+            <section class="category-list-panel">
+              <div class="category-manager-actions">
+                <button type="button" class="primary" (click)="startNewCategory()">New category</button>
+              </div>
+              <div class="category-manager-list">
+                @for (category of availableCategories; track category.id) {
+                  <button
+                    type="button"
+                    class="category-select-button"
+                    [class.active]="editingCategory?.id === category.id"
+                    (click)="selectCategoryForEditing(category)"
+                  >
+                    {{ category.name || category.slug }}
+                  </button>
+                } @empty {
+                  <p class="muted">No categories found.</p>
+                }
+              </div>
+            </section>
+
+            <section class="category-editor-panel">
+              <label>
+                <span>Slug</span>
+                <input type="text" [(ngModel)]="categoryDraft.slug" name="categorySlug" placeholder="category-slug" />
+              </label>
+
+              <section class="translation-list poi-translation-list">
+                @for (translation of categoryTranslationDrafts; track $index) {
+                  <div class="category-translation-row">
+                    <label>
+                      <span>Language</span>
+                      <input type="text" [(ngModel)]="translation.language_code" [name]="'categoryLanguage' + $index" />
+                    </label>
+                    <label>
+                      <span>Name</span>
+                      <input type="text" [(ngModel)]="translation.name" [name]="'categoryName' + $index" />
+                    </label>
+                  </div>
+                }
+                <button type="button" class="secondary" (click)="addCategoryTranslationDraft()">Add translation</button>
+              </section>
+
+              @if (editingCategory) {
+                <section class="category-danger-zone">
+                  <h3>Merge or delete</h3>
+                  <div class="category-merge-row">
+                    <select [(ngModel)]="mergeTargetCategoryId" name="mergeTargetCategory">
+                      <option [ngValue]="null">Merge into...</option>
+                      @for (category of mergeTargetCategories(); track category.id) {
+                        <option [ngValue]="category.id">{{ category.name || category.slug }}</option>
+                      }
+                    </select>
+                    <button type="button" class="secondary" (click)="mergeSelectedCategory()">Merge</button>
+                  </div>
+                  <button type="button" class="secondary danger-action" (click)="deleteSelectedCategory()">Delete category</button>
+                </section>
+              }
+            </section>
+          </div>
+
+          <footer class="metadata-dialog-footer">
+            <button type="button" class="secondary" (click)="closeCategoryManagerDialog()">Close</button>
+            <button type="submit" class="primary">{{ editingCategory ? 'Save category' : 'Create category' }}</button>
           </footer>
         </form>
       </dialog>
@@ -239,6 +328,7 @@ interface ItineraryJsonExport {
 })
 export class PoiListComponent {
   @ViewChild('metadataDialog') private readonly metadataDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('categoryManagerDialog') private readonly categoryManagerDialog?: ElementRef<HTMLDialogElement>;
 
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
@@ -257,6 +347,10 @@ export class PoiListComponent {
   editingPoi: Poi | null = null;
   poiDraft: PoiDraft = this.emptyPoiDraft();
   translationDrafts: TranslationDraft[] = [];
+  editingCategory: Category | null = null;
+  categoryDraft: CategoryDraft = this.emptyCategoryDraft();
+  categoryTranslationDrafts: CategoryTranslationDraft[] = [];
+  mergeTargetCategoryId: number | null = null;
   readonly duplicatingIds = new Set<number>();
 
   readonly state$ = combineLatest([
@@ -307,6 +401,19 @@ export class PoiListComponent {
     }
   }
 
+  openNewPoiDialog(): void {
+    this.editingPoi = null;
+    this.poiDraft = this.emptyPoiDraft();
+    this.translationDrafts = [{
+      language_code: 'en',
+      title: '',
+      description: '',
+      slug: '',
+      is_reference: true
+    }];
+    this.metadataDialog?.nativeElement.showModal();
+  }
+
   openMetadataDialog(poi: Poi): void {
     this.editingPoi = poi;
     this.poiDraft = {
@@ -346,8 +453,6 @@ export class PoiListComponent {
   }
 
   async saveMetadataDialog(): Promise<void> {
-    if (!this.editingPoi) return;
-
     const translations = this.normalizedTranslations();
     if (translations.length === 0 || translations.some(translation => !translation.language_code || !translation.title)) {
       this.showStatus('Every POI translation needs a language and title.', true);
@@ -359,7 +464,7 @@ export class PoiListComponent {
     }
 
     try {
-      await firstValueFrom(this.api.updatePoi(this.editingPoi.id, {
+      const payload = {
         enabled: this.poiDraft.enabled,
         country_code: this.poiDraft.country_code.trim().toUpperCase(),
         gps_latitude: Number(this.poiDraft.gps_latitude),
@@ -367,12 +472,145 @@ export class PoiListComponent {
         website: this.poiDraft.website.trim(),
         category_ids: this.poiDraft.category_ids,
         translations
-      }));
+      };
+      if (this.editingPoi) {
+        await firstValueFrom(this.api.updatePoi(this.editingPoi.id, payload));
+      } else {
+        await firstValueFrom(this.api.createPoi(payload));
+      }
       this.closeMetadataDialog();
       this.clearStatus();
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not save POI metadata. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  openCategoryManagerDialog(): void {
+    if (this.availableCategories.length > 0) {
+      this.selectCategoryForEditing(this.availableCategories[0]);
+    } else {
+      this.startNewCategory();
+    }
+    this.categoryManagerDialog?.nativeElement.showModal();
+  }
+
+  closeCategoryManagerDialog(): void {
+    this.categoryManagerDialog?.nativeElement.close();
+    this.editingCategory = null;
+    this.categoryDraft = this.emptyCategoryDraft();
+    this.categoryTranslationDrafts = [];
+    this.mergeTargetCategoryId = null;
+  }
+
+  startNewCategory(): void {
+    this.editingCategory = null;
+    this.categoryDraft = this.emptyCategoryDraft();
+    this.categoryTranslationDrafts = [{ language_code: 'en', name: '' }];
+    this.mergeTargetCategoryId = null;
+  }
+
+  selectCategoryForEditing(category: Category): void {
+    this.editingCategory = category;
+    this.categoryDraft = { slug: category.slug || '' };
+    this.categoryTranslationDrafts = category.translations.length > 0
+      ? category.translations.map(translation => ({
+        language_code: translation.language_code,
+        name: translation.name || ''
+      }))
+      : [{ language_code: 'en', name: category.name || '' }];
+    this.mergeTargetCategoryId = null;
+  }
+
+  addCategoryTranslationDraft(): void {
+    this.categoryTranslationDrafts.push({ language_code: '', name: '' });
+  }
+
+  mergeTargetCategories(): Category[] {
+    return this.availableCategories.filter(category => category.id !== this.editingCategory?.id);
+  }
+
+  async saveCategoryDialog(): Promise<void> {
+    const slug = this.categoryDraft.slug.trim();
+    const translations = this.normalizedCategoryTranslations();
+    if (!slug) {
+      this.showStatus('Category slug is required.', true);
+      return;
+    }
+    if (translations.length === 0 || translations.some(translation => !translation.language_code || !translation.name)) {
+      this.showStatus('Every category translation needs a language and name.', true);
+      return;
+    }
+
+    try {
+      const editingCategoryId = this.editingCategory?.id ?? null;
+      if (this.editingCategory) {
+        await firstValueFrom(this.api.updateCategory(this.editingCategory.id, { slug, translations }));
+      } else {
+        await firstValueFrom(this.api.createCategory({ slug, translations }));
+      }
+      await this.reloadCategories();
+      this.clearStatus();
+      const savedCategory = editingCategoryId
+        ? this.availableCategories.find(category => category.id === editingCategoryId)
+        : this.availableCategories.find(category => category.slug === slug);
+      if (savedCategory) {
+        this.selectCategoryForEditing(savedCategory);
+      }
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not save category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async deleteSelectedCategory(): Promise<void> {
+    if (!this.editingCategory) return;
+    const confirmed = window.confirm(`Delete category "${this.editingCategory.name || this.editingCategory.slug}"? POIs using it will be left without this category.`);
+    if (!confirmed) return;
+
+    try {
+      const deletedId = this.editingCategory.id;
+      await firstValueFrom(this.api.deleteCategory(deletedId));
+      if (this.selectedCategory === String(deletedId)) {
+        this.selectedCategory = '';
+      }
+      await this.reloadCategories();
+      if (this.availableCategories.length > 0) {
+        this.selectCategoryForEditing(this.availableCategories[0]);
+      } else {
+        this.startNewCategory();
+      }
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not delete category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async mergeSelectedCategory(): Promise<void> {
+    if (!this.editingCategory || !this.mergeTargetCategoryId) {
+      this.showStatus('Select a target category to merge into.', true);
+      return;
+    }
+    const target = this.availableCategories.find(category => category.id === this.mergeTargetCategoryId);
+    const confirmed = window.confirm(`Merge "${this.editingCategory.name || this.editingCategory.slug}" into "${target?.name || target?.slug || 'the selected category'}"?`);
+    if (!confirmed) return;
+
+    try {
+      const sourceId = this.editingCategory.id;
+      await firstValueFrom(this.api.mergeCategory(sourceId, this.mergeTargetCategoryId));
+      if (this.selectedCategory === String(sourceId)) {
+        this.selectedCategory = String(this.mergeTargetCategoryId);
+      }
+      await this.reloadCategories();
+      const mergedTarget = this.availableCategories.find(category => category.id === this.mergeTargetCategoryId);
+      if (mergedTarget) {
+        this.selectCategoryForEditing(mergedTarget);
+      }
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not merge category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
@@ -505,6 +743,15 @@ export class PoiListComponent {
     return translations;
   }
 
+  private normalizedCategoryTranslations() {
+    return this.categoryTranslationDrafts
+      .map(translation => ({
+        language_code: translation.language_code.trim(),
+        name: translation.name.trim()
+      }))
+      .filter(translation => translation.language_code || translation.name);
+  }
+
   private emptyPoiDraft(): PoiDraft {
     return {
       enabled: true,
@@ -514,6 +761,14 @@ export class PoiListComponent {
       gps_longitude: null,
       category_ids: []
     };
+  }
+
+  private emptyCategoryDraft(): CategoryDraft {
+    return { slug: '' };
+  }
+
+  private async reloadCategories(): Promise<void> {
+    this.availableCategories = await firstValueFrom(this.api.listAllCategories());
   }
 
   countryName(countryCode: string | null | undefined): string {
