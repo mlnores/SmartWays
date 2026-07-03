@@ -1,10 +1,10 @@
 import { AsyncPipe, DatePipe } from '@angular/common';
-import { Component, ElementRef, ViewChild, inject } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
-import { ApiService, Route, Translation } from './api.service';
+import { ApiService, Itinerary, Route, Translation } from './api.service';
 
 interface RouteDraft {
   title: string;
@@ -19,6 +19,33 @@ interface TranslationDraft {
   is_reference: boolean;
 }
 
+interface PointExport {
+  type?: string;
+  id?: number;
+  name?: string;
+  title?: string;
+  label?: string;
+  lat?: number;
+  lng?: number;
+  coordinates?: {
+    lat?: number;
+    lng?: number;
+  };
+}
+
+interface SegmentExport {
+  selectedWalkingRoute?: {
+    geometry?: unknown;
+  } | null;
+}
+
+interface ItineraryJsonExport {
+  points?: PointExport[];
+  segments?: SegmentExport[];
+}
+
+declare const L: any;
+
 @Component({
   selector: 'app-route-list',
   standalone: true,
@@ -30,7 +57,7 @@ interface TranslationDraft {
           <h1>Routes</h1>
           <p>Browse multi-stage routes.</p>
         </div>
-        <button type="button" class="primary icon-action" title="New route" aria-label="New route" (click)="openNewRouteDialog()">+</button>
+        <button type="button" class="primary" title="New route" aria-label="New route" (click)="openNewRouteDialog()">New route</button>
       </header>
 
       <div class="toolbar">
@@ -50,51 +77,68 @@ interface TranslationDraft {
         @if (state.error) {
           <p class="status error">{{ state.error }}</p>
         } @else {
-          <div class="table-wrap">
-            <table class="resource-table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Last updated</th>
-                  <th>Segments</th>
-                  <th class="enabled-column">Enabled</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                @for (route of state.routes; track route.id) {
-                  <tr>
-                    <td>
-                      <a [routerLink]="['/route', route.slug || route.id]">{{ route.title || 'Untitled route' }}</a>
-                      <p class="description-preview">{{ route.description || 'No description' }}</p>
-                    </td>
-                    <td>{{ route.updated_at | date:'medium' }}</td>
-                    <td>{{ route.itinerary_count }}</td>
-                    <td>
-                      <input
-                        class="enabled-checkbox"
-                        type="checkbox"
-                        title="Enable"
-                        aria-label="Enable"
-                        [checked]="route.enabled"
-                        (change)="setRouteEnabled(route, $any($event.target).checked)"
-                      />
-                    </td>
-                    <td>
-                      <div class="table-actions">
-                        <a class="secondary icon-action" title="View itineraries" aria-label="View itineraries" [routerLink]="['/route', route.slug || route.id]">📋</a>
-                        <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(route)">📝</button>
-                        <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteRoute(route)">🗑️</button>
-                      </div>
-                    </td>
-                  </tr>
-                } @empty {
-                  <tr>
-                    <td colspan="5">No routes found.</td>
-                  </tr>
-                }
-              </tbody>
-            </table>
+          <div class="preview-layout">
+            <div class="preview-list">
+              <div class="table-wrap">
+                <table class="resource-table">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Last updated</th>
+                      <th>Segments</th>
+                      <th class="enabled-column">Enabled</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (route of state.routes; track route.id) {
+                      <tr
+                        [class.preview-selected-row]="previewRoute?.id === route.id"
+                        (click)="selectPreviewRoute(route)"
+                      >
+                        <td>
+                          <strong>{{ route.title || 'Untitled route' }}</strong>
+                          <p class="description-preview">{{ route.description || 'No description' }}</p>
+                        </td>
+                        <td>{{ route.updated_at | date:'medium' }}</td>
+                        <td>{{ route.itinerary_count }}</td>
+                        <td class="enabled-column" (click)="$event.stopPropagation()">
+                          <input
+                            class="enabled-checkbox"
+                            type="checkbox"
+                            title="Enable"
+                            aria-label="Enable"
+                            [checked]="route.enabled"
+                            (change)="setRouteEnabled(route, $any($event.target).checked)"
+                          />
+                        </td>
+                        <td>
+                          <div class="table-actions" (click)="$event.stopPropagation()">
+                            <a class="secondary icon-action" title="View itineraries" aria-label="View itineraries" [routerLink]="['/route', route.slug || route.id]">📋</a>
+                            <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(route)">📝</button>
+                            <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteRoute(route)">🗑️</button>
+                          </div>
+                        </td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="5">No routes found.</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <aside class="preview-panel" aria-label="Route map preview">
+              <header>
+                <h2>Map preview</h2>
+                <p>{{ previewRoute ? previewRoute.title || 'Untitled route' : 'Click a route to preview it.' }}</p>
+              </header>
+              <div class="preview-map" #previewMap></div>
+              @if (previewMessage) {
+                <p class="muted preview-message">{{ previewMessage }}</p>
+              }
+            </aside>
           </div>
         }
       }
@@ -170,9 +214,10 @@ interface TranslationDraft {
   `,
   styleUrl: './resource-list.css'
 })
-export class RouteListComponent {
+export class RouteListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('newRouteDialog') private readonly newRouteDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('translationDialog') private readonly translationDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
 
   private readonly api = inject(ApiService);
   readonly query$ = new BehaviorSubject('');
@@ -183,6 +228,12 @@ export class RouteListComponent {
   statusIsError = false;
   editingRoute: Route | null = null;
   translationDrafts: TranslationDraft[] = [];
+  previewRoute: Route | null = null;
+  previewMessage = 'Click a route to preview it.';
+  private previewMap: any = null;
+  private previewLayer: any = null;
+  private previewResizeObserver: ResizeObserver | null = null;
+  private previewRequestId = 0;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
@@ -200,6 +251,36 @@ export class RouteListComponent {
     )),
     startWith({ routes: [] as Route[], error: '' })
   );
+
+  ngAfterViewInit(): void {
+    this.initializePreviewMap();
+  }
+
+  ngOnDestroy(): void {
+    this.previewResizeObserver?.disconnect();
+    this.previewResizeObserver = null;
+    if (this.previewMap) {
+      this.previewMap.remove();
+      this.previewMap = null;
+    }
+  }
+
+  async selectPreviewRoute(route: Route): Promise<void> {
+    this.previewRoute = route;
+    const requestId = this.previewRequestId + 1;
+    this.previewRequestId = requestId;
+    this.previewMessage = 'Loading route preview...';
+
+    try {
+      const itineraries = await firstValueFrom(this.api.listAllItineraries('', '', route.id));
+      if (requestId !== this.previewRequestId) return;
+      this.renderPreviewRoute(this.sortedItineraries(itineraries));
+    } catch (error) {
+      if (requestId !== this.previewRequestId) return;
+      this.previewMessage = `Could not load route preview. ${error instanceof Error ? error.message : 'Request failed.'}`;
+      this.previewLayer?.clearLayers();
+    }
+  }
 
   async createRoute(): Promise<void> {
     const title = this.newRoute.title.trim();
@@ -311,6 +392,169 @@ export class RouteListComponent {
     } catch (error) {
       this.showStatus(`Could not save translations. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
+  }
+
+  private initializePreviewMap(): void {
+    if (this.previewMap || !this.previewMapElement?.nativeElement) return;
+    if (typeof L === 'undefined') {
+      this.previewMessage = 'Map library is not available.';
+      return;
+    }
+
+    this.previewMap = L.map(this.previewMapElement.nativeElement, {
+      zoomControl: true,
+      attributionControl: false
+    }).setView([42.5, -8.5], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(this.previewMap);
+    this.previewLayer = L.layerGroup().addTo(this.previewMap);
+    this.previewResizeObserver = new ResizeObserver(() => {
+      this.previewMap?.invalidateSize();
+    });
+    this.previewResizeObserver.observe(this.previewMapElement.nativeElement);
+    window.requestAnimationFrame(() => this.previewMap?.invalidateSize());
+  }
+
+  private renderPreviewRoute(itineraries: Itinerary[]): void {
+    this.initializePreviewMap();
+    if (!this.previewMap || !this.previewLayer) return;
+
+    this.previewLayer.clearLayers();
+    const bounds = L.latLngBounds([]);
+    let routeGeometryCount = 0;
+    let straightSegmentCount = 0;
+    let markerIndex = 1;
+
+    for (const itinerary of itineraries) {
+      const json = this.itineraryJson(itinerary);
+      const pointCoordinates = this.previewPointCoordinatesByIndex(json.points || []);
+      const coordinates = pointCoordinates.filter((point): point is { lat: number; lng: number; label: string } => point !== null);
+      const segments = json.segments || [];
+      const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
+
+      for (let index = 0; index < segmentCount; index += 1) {
+        const geometry = segments[index]?.selectedWalkingRoute?.geometry;
+        if (geometry) {
+          const routeLayer = L.geoJSON(geometry, {
+            style: {
+              color: '#1f6feb',
+              weight: 5,
+              opacity: 0.8
+            }
+          }).addTo(this.previewLayer);
+          const routeBounds = routeLayer.getBounds();
+          if (routeBounds.isValid()) {
+            bounds.extend(routeBounds);
+          }
+          routeGeometryCount += 1;
+          continue;
+        }
+
+        const start = pointCoordinates[index];
+        const end = pointCoordinates[index + 1];
+        if (start && end) {
+          const line = L.polyline([[start.lat, start.lng], [end.lat, end.lng]], {
+            color: '#1f6feb',
+            weight: 4,
+            opacity: 0.75,
+            dashArray: '8 8'
+          }).addTo(this.previewLayer);
+          bounds.extend(line.getBounds());
+          straightSegmentCount += 1;
+        }
+      }
+
+      coordinates.forEach(point => {
+        L.marker([point.lat, point.lng], {
+          icon: this.previewMarkerIcon(markerIndex)
+        })
+          .bindTooltip(`${markerIndex}. ${point.label}`, { direction: 'top' })
+          .addTo(this.previewLayer);
+        bounds.extend([point.lat, point.lng]);
+        markerIndex += 1;
+      });
+    }
+
+    this.fitPreviewMap(bounds);
+
+    if (itineraries.length === 0) {
+      this.previewMessage = 'This route has no itineraries yet.';
+    } else if (markerIndex === 1 && routeGeometryCount === 0) {
+      this.previewMessage = 'This route does not store coordinates yet.';
+    } else if (markerIndex === 1) {
+      this.previewMessage = 'Previewing saved route geometry. Point coordinates are not stored.';
+    } else if (straightSegmentCount > 0 && routeGeometryCount > 0) {
+      this.previewMessage = 'Dashed segments do not have saved walking routes yet.';
+    } else if (straightSegmentCount > 0) {
+      this.previewMessage = 'Previewing straight dashed lines for segments without walking routes.';
+    } else {
+      this.previewMessage = '';
+    }
+  }
+
+  private previewPointCoordinatesByIndex(points: PointExport[]): Array<{ lat: number; lng: number; label: string } | null> {
+    return points.map(point => {
+      const lat = point.coordinates?.lat ?? point.lat;
+      const lng = point.coordinates?.lng ?? point.lng;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return {
+        lat: Number(lat),
+        lng: Number(lng),
+        label: this.pointName(point)
+      };
+    });
+  }
+
+  private previewMarkerIcon(index: number): any {
+    return L.divIcon({
+      className: 'preview-marker',
+      html: `<span>${index}</span>`,
+      iconSize: [34, 34],
+      iconAnchor: [17, 17],
+      tooltipAnchor: [0, -18]
+    });
+  }
+
+  private fitPreviewMap(bounds: any): void {
+    window.requestAnimationFrame(() => {
+      if (!this.previewMap) return;
+      this.previewMap.invalidateSize(false);
+      if (bounds.isValid()) {
+        this.previewMap.fitBounds(bounds, { padding: [22, 22], maxZoom: 15, animate: false });
+      } else {
+        this.previewMap.setView([42.5, -8.5], 5, { animate: false });
+      }
+      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+    });
+  }
+
+  private pointName(point: PointExport | undefined): string {
+    if (!point) return '-';
+    if (point.title?.trim()) return point.title.trim();
+    if (point.name?.trim()) return point.name.trim();
+    if (point.label?.trim()) return point.label.trim();
+    if (point.type === 'poi') return point.id ? `POI #${point.id}` : 'POI';
+    const lat = point.coordinates?.lat ?? point.lat;
+    const lng = point.coordinates?.lng ?? point.lng;
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
+    }
+    return 'Waypoint';
+  }
+
+  private itineraryJson(itinerary: Itinerary): ItineraryJsonExport {
+    return itinerary.itinerary_json && typeof itinerary.itinerary_json === 'object'
+      ? itinerary.itinerary_json as ItineraryJsonExport
+      : {};
+  }
+
+  private sortedItineraries(itineraries: Itinerary[]): Itinerary[] {
+    return [...itineraries].sort((left, right) => {
+      const leftStage = left.stage_number ?? Number.MAX_SAFE_INTEGER;
+      const rightStage = right.stage_number ?? Number.MAX_SAFE_INTEGER;
+      return leftStage - rightStage || left.id - right.id;
+    });
   }
 
   private translationDraftsFrom(translations: Translation[], title: string | null, description: string | null): TranslationDraft[] {

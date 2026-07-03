@@ -1,5 +1,5 @@
 import { AsyncPipe } from '@angular/common';
-import { Component, ElementRef, ViewChild, inject } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
@@ -41,6 +41,26 @@ interface ItineraryJsonExport {
   points?: ItineraryPointExport[];
 }
 
+declare const L: any;
+
+const COUNTRY_BOUNDS: Record<string, [[number, number], [number, number]]> = {
+  AT: [[46.37, 9.53], [49.02, 17.16]],
+  CH: [[45.82, 5.96], [47.81, 10.49]],
+  DE: [[47.27, 5.87], [55.06, 15.04]],
+  ES: [[35.17, -9.30], [43.80, 4.33]],
+  FR: [[41.33, -5.14], [51.09, 9.56]],
+  GB: [[49.86, -8.65], [60.86, 1.77]],
+  HU: [[45.74, 16.11], [48.59, 22.91]],
+  IT: [[35.49, 6.63], [47.10, 18.52]],
+  NO: [[57.95, 4.50], [71.19, 31.08]],
+  PL: [[49.00, 14.12], [54.84, 24.15]],
+  PT: [[36.96, -9.55], [42.16, -6.19]],
+  RO: [[43.62, 20.22], [48.27, 29.69]],
+  SK: [[47.73, 16.84], [49.61, 22.57]],
+  TD: [[7.44, 13.47], [23.45, 24.00]],
+  VA: [[41.90, 12.44], [41.91, 12.46]]
+};
+
 @Component({
   selector: 'app-poi-list',
   standalone: true,
@@ -63,7 +83,7 @@ interface ItineraryJsonExport {
         } @else {
           <div class="list-actions">
             <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
-            <button type="button" class="primary icon-action" title="New POI" aria-label="New POI" (click)="openNewPoiDialog()">+</button>
+            <button type="button" class="primary" title="New POI" aria-label="New POI" (click)="openNewPoiDialog()">New POI</button>
           </div>
         }
       </header>
@@ -107,61 +127,78 @@ interface ItineraryJsonExport {
         @if (state.error) {
           <p class="status error">{{ state.error }}</p>
         } @else {
-          <div class="table-wrap">
-            <table class="resource-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Categories</th>
-                  <th>Country</th>
-                  <th class="enabled-column">Enabled</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                @for (poi of state.items; track poi.id) {
-                  <tr>
-                    <td>
-                      <strong>{{ poi.title || 'Untitled POI' }}</strong>
-                      <p class="description-preview">{{ poi.description || 'No description' }}</p>
-                    </td>
-                    <td>
-                      @if (poi.categories.length) {
-                        <div class="chip-list">
-                          @for (category of poi.categories; track category.id) {
-                            <span class="small-chip">{{ category.name || category.slug }}</span>
+          <div class="preview-layout">
+            <div class="preview-list">
+              <div class="table-wrap">
+                <table class="resource-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Categories</th>
+                      <th>Country</th>
+                      <th class="enabled-column">Enabled</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (poi of state.items; track poi.id) {
+                      <tr
+                        [class.preview-selected-row]="previewPoi?.id === poi.id"
+                        (click)="selectPreviewPoi(poi)"
+                      >
+                        <td>
+                          <strong>{{ poi.title || 'Untitled POI' }}</strong>
+                          <p class="description-preview">{{ poi.description || 'No description' }}</p>
+                        </td>
+                        <td>
+                          @if (poi.categories.length) {
+                            <div class="chip-list">
+                              @for (category of poi.categories; track category.id) {
+                                <span class="small-chip">{{ category.name || category.slug }}</span>
+                              }
+                            </div>
+                          } @else {
+                            <span class="muted">No categories</span>
                           }
-                        </div>
-                      } @else {
-                        <span class="muted">No categories</span>
-                      }
-                    </td>
-                    <td>{{ countryName(poi.country_code) }}</td>
-                    <td class="enabled-column">
-                      <input
-                        class="enabled-checkbox"
-                        type="checkbox"
-                        title="Enable"
-                        aria-label="Enable"
-                        [checked]="poi.enabled"
-                        (change)="setPoiEnabled(poi, $any($event.target).checked)"
-                      />
-                    </td>
-                    <td>
-                      <div class="table-actions">
-                        <button type="button" class="secondary icon-action" title="Edit metadata" aria-label="Edit metadata" (click)="openMetadataDialog(poi)">📝</button>
-                        <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(poi.id)" (click)="duplicatePoi(poi)">📄</button>
-                        <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deletePoi(poi)">🗑️</button>
-                      </div>
-                    </td>
-                  </tr>
-                } @empty {
-                  <tr>
-                    <td colspan="5">No POIs found.</td>
-                  </tr>
-                }
-              </tbody>
-            </table>
+                        </td>
+                        <td>{{ countryName(poi.country_code) }}</td>
+                        <td class="enabled-column" (click)="$event.stopPropagation()">
+                          <input
+                            class="enabled-checkbox"
+                            type="checkbox"
+                            title="Enable"
+                            aria-label="Enable"
+                            [checked]="poi.enabled"
+                            (change)="setPoiEnabled(poi, $any($event.target).checked)"
+                          />
+                        </td>
+                        <td>
+                          <div class="table-actions" (click)="$event.stopPropagation()">
+                            <button type="button" class="secondary icon-action" title="Edit metadata" aria-label="Edit metadata" (click)="openMetadataDialog(poi)">📝</button>
+                            <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(poi.id)" (click)="duplicatePoi(poi)">📄</button>
+                            <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deletePoi(poi)">🗑️</button>
+                          </div>
+                        </td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="5">No POIs found.</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <aside class="preview-panel" aria-label="POI map preview">
+              <header>
+                <h2>Map preview</h2>
+                <p>{{ previewPoi ? previewPoi.title || 'Untitled POI' : 'Click a POI to preview it.' }}</p>
+              </header>
+              <div class="preview-map" #previewMap></div>
+              @if (previewMessage) {
+                <p class="muted preview-message">{{ previewMessage }}</p>
+              }
+            </aside>
           </div>
         }
       }
@@ -326,9 +363,10 @@ interface ItineraryJsonExport {
   `,
   styleUrl: './resource-list.css'
 })
-export class PoiListComponent {
+export class PoiListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('metadataDialog') private readonly metadataDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('categoryManagerDialog') private readonly categoryManagerDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
 
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
@@ -352,6 +390,11 @@ export class PoiListComponent {
   categoryTranslationDrafts: CategoryTranslationDraft[] = [];
   mergeTargetCategoryId: number | null = null;
   readonly duplicatingIds = new Set<number>();
+  previewPoi: Poi | null = null;
+  previewMessage = 'Click a POI to preview it.';
+  private previewMap: any = null;
+  private previewLayer: any = null;
+  private previewResizeObserver: ResizeObserver | null = null;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
@@ -390,6 +433,24 @@ export class PoiListComponent {
     }),
     startWith({ items: [] as Poi[], error: '' })
   );
+
+  ngAfterViewInit(): void {
+    this.initializePreviewMap();
+  }
+
+  ngOnDestroy(): void {
+    this.previewResizeObserver?.disconnect();
+    this.previewResizeObserver = null;
+    if (this.previewMap) {
+      this.previewMap.remove();
+      this.previewMap = null;
+    }
+  }
+
+  selectPreviewPoi(poi: Poi): void {
+    this.previewPoi = poi;
+    this.renderPreviewPoi(poi);
+  }
 
   async setPoiEnabled(poi: Poi, enabled: boolean): Promise<void> {
     try {
@@ -651,6 +712,76 @@ export class PoiListComponent {
     } catch (error) {
       this.showStatus(`Could not delete POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
+  }
+
+  private initializePreviewMap(): void {
+    if (this.previewMap || !this.previewMapElement?.nativeElement) return;
+    if (typeof L === 'undefined') {
+      this.previewMessage = 'Map library is not available.';
+      return;
+    }
+
+    this.previewMap = L.map(this.previewMapElement.nativeElement, {
+      zoomControl: true,
+      attributionControl: false
+    }).setView([42.5, -8.5], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(this.previewMap);
+    this.previewLayer = L.layerGroup().addTo(this.previewMap);
+    this.previewResizeObserver = new ResizeObserver(() => {
+      this.previewMap?.invalidateSize();
+    });
+    this.previewResizeObserver.observe(this.previewMapElement.nativeElement);
+    window.requestAnimationFrame(() => this.previewMap?.invalidateSize());
+  }
+
+  private renderPreviewPoi(poi: Poi): void {
+    this.initializePreviewMap();
+    if (!this.previewMap || !this.previewLayer) return;
+
+    this.previewLayer.clearLayers();
+    if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) {
+      this.previewMessage = 'This POI does not have valid coordinates.';
+      this.fitPreviewMap(null);
+      return;
+    }
+
+    const latLng = [poi.gps_latitude, poi.gps_longitude];
+    L.marker(latLng, {
+      icon: this.previewMarkerIcon()
+    })
+      .bindTooltip(poi.title || `POI #${poi.id}`, { direction: 'top' })
+      .addTo(this.previewLayer);
+
+    this.previewMessage = `${Number(poi.gps_latitude).toFixed(5)}, ${Number(poi.gps_longitude).toFixed(5)}`;
+    this.fitPreviewMap(latLng, poi.country_code);
+  }
+
+  private previewMarkerIcon(): any {
+    return L.divIcon({
+      className: 'preview-marker',
+      html: '<span>1</span>',
+      iconSize: [34, 34],
+      iconAnchor: [17, 17],
+      tooltipAnchor: [0, -18]
+    });
+  }
+
+  private fitPreviewMap(latLng: number[] | null, countryCode = ''): void {
+    window.requestAnimationFrame(() => {
+      if (!this.previewMap) return;
+      this.previewMap.invalidateSize(false);
+      const countryBounds = COUNTRY_BOUNDS[(countryCode || '').toUpperCase()];
+      if (countryBounds) {
+        this.previewMap.fitBounds(countryBounds, { padding: [22, 22], maxZoom: 9, animate: false });
+      } else if (latLng) {
+        this.previewMap.setView(latLng, 14, { animate: false });
+      } else {
+        this.previewMap.setView([42.5, -8.5], 5, { animate: false });
+      }
+      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+    });
   }
 
   private duplicateTranslations(poi: Poi, title: string) {

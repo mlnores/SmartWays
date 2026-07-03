@@ -1,5 +1,5 @@
 import { AsyncPipe, DatePipe, NgTemplateOutlet } from '@angular/common';
-import { Component, ElementRef, ViewChild, inject } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
@@ -39,6 +39,8 @@ interface PointExport {
   name?: string;
   title?: string;
   label?: string;
+  lat?: number;
+  lng?: number;
   coordinates?: {
     lat?: number;
     lng?: number;
@@ -48,6 +50,7 @@ interface PointExport {
 interface SegmentExport {
   selectedWalkingRoute?: {
     distanceMeters?: number;
+    geometry?: unknown;
   } | null;
 }
 
@@ -55,6 +58,8 @@ interface ItineraryJsonExport {
   points?: PointExport[];
   segments?: SegmentExport[];
 }
+
+declare const L: any;
 
 @Component({
   selector: 'app-itinerary-list',
@@ -68,9 +73,9 @@ interface ItineraryJsonExport {
           <p>{{ routeSlug ? 'Browse the constituent itineraries of this route.' : 'Browse saved itinerary definitions and open the editor.' }}</p>
         </div>
         @if (!routeSlug) {
-          <button type="button" class="primary icon-action" title="New itinerary" aria-label="New itinerary" (click)="openNewItineraryDialog()">+</button>
+          <button type="button" class="primary" title="New itinerary" aria-label="New itinerary" (click)="openNewItineraryDialog()">New itinerary</button>
         } @else {
-          <button type="button" class="primary icon-action" title="New itinerary for this route" aria-label="New itinerary for this route" (click)="openNewItineraryForCurrentRoute()">+</button>
+          <button type="button" class="primary" title="New itinerary for this route" aria-label="New itinerary for this route" (click)="openNewItineraryForCurrentRoute()">New itinerary</button>
         }
       </header>
 
@@ -96,10 +101,12 @@ interface ItineraryJsonExport {
         @if (state.error) {
           <p class="status error">{{ state.error }}</p>
         } @else {
-          @if (routeSlug || viewMode === 'flat') {
-            <ng-container *ngTemplateOutlet="itineraryTable; context: { items: state.items, routes: state.routes }"></ng-container>
-          } @else {
-            <div class="route-group-list">
+          <div class="preview-layout">
+            <div class="preview-list">
+              @if (routeSlug || viewMode === 'flat') {
+                <ng-container *ngTemplateOutlet="itineraryTable; context: { items: state.items, routes: state.routes }"></ng-container>
+              } @else {
+                <div class="route-group-list">
               @for (group of groupsFor(state.items); track groupKey(group)) {
                 <section class="route-group">
                   <header class="route-group-header">
@@ -120,7 +127,12 @@ interface ItineraryJsonExport {
                       </thead>
                       <tbody>
                         @for (itinerary of group.items; track itinerary.id) {
-                          <tr [attr.id]="itineraryRowId(itinerary)" [class.highlight-row]="highlightedItineraryId === itinerary.id">
+                          <tr
+                            [attr.id]="itineraryRowId(itinerary)"
+                            [class.highlight-row]="highlightedItineraryId === itinerary.id"
+                            [class.preview-selected-row]="previewItinerary?.id === itinerary.id"
+                            (click)="selectPreviewItinerary(itinerary)"
+                          >
                             <td>{{ itinerary.stage_number || '-' }}</td>
                             <td>
                               {{ itinerary.title || 'Untitled itinerary' }}
@@ -129,7 +141,7 @@ interface ItineraryJsonExport {
                             <td>{{ firstPointName(itinerary) }}</td>
                             <td>{{ lastPointName(itinerary) }}</td>
                             <td>{{ estimatedDistance(itinerary) }}</td>
-                            <td class="enabled-column">
+                            <td class="enabled-column" (click)="$event.stopPropagation()">
                               <input
                                 class="enabled-checkbox"
                                 type="checkbox"
@@ -140,7 +152,7 @@ interface ItineraryJsonExport {
                               />
                             </td>
                             <td>
-                              <div class="table-actions">
+                              <div class="table-actions" (click)="$event.stopPropagation()">
                                 <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">📝</button>
                                 <a class="secondary icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">🗺️</a>
                                 <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">📍</a>
@@ -162,8 +174,20 @@ interface ItineraryJsonExport {
               } @empty {
                 <p class="empty">No itineraries found.</p>
               }
+                </div>
+              }
             </div>
-          }
+            <aside class="preview-panel" aria-label="Itinerary map preview">
+              <header>
+                <h2>Map preview</h2>
+                <p>{{ previewItinerary ? previewItinerary.title || 'Untitled itinerary' : 'Click an itinerary to preview it.' }}</p>
+              </header>
+              <div class="preview-map" #previewMap></div>
+              @if (previewMessage) {
+                <p class="muted preview-message">{{ previewMessage }}</p>
+              }
+            </aside>
+          </div>
         }
       }
 
@@ -191,15 +215,17 @@ interface ItineraryJsonExport {
                 <tr
                   [attr.id]="itineraryRowId(itinerary)"
                   [class.highlight-row]="highlightedItineraryId === itinerary.id"
+                  [class.preview-selected-row]="previewItinerary?.id === itinerary.id"
                   [class.dragging-row]="draggedItineraryId === itinerary.id"
                   [attr.draggable]="routeSlug ? true : null"
+                  (click)="selectPreviewItinerary(itinerary)"
                   (dragstart)="startStageDrag(itinerary)"
                   (dragover)="allowStageDrop($event)"
                   (drop)="dropStage(itinerary, items)"
                   (dragend)="endStageDrag()"
                 >
                   @if (!routeSlug) {
-                    <td>
+                    <td (click)="$event.stopPropagation()">
                       <div class="route-assignment-cell">
                         <select [ngModel]="assignmentDraftFor(itinerary).routeId" (ngModelChange)="setAssignmentRoute(itinerary, $event)">
                           <option [ngValue]="null">No route</option>
@@ -225,7 +251,7 @@ interface ItineraryJsonExport {
                   <td>{{ firstPointName(itinerary) }}</td>
                   <td>{{ lastPointName(itinerary) }}</td>
                   <td>{{ estimatedDistance(itinerary) }}</td>
-                  <td class="enabled-column">
+                  <td class="enabled-column" (click)="$event.stopPropagation()">
                     <input
                       class="enabled-checkbox"
                       type="checkbox"
@@ -236,7 +262,7 @@ interface ItineraryJsonExport {
                     />
                   </td>
                   <td>
-                    <div class="table-actions">
+                    <div class="table-actions" (click)="$event.stopPropagation()">
                       <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">📝</button>
                       <a class="secondary icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">🗺️</a>
                       <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">📍</a>
@@ -359,10 +385,11 @@ interface ItineraryJsonExport {
   `,
   styleUrl: './resource-list.css'
 })
-export class ItineraryListComponent {
+export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('newItineraryDialog') private readonly newItineraryDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('duplicateDialog') private readonly duplicateDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('translationDialog') private readonly translationDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
 
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
@@ -389,6 +416,11 @@ export class ItineraryListComponent {
   readonly assignmentDrafts = new Map<number, AssignmentDraft>();
   draggedItineraryId: number | null = null;
   reorderingStages = false;
+  previewItinerary: Itinerary | null = null;
+  previewMessage = 'Click an itinerary to preview it.';
+  private previewMap: any = null;
+  private previewLayer: any = null;
+  private previewResizeObserver: ResizeObserver | null = null;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
@@ -444,6 +476,24 @@ export class ItineraryListComponent {
     }),
     startWith({ items: [] as Itinerary[], routes: [] as Route[], groups: [] as ItineraryGroup[], count: 0, error: '' })
   );
+
+  ngAfterViewInit(): void {
+    this.initializePreviewMap();
+  }
+
+  ngOnDestroy(): void {
+    this.previewResizeObserver?.disconnect();
+    this.previewResizeObserver = null;
+    if (this.previewMap) {
+      this.previewMap.remove();
+      this.previewMap = null;
+    }
+  }
+
+  selectPreviewItinerary(itinerary: Itinerary): void {
+    this.previewItinerary = itinerary;
+    this.renderPreviewItinerary();
+  }
 
   openNewItineraryDialog(): void {
     this.newItineraryDialog?.nativeElement.showModal();
@@ -732,6 +782,134 @@ export class ItineraryListComponent {
     this.draggedItineraryId = null;
   }
 
+  private initializePreviewMap(): void {
+    if (this.previewMap || !this.previewMapElement?.nativeElement) return;
+    if (typeof L === 'undefined') {
+      this.previewMessage = 'Map library is not available.';
+      return;
+    }
+
+    this.previewMap = L.map(this.previewMapElement.nativeElement, {
+      zoomControl: true,
+      attributionControl: false
+    }).setView([42.5, -8.5], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(this.previewMap);
+    this.previewLayer = L.layerGroup().addTo(this.previewMap);
+    this.previewResizeObserver = new ResizeObserver(() => {
+      this.previewMap?.invalidateSize();
+    });
+    this.previewResizeObserver.observe(this.previewMapElement.nativeElement);
+    window.requestAnimationFrame(() => this.previewMap?.invalidateSize());
+  }
+
+  private renderPreviewItinerary(): void {
+    this.initializePreviewMap();
+    if (!this.previewMap || !this.previewLayer || !this.previewItinerary) return;
+
+    this.previewLayer.clearLayers();
+    const json = this.itineraryJson(this.previewItinerary);
+    const pointCoordinates = this.previewPointCoordinatesByIndex(json.points || []);
+    const coordinates = pointCoordinates.filter((point): point is { lat: number; lng: number; label: string } => point !== null);
+    const segments = json.segments || [];
+    const bounds = L.latLngBounds([]);
+    let routeGeometryCount = 0;
+    let straightSegmentCount = 0;
+
+    const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
+    for (let index = 0; index < segmentCount; index += 1) {
+      const geometry = segments[index]?.selectedWalkingRoute?.geometry;
+      if (geometry) {
+        const routeLayer = L.geoJSON(geometry, {
+          style: {
+            color: '#1f6feb',
+            weight: 5,
+            opacity: 0.8
+          }
+        }).addTo(this.previewLayer);
+        const routeBounds = routeLayer.getBounds();
+        if (routeBounds.isValid()) {
+          bounds.extend(routeBounds);
+        }
+        routeGeometryCount += 1;
+        continue;
+      }
+
+      const start = pointCoordinates[index];
+      const end = pointCoordinates[index + 1];
+      if (start && end) {
+        const line = L.polyline([[start.lat, start.lng], [end.lat, end.lng]], {
+          color: '#1f6feb',
+          weight: 4,
+          opacity: 0.75,
+          dashArray: '8 8'
+        }).addTo(this.previewLayer);
+        bounds.extend(line.getBounds());
+        straightSegmentCount += 1;
+      }
+    }
+
+    coordinates.forEach((point, index) => {
+      L.marker([point.lat, point.lng], {
+        icon: this.previewMarkerIcon(index + 1)
+      })
+        .bindTooltip(`${index + 1}. ${point.label}`, { direction: 'top' })
+        .addTo(this.previewLayer);
+      bounds.extend([point.lat, point.lng]);
+    });
+
+    this.fitPreviewMap(bounds);
+
+    if (coordinates.length === 0 && routeGeometryCount === 0) {
+      this.previewMessage = 'This itinerary does not store coordinates yet.';
+    } else if (coordinates.length === 0) {
+      this.previewMessage = 'Previewing saved route geometry. Point coordinates are not stored.';
+    } else if (straightSegmentCount > 0 && routeGeometryCount > 0) {
+      this.previewMessage = 'Dashed segments do not have saved walking routes yet.';
+    } else if (straightSegmentCount > 0) {
+      this.previewMessage = 'Previewing straight dashed lines for segments without walking routes.';
+    } else {
+      this.previewMessage = '';
+    }
+  }
+
+  private previewPointCoordinatesByIndex(points: PointExport[]): Array<{ lat: number; lng: number; label: string } | null> {
+    return points.map(point => {
+      const lat = point.coordinates?.lat ?? point.lat;
+      const lng = point.coordinates?.lng ?? point.lng;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return {
+        lat: Number(lat),
+        lng: Number(lng),
+        label: this.pointName(point)
+      };
+    });
+  }
+
+  private previewMarkerIcon(index: number): any {
+    return L.divIcon({
+      className: 'preview-marker',
+      html: `<span>${index}</span>`,
+      iconSize: [34, 34],
+      iconAnchor: [17, 17],
+      tooltipAnchor: [0, -18]
+    });
+  }
+
+  private fitPreviewMap(bounds: any): void {
+    window.requestAnimationFrame(() => {
+      if (!this.previewMap) return;
+      this.previewMap.invalidateSize(false);
+      if (bounds.isValid()) {
+        this.previewMap.fitBounds(bounds, { padding: [22, 22], maxZoom: 15, animate: false });
+      } else {
+        this.previewMap.setView([42.5, -8.5], 5, { animate: false });
+      }
+      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+    });
+  }
+
   firstPointName(itinerary: Itinerary): string {
     const points = this.itineraryJson(itinerary).points || [];
     return this.pointName(points[0]);
@@ -905,10 +1083,10 @@ export class ItineraryListComponent {
     if (!point) return '-';
     if (point.title?.trim()) return point.title.trim();
     if (point.name?.trim()) return point.name.trim();
-    if (point.type === 'poi') return point.id ? `POI #${point.id}` : 'POI';
     if (point.label?.trim()) return point.label.trim();
-    const lat = point.coordinates?.lat;
-    const lng = point.coordinates?.lng;
+    if (point.type === 'poi') return point.id ? `POI #${point.id}` : 'POI';
+    const lat = point.coordinates?.lat ?? point.lat;
+    const lng = point.coordinates?.lng ?? point.lng;
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
       return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
     }

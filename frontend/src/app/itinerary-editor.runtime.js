@@ -883,7 +883,12 @@
               if (pointType(point) === "poi") {
                 return {
                   type: "poi",
-                  id: point.poiId
+                  id: point.poiId,
+                  label: point.label || "",
+                  coordinates: {
+                    lat: point.lat,
+                    lng: point.lng
+                  }
                 };
               }
     
@@ -1022,6 +1027,17 @@
     
         async function pointFromItineraryExport(point) {
           if (point?.type === "poi") {
+            const coordinates = point?.coordinates || {};
+            if (isValidLatLng(coordinates.lat, coordinates.lng)) {
+              return makePoint(
+                coordinates.lat,
+                coordinates.lng,
+                point.label || `POI ${point.id}`,
+                point.label ? "manual" : "default",
+                "poi",
+                point.id || null
+              );
+            }
             return poiPointFromId(point.id);
           }
     
