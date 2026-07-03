@@ -141,16 +141,16 @@ interface ItineraryJsonExport {
                             </td>
                             <td>
                               <div class="table-actions">
-                                <button type="button" class="secondary icon-action double-icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">✎▤</button>
-                                <a class="secondary icon-action double-icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">✎⌖</a>
-                                <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">◎</a>
+                                <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">📝</button>
+                                <a class="secondary icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">🗺️</a>
+                                <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">📍</a>
                                 <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
-                                  ⧉
+                                  📄
                                 </button>
                                 @if (itinerary.route !== null) {
-                                  <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [disabled]="assigningIds.has(itinerary.id)" (click)="unassignItinerary(itinerary)">⊘</button>
+                                  <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [disabled]="assigningIds.has(itinerary.id)" (click)="unassignItinerary(itinerary)">🚫</button>
                                 }
-                                <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteItinerary(itinerary)">⌫</button>
+                                <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteItinerary(itinerary)">🗑️</button>
                               </div>
                             </td>
                           </tr>
@@ -208,7 +208,7 @@ interface ItineraryJsonExport {
                           }
                         </select>
                         <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Assign'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Assign'" [disabled]="assigningIds.has(itinerary.id)" (click)="saveAssignment(itinerary)">
-                          ✓
+                          ✅
                         </button>
                       </div>
                     </td>
@@ -237,16 +237,16 @@ interface ItineraryJsonExport {
                   </td>
                   <td>
                     <div class="table-actions">
-                      <button type="button" class="secondary icon-action double-icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">✎▤</button>
-                      <a class="secondary icon-action double-icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">✎⌖</a>
-                      <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">◎</a>
+                      <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">📝</button>
+                      <a class="secondary icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">🗺️</a>
+                      <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">📍</a>
                       <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
-                        ⧉
+                        📄
                       </button>
                       @if (routeSlug && itinerary.route !== null) {
-                        <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [disabled]="assigningIds.has(itinerary.id)" (click)="unassignItinerary(itinerary)">⊘</button>
+                        <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [disabled]="assigningIds.has(itinerary.id)" (click)="unassignItinerary(itinerary)">🚫</button>
                       }
-                      <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteItinerary(itinerary)">⌫</button>
+                      <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteItinerary(itinerary)">🗑️</button>
                     </div>
                   </td>
                 </tr>
@@ -264,7 +264,7 @@ interface ItineraryJsonExport {
         <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); createItinerary()">
           <header class="metadata-dialog-header">
             <h2>New itinerary</h2>
-            <button type="button" class="icon-button" aria-label="Close new itinerary dialog" (click)="closeNewItineraryDialog()">x</button>
+            <button type="button" class="icon-button" aria-label="Close new itinerary dialog" (click)="closeNewItineraryDialog()">✖</button>
           </header>
           <div class="form-stack">
             <label>
@@ -300,7 +300,7 @@ interface ItineraryJsonExport {
         <form method="dialog" class="metadata-dialog-content">
           <header class="metadata-dialog-header">
             <h2>Itinerary copied</h2>
-            <button type="button" class="icon-button" aria-label="Close duplicate confirmation dialog" (click)="closeDuplicateDialog()">x</button>
+            <button type="button" class="icon-button" aria-label="Close duplicate confirmation dialog" (click)="closeDuplicateDialog()">✖</button>
           </header>
           <div class="form-stack">
             <p>
@@ -319,7 +319,7 @@ interface ItineraryJsonExport {
         <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveTranslationDialog()">
           <header class="metadata-dialog-header">
             <h2>Edit itinerary translations</h2>
-            <button type="button" class="icon-button" aria-label="Close translation dialog" (click)="closeTranslationDialog()">x</button>
+            <button type="button" class="icon-button" aria-label="Close translation dialog" (click)="closeTranslationDialog()">✖</button>
           </header>
           <div class="translation-list">
             @for (translation of translationDrafts; track $index) {

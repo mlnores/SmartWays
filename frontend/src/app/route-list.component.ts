@@ -82,9 +82,9 @@ interface TranslationDraft {
                     </td>
                     <td>
                       <div class="table-actions">
-                        <a class="secondary icon-action" title="View itineraries" aria-label="View itineraries" [routerLink]="['/route', route.slug || route.id]">☷</a>
-                        <button type="button" class="secondary icon-action double-icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(route)">✎▤</button>
-                        <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteRoute(route)">⌫</button>
+                        <a class="secondary icon-action" title="View itineraries" aria-label="View itineraries" [routerLink]="['/route', route.slug || route.id]">📋</a>
+                        <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(route)">📝</button>
+                        <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteRoute(route)">🗑️</button>
                       </div>
                     </td>
                   </tr>
@@ -103,7 +103,7 @@ interface TranslationDraft {
         <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); createRoute()">
           <header class="metadata-dialog-header">
             <h2>New route</h2>
-            <button type="button" class="icon-button" aria-label="Close new route dialog" (click)="closeNewRouteDialog()">x</button>
+            <button type="button" class="icon-button" aria-label="Close new route dialog" (click)="closeNewRouteDialog()">✖</button>
           </header>
           <div class="form-stack">
             <label>
@@ -130,7 +130,7 @@ interface TranslationDraft {
         <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveTranslationDialog()">
           <header class="metadata-dialog-header">
             <h2>Edit route translations</h2>
-            <button type="button" class="icon-button" aria-label="Close translation dialog" (click)="closeTranslationDialog()">x</button>
+            <button type="button" class="icon-button" aria-label="Close translation dialog" (click)="closeTranslationDialog()">✖</button>
           </header>
           <div class="translation-list">
             @for (translation of translationDrafts; track $index) {

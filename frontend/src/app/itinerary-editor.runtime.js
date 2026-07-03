@@ -1564,8 +1564,8 @@
                 <p class="poi-browser-snippet">${escapeHtml(poi.snippet || "")}</p>
               </div>
               <div class="poi-browser-actions">
-                <button data-action="center-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Center map on ${escapeHtml(poi.label)}" title="Center map on POI">⌖</button>
-                <button data-action="expand-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Open ${escapeHtml(poi.label)} details" title="Open details">⛶</button>
+                <button data-action="center-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Center map on ${escapeHtml(poi.label)}" title="Center map on POI">🎯</button>
+                <button data-action="expand-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Open ${escapeHtml(poi.label)} details" title="Open details">🔍</button>
                 <button data-action="add-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">＋</button>
               </div>
             </article>
@@ -1592,7 +1592,7 @@
                   <p class="poi-browser-snippet">${escapeHtml(poi.snippet || "")}</p>
                 </div>
                 <div class="poi-popup-actions">
-                  <button data-action="expand-poi" data-segment="${segmentIndex}" data-poi-key="${escapeHtml(poi.id)}" aria-label="Open ${escapeHtml(poi.label)} details" title="Open details">⛶</button>
+                  <button data-action="expand-poi" data-segment="${segmentIndex}" data-poi-key="${escapeHtml(poi.id)}" aria-label="Open ${escapeHtml(poi.label)} details" title="Open details">🔍</button>
                   <button data-action="add-poi" data-segment="${segmentIndex}" data-lat="${poi.lat}" data-lng="${poi.lng}" data-label="${escapeHtml(poi.label)}" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">＋</button>
                 </div>
               </div>
@@ -2028,7 +2028,7 @@
                 <div class="point-actions">
                   <button class="icon-button" data-action="up" data-index="${index}" aria-label="Move point up" title="Move up" ${index === 0 ? "disabled" : ""}>↑</button>
                   <button class="icon-button" data-action="down" data-index="${index}" aria-label="Move point down" title="Move down" ${index === points.length - 1 ? "disabled" : ""}>↓</button>
-                  <button class="icon-button" data-action="zoom" data-index="${index}" aria-label="Zoom to point" title="Zoom to point">⌖</button>
+                  <button class="icon-button" data-action="zoom" data-index="${index}" aria-label="Zoom to point" title="Zoom to point">🎯</button>
                   <button class="icon-button" data-action="delete" data-index="${index}" aria-label="Delete point" title="Delete point">🗑</button>
                 </div>
               </div>
@@ -2051,7 +2051,7 @@
                   <strong>Segment ${labelForIndex(index)} → ${labelForIndex(index + 1)}</strong>
                   <span class="segment-header-actions">
                     <button data-action="fit-segment" data-segment="${index}" aria-label="Fit map to segment" title="Fit map to segment">🔎</button>
-                    <button class="plain-close" data-action="toggle-segment" data-segment="${index}" aria-expanded="true" aria-label="Hide segment panel" title="Hide segment panel">×</button>
+                    <button class="plain-close" data-action="toggle-segment" data-segment="${index}" aria-expanded="true" aria-label="Hide segment panel" title="Hide segment panel">✖</button>
                   </span>
                 </div>
                   <div class="segment-buffer-edit">

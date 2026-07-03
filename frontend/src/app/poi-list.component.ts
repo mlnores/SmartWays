@@ -149,9 +149,9 @@ interface ItineraryJsonExport {
                     </td>
                     <td>
                       <div class="table-actions">
-                        <button type="button" class="secondary icon-action double-icon-action" title="Edit metadata" aria-label="Edit metadata" (click)="openMetadataDialog(poi)">✎▤</button>
-                        <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(poi.id)" (click)="duplicatePoi(poi)">⧉</button>
-                        <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deletePoi(poi)">⌫</button>
+                        <button type="button" class="secondary icon-action" title="Edit metadata" aria-label="Edit metadata" (click)="openMetadataDialog(poi)">📝</button>
+                        <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(poi.id)" (click)="duplicatePoi(poi)">📄</button>
+                        <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deletePoi(poi)">🗑️</button>
                       </div>
                     </td>
                   </tr>
@@ -170,7 +170,7 @@ interface ItineraryJsonExport {
         <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveMetadataDialog()">
           <header class="metadata-dialog-header">
             <h2>{{ editingPoi ? 'Edit POI metadata' : 'New POI' }}</h2>
-            <button type="button" class="icon-button" aria-label="Close metadata dialog" (click)="closeMetadataDialog()">x</button>
+            <button type="button" class="icon-button" aria-label="Close metadata dialog" (click)="closeMetadataDialog()">✖</button>
           </header>
 
           <div class="metadata-scroll">
@@ -252,7 +252,7 @@ interface ItineraryJsonExport {
         <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveCategoryDialog()">
           <header class="metadata-dialog-header">
             <h2>Manage categories</h2>
-            <button type="button" class="icon-button" aria-label="Close category manager" (click)="closeCategoryManagerDialog()">x</button>
+            <button type="button" class="icon-button" aria-label="Close category manager" (click)="closeCategoryManagerDialog()">✖</button>
           </header>
 
           <div class="metadata-scroll category-manager-grid">

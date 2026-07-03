@@ -1,7 +1,7 @@
 <dialog class="route-dialog" id="routeDialog">
   <div class="route-dialog-header">
     <h2>Route Summary</h2>
-    <button id="closeRouteDialog" aria-label="Close route summary" (click)="closeRouteDialog.emit()">×</button>
+    <button id="closeRouteDialog" aria-label="Close route summary" (click)="closeRouteDialog.emit()">✖</button>
   </div>
   <div class="route-dialog-body" id="routeDialogBody"></div>
   <div class="route-dialog-footer">
@@ -12,7 +12,7 @@
 <dialog class="route-dialog" id="itineraryJsonDialog">
   <div class="route-dialog-header">
     <h2>Save Itinerary</h2>
-    <button id="closeItineraryJsonDialog" aria-label="Close saved itinerary JSON" (click)="closeItineraryJsonDialog.emit()">×</button>
+    <button id="closeItineraryJsonDialog" aria-label="Close saved itinerary JSON" (click)="closeItineraryJsonDialog.emit()">✖</button>
   </div>
   <div class="route-dialog-body">
     <div class="itinerary-save-form">
@@ -42,7 +42,7 @@
 <dialog class="route-dialog poi-detail-dialog" id="poiDetailDialog">
   <div class="route-dialog-header">
     <h2 id="poiDetailTitle">POI</h2>
-    <button id="closePoiDetailDialog" aria-label="Close POI details" (click)="closePoiDetailDialog.emit()">×</button>
+    <button id="closePoiDetailDialog" aria-label="Close POI details" (click)="closePoiDetailDialog.emit()">✖</button>
   </div>
   <div class="route-dialog-body poi-detail-body" id="poiDetailBody" (click)="poiDetailBodyClick.emit($event)"></div>
   <div class="route-dialog-footer">

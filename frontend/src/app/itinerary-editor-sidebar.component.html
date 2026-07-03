@@ -13,8 +13,8 @@
           </span>
         </button>
         <button id="revertItinerary" type="button" title="Revert to last saved itinerary" (click)="revertItinerary.emit()">Revert</button>
-        <button id="undoItinerary" type="button" aria-label="Undo last itinerary change" title="Undo last itinerary change (Cmd/Ctrl+Z)" (click)="undoItinerary.emit()">↺</button>
-        <button id="redoItinerary" type="button" aria-label="Redo last undone itinerary change" title="Redo last undone itinerary change (Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)" (click)="redoItinerary.emit()">↻</button>
+        <button id="undoItinerary" type="button" aria-label="Undo last itinerary change" title="Undo last itinerary change (Cmd/Ctrl+Z)" (click)="undoItinerary.emit()">↶</button>
+        <button id="redoItinerary" type="button" aria-label="Redo last undone itinerary change" title="Redo last undone itinerary change (Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)" (click)="redoItinerary.emit()">↷</button>
         <button id="saveItinerary" type="button" class="primary" title="Save current itinerary" (click)="saveItinerary.emit()">Save</button>
       </div>
     </div>
@@ -61,7 +61,7 @@
             <input id="poiSearchVisibleMapOnly" type="checkbox" (change)="poiSearchRefresh.emit()" />
             <span>Limit to current map view</span>
           </label>
-          <button id="refreshPoiSearch" type="button" aria-label="Refresh POI search" title="Refresh POI search" disabled (click)="poiSearchRefresh.emit()">↻</button>
+          <button id="refreshPoiSearch" type="button" aria-label="Refresh POI search" title="Refresh POI search" disabled (click)="poiSearchRefresh.emit()">🔄</button>
         </div>
       </div>
     </section>
