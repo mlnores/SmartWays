@@ -26,8 +26,8 @@ class POIImageInline(admin.TabularInline):
 
 @admin.register(POI)
 class POIAdmin(admin.ModelAdmin):
-    list_display = ["id", "enabled", "gps_latitude", "gps_longitude", "website", "updated_at"]
-    list_filter = ["enabled", "categories"]
+    list_display = ["id", "enabled", "country_code", "gps_latitude", "gps_longitude", "website", "updated_at"]
+    list_filter = ["enabled", "country_code", "categories"]
     search_fields = ["translations__title", "translations__slug", "website"]
     filter_horizontal = ["categories"]
     inlines = [POITranslationInline, POIImageInline]

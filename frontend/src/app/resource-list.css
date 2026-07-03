@@ -55,6 +55,15 @@ input {
   background: #ffffff;
 }
 
+.toolbar-select {
+  width: min(260px, 100%);
+}
+
+.country-filter {
+  width: 110px;
+  text-transform: uppercase;
+}
+
 select,
 textarea {
   width: 100%;
@@ -288,6 +297,27 @@ label span {
   justify-content: flex-start;
 }
 
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 360px;
+}
+
+.small-chip {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid #cfe0ff;
+  border-radius: 999px;
+  color: #1f4fbf;
+  background: #eef4ff;
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .route-assignment-cell {
   display: grid;
   grid-template-columns: minmax(150px, 1fr) auto;
@@ -408,6 +438,35 @@ label span {
   padding: 16px;
 }
 
+.metadata-scroll {
+  display: grid;
+  gap: 14px;
+  max-height: min(70vh, 680px);
+  overflow: auto;
+  padding: 16px;
+}
+
+.metadata-full-row {
+  display: block;
+}
+
+.metadata-full-row input,
+.metadata-full-row select {
+  width: 100%;
+}
+
+.metadata-full-row select[multiple] {
+  min-height: 132px;
+}
+
+.poi-metadata-grid {
+  grid-template-columns: minmax(90px, 130px) minmax(140px, 1fr) minmax(140px, 1fr) auto;
+}
+
+.poi-enabled-edit {
+  align-self: center;
+}
+
 .translation-list {
   display: grid;
   gap: 14px;
@@ -427,6 +486,19 @@ label span {
 
 .reference-radio input {
   width: auto;
+}
+
+.poi-translation-list {
+  max-height: none;
+  padding: 0;
+}
+
+.poi-translation-row {
+  grid-template-columns: minmax(86px, 100px) minmax(90px, 120px) minmax(180px, 1fr) minmax(180px, 1fr);
+}
+
+.translation-description {
+  grid-column: 1 / -1;
 }
 
 .icon-button {

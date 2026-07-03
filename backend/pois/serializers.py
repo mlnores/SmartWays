@@ -41,6 +41,24 @@ def slug_from_title(title):
     return slugify(title or "") or "itinerary"
 
 
+def unique_poi_slug(language_code, title, slug="", poi=None):
+    max_length = POITranslation._meta.get_field("slug").max_length
+    base = slugify(slug or title or "") or "poi"
+    base = base[:max_length].strip("-_") or "poi"
+    candidate = base
+    suffix = 2
+    queryset = POITranslation.objects.filter(language_code=language_code)
+    if poi is not None and poi.pk:
+        queryset = queryset.exclude(poi=poi)
+
+    while queryset.filter(slug=candidate).exists():
+        suffix_text = f"-{suffix}"
+        candidate = f"{base[: max_length - len(suffix_text)]}{suffix_text}".strip("-_")
+        suffix += 1
+
+    return candidate
+
+
 def normalize_reference_translation(translations):
     if translations is None or not translations:
         return
@@ -179,6 +197,7 @@ class NestedCategorySerializer(CategorySerializer):
 
 
 class POISerializer(serializers.ModelSerializer):
+    country_code = serializers.CharField(required=False, allow_blank=True, max_length=2)
     gps_latitude = serializers.FloatField(required=False)
     gps_longitude = serializers.FloatField(required=False)
     title = serializers.SerializerMethodField()
@@ -200,6 +219,7 @@ class POISerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "enabled",
+            "country_code",
             "gps_latitude",
             "gps_longitude",
             "website",
@@ -235,6 +255,25 @@ class POISerializer(serializers.ModelSerializer):
         latitude = attrs.pop("gps_latitude", None)
         longitude = attrs.pop("gps_longitude", None)
         normalize_reference_translation(attrs.get("translations"))
+        if "country_code" in attrs:
+            attrs["country_code"] = (attrs.get("country_code") or "").upper()
+            if attrs["country_code"] and (len(attrs["country_code"]) != 2 or not attrs["country_code"].isalpha()):
+                raise serializers.ValidationError(
+                    {"country_code": "Use a two-letter ISO 3166-1 alpha-2 country code."}
+                )
+        translations = attrs.get("translations")
+        if translations is not None:
+            for translation in translations:
+                title = (translation.get("title") or "").strip()
+                if not title:
+                    raise serializers.ValidationError({"translations": "Each POI translation needs a title."})
+                translation["title"] = title
+                translation["slug"] = unique_poi_slug(
+                    translation.get("language_code"),
+                    title,
+                    translation.get("slug"),
+                    self.instance,
+                )
 
         if self.instance is None and (latitude is None or longitude is None):
             raise serializers.ValidationError(

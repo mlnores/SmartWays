@@ -1,8 +1,11 @@
 import csv
+import json
+import re
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
-from django.contrib.gis.geos import Point
+from django.contrib.gis.geos import GEOSGeometry, Point
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
@@ -14,6 +17,7 @@ from pois.models import Category, CategoryTranslation, POI, POIImage, POITransla
 COPY_TABLES = {
     "public.category",
     "public.category_translation",
+    "public.countries",
     "public.file_uploaded",
     "public.image_point_of_interest",
     "public.languages",
@@ -23,6 +27,52 @@ COPY_TABLES = {
 }
 
 DEFAULT_IMAGE_BASE_URL = "https://rurallure-web-files-prod.s3.eu-west-2.amazonaws.com/images/"
+DEFAULT_COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parents[2] / "data" / "geoboundaries_adm0.geojson"
+
+COUNTRY_CODE_PROPERTY_NAMES = (
+    "ISO_A2",
+    "iso_a2",
+    "country_code",
+    "COUNTRY_CODE",
+    "code",
+    "shapeISO",
+    "shapeGroup",
+    "ISO_A3",
+    "iso_a3",
+    "ADM0_A3",
+)
+COUNTRY_NAME_PROPERTY_NAMES = ("shapeName", "name", "NAME", "ADMIN", "admin", "NAME_EN")
+
+ALPHA3_TO_ALPHA2 = {
+    "AND": "AD",
+    "AUT": "AT",
+    "BEL": "BE",
+    "CHE": "CH",
+    "CZE": "CZ",
+    "DEU": "DE",
+    "DNK": "DK",
+    "ESP": "ES",
+    "FIN": "FI",
+    "FRA": "FR",
+    "GBR": "GB",
+    "GRC": "GR",
+    "HRV": "HR",
+    "HUN": "HU",
+    "IRL": "IE",
+    "ISL": "IS",
+    "ITA": "IT",
+    "LIE": "LI",
+    "LUX": "LU",
+    "MCO": "MC",
+    "NLD": "NL",
+    "NOR": "NO",
+    "POL": "PL",
+    "PRT": "PT",
+    "SVK": "SK",
+    "SVN": "SI",
+    "SWE": "SE",
+    "VAT": "VA",
+}
 
 
 def copy_value(value):
@@ -128,6 +178,67 @@ def unique_slug(raw_value, used_slugs, fallback, max_length):
     return candidate
 
 
+def normalized_country_name(value):
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKD", value)
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", ascii_value.lower()).strip()
+
+
+def code_from_boundary_properties(properties, country_codes_by_name):
+    for property_name in COUNTRY_CODE_PROPERTY_NAMES:
+        value = (properties.get(property_name) or "").strip().upper()
+        if len(value) == 2 and value.isalpha():
+            return value
+        if len(value) == 3 and value in ALPHA3_TO_ALPHA2:
+            return ALPHA3_TO_ALPHA2[value]
+
+    for property_name in COUNTRY_NAME_PROPERTY_NAMES:
+        normalized_name = normalized_country_name(properties.get(property_name))
+        if normalized_name in country_codes_by_name:
+            return country_codes_by_name[normalized_name]
+
+    return ""
+
+
+class CountryBoundaryLookup:
+    def __init__(self, features):
+        self.features = features
+
+    @classmethod
+    def from_geojson(cls, path, country_codes_by_name):
+        with path.open(encoding="utf-8") as geojson_file:
+            payload = json.load(geojson_file)
+
+        raw_features = payload.get("features") if payload.get("type") == "FeatureCollection" else [payload]
+        features = []
+        for feature in raw_features or []:
+            properties = feature.get("properties") or {}
+            geometry = feature.get("geometry")
+            country_code = code_from_boundary_properties(properties, country_codes_by_name)
+            if not country_code or not geometry:
+                continue
+
+            boundary = GEOSGeometry(json.dumps(geometry), srid=4326)
+            if boundary.empty:
+                continue
+            features.append((country_code, boundary.extent, boundary))
+
+        return cls(features)
+
+    def country_code_for_point(self, point):
+        longitude = point.x
+        latitude = point.y
+        for country_code, extent, boundary in self.features:
+            min_lon, min_lat, max_lon, max_lat = extent
+            if not (min_lon <= longitude <= max_lon and min_lat <= latitude <= max_lat):
+                continue
+            if boundary.covers(point):
+                return country_code
+        return ""
+
+
 class Command(BaseCommand):
     help = "Import POIs from the RurAllure PostgreSQL dump into the current Django schema."
 
@@ -142,6 +253,16 @@ class Command(BaseCommand):
             "--image-base-url",
             default=DEFAULT_IMAGE_BASE_URL,
             help="Base URL prepended to file_uploaded.filename for POI images.",
+        )
+        parser.add_argument(
+            "--country-boundaries",
+            default=str(DEFAULT_COUNTRY_BOUNDARIES_PATH),
+            help="Path to a geoBoundaries ADM0 GeoJSON file used to annotate POIs with physical country codes.",
+        )
+        parser.add_argument(
+            "--skip-country-annotation",
+            action="store_true",
+            help="Import POIs without deriving country codes from boundary polygons.",
         )
         parser.add_argument(
             "--clear",
@@ -166,6 +287,14 @@ class Command(BaseCommand):
             self.report_loaded_data(data)
             return
 
+        country_boundaries_path = Path(options["country_boundaries"]).expanduser().resolve()
+        if not options["skip_country_annotation"] and not country_boundaries_path.exists():
+            raise CommandError(
+                "Country boundaries file not found: "
+                f"{country_boundaries_path}. Download geoBoundaries ADM0 GeoJSON there, pass "
+                "--country-boundaries, or use --skip-country-annotation."
+            )
+
         if not options["clear"] and any(
             model.objects.exists() for model in (POI, POITranslation, Category, CategoryTranslation, POIImage)
         ):
@@ -179,7 +308,11 @@ class Command(BaseCommand):
                 CategoryTranslation.objects.all().delete()
                 Category.objects.all().delete()
 
-            stats = self.import_data(data, options["image_base_url"])
+            stats = self.import_data(
+                data,
+                options["image_base_url"],
+                country_boundaries_path=None if options["skip_country_annotation"] else country_boundaries_path,
+            )
 
         self.stdout.write(self.style.SUCCESS("Import completed."))
         for key, value in stats.items():
@@ -195,16 +328,24 @@ class Command(BaseCommand):
         for table_name in sorted(data):
             self.stdout.write(f"{table_name}: {len(data[table_name])}")
 
-    def import_data(self, data, image_base_url):
+    def import_data(self, data, image_base_url, country_boundaries_path):
         imported_at = timezone.now()
         language_codes = self.build_language_codes(data["public.languages"])
+        country_codes_by_name = self.build_country_codes_by_name(data["public.countries"])
+        country_lookup = None
+        if country_boundaries_path:
+            country_lookup = CountryBoundaryLookup.from_geojson(country_boundaries_path, country_codes_by_name)
         categories_by_source_id, category_stats = self.import_categories(
             data["public.category"],
             data["public.category_translation"],
             language_codes,
             imported_at,
         )
-        pois_by_source_id, poi_stats = self.import_pois(data["public.point_of_interest"], imported_at)
+        pois_by_source_id, poi_stats = self.import_pois(
+            data["public.point_of_interest"],
+            imported_at,
+            country_lookup,
+        )
         translation_stats = self.import_poi_translations(
             data["public.point_of_interest_translation"],
             language_codes,
@@ -237,6 +378,15 @@ class Command(BaseCommand):
             if code:
                 language_codes[row["id"]] = code
         return language_codes
+
+    def build_country_codes_by_name(self, rows):
+        country_codes = {}
+        for row in rows:
+            code = (row["code"] or "").strip().upper()
+            name = normalized_country_name(row["name"])
+            if len(code) == 2 and code.isalpha() and name:
+                country_codes[name] = code
+        return country_codes
 
     def import_categories(self, category_rows, translation_rows, language_codes, imported_at):
         names_by_category = defaultdict(list)
@@ -290,11 +440,12 @@ class Command(BaseCommand):
             "category_translations_created": len(translation_objects),
         }
 
-    def import_pois(self, rows, imported_at):
+    def import_pois(self, rows, imported_at, country_lookup):
         pois_by_source_id = {}
         pois = []
         skipped_without_coordinates = 0
         skipped_disabled = 0
+        without_country = 0
 
         for row in rows:
             if not parse_bool(row["enabled"], default=True):
@@ -307,13 +458,17 @@ class Command(BaseCommand):
                 skipped_without_coordinates += 1
                 continue
 
+            location = Point(longitude, latitude, srid=4326)
             poi = POI(
                 enabled=True,
-                location=Point(longitude, latitude, srid=4326),
+                country_code=country_lookup.country_code_for_point(location) if country_lookup else "",
+                location=location,
                 website=(row["website"] or "")[:200],
                 created_at=imported_at,
                 updated_at=imported_at,
             )
+            if country_lookup and not poi.country_code:
+                without_country += 1
             pois_by_source_id[row["id"]] = poi
             pois.append(poi)
 
@@ -328,6 +483,7 @@ class Command(BaseCommand):
             "pois_created": len(pois),
             "pois_skipped_disabled": skipped_disabled,
             "pois_skipped_without_coordinates": skipped_without_coordinates,
+            "pois_without_country": without_country,
         }
 
     def import_poi_translations(self, rows, language_codes, pois_by_source_id):

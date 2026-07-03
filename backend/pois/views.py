@@ -193,6 +193,7 @@ def poi_browser(request):
             {
                 "id": poi.pk,
                 "title": poi_display_title(poi, language),
+                "country_code": poi.country_code,
                 "latitude": poi.gps_latitude,
                 "longitude": poi.gps_longitude,
                 "enabled": poi.enabled,
@@ -245,6 +246,12 @@ class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             if enabled.lower() not in {"true", "false", "1", "0"}:
                 raise ValidationError({"enabled": "Use true or false."})
             queryset = queryset.filter(enabled=enabled.lower() in {"true", "1"})
+
+        country = (self.request.query_params.get("country") or self.request.query_params.get("country_code") or "").strip()
+        if country:
+            if len(country) != 2 or not country.isalpha():
+                raise ValidationError({"country": "Use a two-letter ISO 3166-1 alpha-2 country code."})
+            queryset = queryset.filter(country_code=country.upper())
 
         language = self.get_language()
         if language:

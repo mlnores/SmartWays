@@ -1,8 +1,13 @@
+import json
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+
 from django.contrib.gis.geos import Point
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from .management.commands.import_rurallure_dump import CountryBoundaryLookup
 from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation, Route
 
 
@@ -22,6 +27,7 @@ class POIAPITests(APITestCase):
 
         self.poi = POI.objects.create(
             enabled=True,
+            country_code="ES",
             location=Point(-8.7207, 42.2406, srid=4326),
             website="https://example.com/poi",
         )
@@ -79,6 +85,13 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
 
+    def test_poi_list_filters_by_country(self):
+        response = self.client.get(reverse("poi-list"), {"country": "es"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["country_code"], "ES")
+
     def test_buffer_poi_lookup_returns_enabled_pois_inside_buffer(self):
         disabled_poi = POI.objects.create(
             enabled=False,
@@ -130,6 +143,7 @@ class POIAPITests(APITestCase):
     def test_poi_create_accepts_coordinates_and_nested_content(self):
         payload = {
             "enabled": True,
+            "country_code": "pt",
             "gps_latitude": 42.1,
             "gps_longitude": -8.6,
             "website": "https://example.com/new",
@@ -155,6 +169,7 @@ class POIAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         poi = POI.objects.get(id=response.data["id"])
+        self.assertEqual(poi.country_code, "PT")
         self.assertEqual(poi.gps_latitude, 42.1)
         self.assertEqual(poi.gps_longitude, -8.6)
         self.assertEqual(poi.translations.count(), 1)
@@ -189,6 +204,30 @@ class POIAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_country_boundary_lookup_uses_geojson_polygon(self):
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {"shapeName": "Spain"},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[-10, 35], [5, 35], [5, 45], [-10, 45], [-10, 35]]],
+                    },
+                }
+            ],
+        }
+        with NamedTemporaryFile("w+", suffix=".geojson") as geojson_file:
+            json.dump(payload, geojson_file)
+            geojson_file.flush()
+            lookup = CountryBoundaryLookup.from_geojson(
+                Path(geojson_file.name),
+                {"spain": "ES"},
+            )
+
+        self.assertEqual(lookup.country_code_for_point(Point(-8.7, 42.2, srid=4326)), "ES")
 
     def test_itinerary_create_accepts_json_and_translations(self):
         payload = {

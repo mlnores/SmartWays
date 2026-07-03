@@ -385,6 +385,7 @@
               <span class="poi-title">{{ item.title }}</span>
               <span class="poi-meta">
                 #{{ item.id }} - {{ item.latitude|floatformat:5 }}, {{ item.longitude|floatformat:5 }}
+                {% if item.country_code %}<span>{{ item.country_code }}</span>{% endif %}
                 {% if not item.enabled %}<span class="disabled-label">disabled</span>{% endif %}
               </span>
             </a>
@@ -453,6 +454,8 @@
                       <span class="muted">None</span>
                     {% endif %}
                   </dd>
+                  <dt>Country</dt>
+                  <dd>{% if selected_poi.country_code %}{{ selected_poi.country_code }}{% else %}<span class="muted">Unknown</span>{% endif %}</dd>
                   <dt>Latitude</dt>
                   <dd>{{ selected_poi.gps_latitude|floatformat:8 }}</dd>
                   <dt>Longitude</dt>

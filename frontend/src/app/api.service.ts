@@ -77,15 +77,52 @@ export interface ItineraryStageAssignment {
   stage_number: number;
 }
 
+export interface Category {
+  id: number;
+  slug: string;
+  name: string | null;
+  translations: Translation[];
+}
+
+export interface PoiImage {
+  id?: number;
+  image_url: string;
+  position: number;
+  is_primary: boolean;
+}
+
 export interface Poi {
   id: number;
   enabled: boolean;
+  country_code: string;
   gps_latitude: number;
   gps_longitude: number;
+  website: string;
+  created_at: string;
+  updated_at: string;
   title: string | null;
   description: string | null;
   slug: string | null;
   categories: Array<{ id: number; slug: string; name: string | null }>;
+  translations: Translation[];
+  images: PoiImage[];
+}
+
+export interface PoiPayload {
+  enabled: boolean;
+  country_code?: string;
+  gps_latitude?: number;
+  gps_longitude?: number;
+  website?: string;
+  category_ids?: number[];
+  translations?: Array<{
+    language_code: string;
+    title: string;
+    description?: string;
+    slug?: string;
+    is_reference?: boolean;
+  }>;
+  images?: PoiImage[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -157,15 +194,58 @@ export class ApiService {
     return this.http.post<Itinerary>(`${API_BASE_URL}/routes/${routeId}/remove-itinerary/`, { itinerary: itineraryId });
   }
 
-  listPois(query = '', language = ''): Observable<ApiPage<Poi>> {
-    let params = new HttpParams().set('enabled', 'true');
+  listPois(
+    query = '',
+    language = '',
+    enabled?: boolean,
+    category?: number | string,
+    country?: string
+  ): Observable<ApiPage<Poi>> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
+    if (enabled !== undefined) {
+      params = params.set('enabled', String(enabled));
+    }
+    if (category !== undefined && category !== null && String(category).trim()) {
+      params = params.set('category', String(category).trim());
+    }
+    const countryFilter = (country || '').trim();
+    if (countryFilter) {
+      params = params.set('country', countryFilter.toUpperCase());
+    }
+    if (query.trim()) {
+      params = params.set('q', query.trim());
+    }
+    return this.http.get<ApiPage<Poi>>(`${API_BASE_URL}/pois/`, { params });
+  }
+
+  createPoi(payload: PoiPayload): Observable<Poi> {
+    return this.http.post<Poi>(`${API_BASE_URL}/pois/`, payload);
+  }
+
+  updatePoi(id: number, payload: Partial<PoiPayload>): Observable<Poi> {
+    return this.http.patch<Poi>(`${API_BASE_URL}/pois/${id}/`, payload);
+  }
+
+  deletePoi(id: number): Observable<void> {
+    return this.http.delete<void>(`${API_BASE_URL}/pois/${id}/`);
+  }
+
+  listCategories(query = '', language = ''): Observable<ApiPage<Category>> {
+    let params = new HttpParams();
     if (language) {
       params = params.set('language', language);
     }
     if (query.trim()) {
       params = params.set('q', query.trim());
     }
-    return this.http.get<ApiPage<Poi>>(`${API_BASE_URL}/pois/`, { params });
+    return this.http.get<ApiPage<Category>>(`${API_BASE_URL}/categories/`, { params });
+  }
+
+  listAllCategories(query = '', language = ''): Observable<Category[]> {
+    return this.collectPages(this.listCategories(query, language));
   }
 
   private collectPages<T>(firstPage: Observable<ApiPage<T>>): Observable<T[]> {

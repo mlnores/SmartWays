@@ -9,11 +9,12 @@ The backend is under `backend/` and uses Django, Django REST Framework, and GeoD
 - POI CRUD API.
 - GeoDjango coordinates stored as `location` with SRID 4326.
 - API read/write coordinates as `gps_latitude` and `gps_longitude`.
+- POI country code annotation with ISO 3166-1 alpha-2 codes.
 - Multilingual POI titles, descriptions, and slugs.
 - Multilingual category names.
 - Link-based POI images.
 - Many-to-many POI/category relationship.
-- Filters for language, category, enabled state, and bounding box.
+- Filters for language, category, country, enabled state, and bounding box.
 - One-shot RurAllure SQL dump import command.
 - Server-rendered POI browser with selected POI details, map, and image carousel.
 - Itinerary editor buffer lookups with clustered POI markers.
@@ -265,6 +266,12 @@ Filter by category slug or id:
 curl "http://127.0.0.1:8000/api/pois/?category=heritage"
 ```
 
+Filter by physical country code:
+
+```bash
+curl "http://127.0.0.1:8000/api/pois/?country=ES"
+```
+
 Filter by bounding box:
 
 ```bash
@@ -337,12 +344,24 @@ python manage.py import_rurallure_dump
 The importer reads only the relevant `COPY` sections from `POI_data/dump-rurallure_db.sql` and creates:
 
 - categories and category translations
-- POIs with SRID 4326 point locations
+- POIs with SRID 4326 point locations and `country_code`
 - POI translations
 - POI/category relations
 - linked POI images
 
 Disabled source POIs are skipped. Imported `created_at` and `updated_at` values use the current import time, not the original dump timestamps.
+
+Country codes are derived from the POI coordinates using a geoBoundaries ADM0 GeoJSON file. Download an ADM0 GeoJSON from geoBoundaries and place it at:
+
+```text
+backend/pois/data/geoboundaries_adm0.geojson
+```
+
+geoBoundaries data is licensed under CC BY 4.0 and requires attribution. See:
+
+```text
+https://www.geoboundaries.org/
+```
 
 Dry-run the parser without writing rows:
 
@@ -361,6 +380,13 @@ Use a custom dump path or image base URL:
 ```bash
 python manage.py import_rurallure_dump /path/to/dump-rurallure_db.sql
 python manage.py import_rurallure_dump --image-base-url "https://example.com/images/"
+```
+
+Use a custom country-boundaries file, or skip country annotation for debugging:
+
+```bash
+python manage.py import_rurallure_dump --country-boundaries /path/to/geoboundaries_adm0.geojson
+python manage.py import_rurallure_dump --skip-country-annotation
 ```
 
 ## Tests

@@ -13,9 +13,15 @@ slug_validator = RegexValidator(
     message="Use lowercase letters, numbers, hyphens, and underscores only.",
 )
 
+country_code_validator = RegexValidator(
+    regex=r"^[A-Z]{2}$",
+    message="Use ISO 3166-1 alpha-2 country codes like 'ES', 'PT', or 'FR'.",
+)
+
 
 class POI(models.Model):
     enabled = models.BooleanField(default=True)
+    country_code = models.CharField(max_length=2, blank=True, validators=[country_code_validator])
     location = models.PointField(srid=4326)
     website = models.URLField(blank=True)
     categories = models.ManyToManyField(
@@ -30,6 +36,7 @@ class POI(models.Model):
         ordering = ["id"]
         indexes = [
             models.Index(fields=["enabled"], name="pois_poi_enabled_4f9c1f_idx"),
+            models.Index(fields=["country_code"], name="pois_poi_country_27d5ea_idx"),
             models.Index(fields=["created_at"], name="pois_poi_created_67f944_idx"),
         ]
 
