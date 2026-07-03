@@ -143,6 +143,7 @@ interface ItineraryJsonExport {
                               <div class="table-actions">
                                 <button type="button" class="secondary icon-action double-icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">✎▤</button>
                                 <a class="secondary icon-action double-icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">✎⌖</a>
+                                <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">◎</a>
                                 <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
                                   ⧉
                                 </button>
@@ -238,6 +239,7 @@ interface ItineraryJsonExport {
                     <div class="table-actions">
                       <button type="button" class="secondary icon-action double-icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">✎▤</button>
                       <a class="secondary icon-action double-icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">✎⌖</a>
+                      <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">◎</a>
                       <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
                         ⧉
                       </button>

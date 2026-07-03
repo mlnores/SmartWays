@@ -155,6 +155,14 @@ export class ApiService {
     return this.http.patch<Itinerary>(`${API_BASE_URL}/itineraries/${id}/`, payload);
   }
 
+  getItinerary(id: number | string, language = ''): Observable<Itinerary> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
+    return this.http.get<Itinerary>(`${API_BASE_URL}/itineraries/${encodeURIComponent(String(id))}/`, { params });
+  }
+
   deleteItinerary(id: number): Observable<void> {
     return this.http.delete<void>(`${API_BASE_URL}/itineraries/${id}/`);
   }
@@ -199,7 +207,8 @@ export class ApiService {
     language = '',
     enabled?: boolean,
     category?: number | string,
-    country?: string
+    country?: string,
+    ids?: Array<number | string>
   ): Observable<ApiPage<Poi>> {
     let params = new HttpParams();
     if (language) {
@@ -214,6 +223,9 @@ export class ApiService {
     const countryFilter = (country || '').trim();
     if (countryFilter) {
       params = params.set('country', countryFilter.toUpperCase());
+    }
+    if (ids && ids.length > 0) {
+      params = params.set('ids', ids.map(id => String(id)).join(','));
     }
     if (query.trim()) {
       params = params.set('q', query.trim());
@@ -231,6 +243,12 @@ export class ApiService {
 
   deletePoi(id: number): Observable<void> {
     return this.http.delete<void>(`${API_BASE_URL}/pois/${id}/`);
+  }
+
+  listPoiCountries(): Observable<string[]> {
+    return this.http.get<{ results: string[] }>(`${API_BASE_URL}/pois/countries/`).pipe(
+      map(response => response.results)
+    );
   }
 
   listCategories(query = '', language = ''): Observable<ApiPage<Category>> {

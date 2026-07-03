@@ -186,6 +186,10 @@ def normalized_country_name(value):
     return re.sub(r"[^a-z0-9]+", " ", ascii_value.lower()).strip()
 
 
+def normalized_category_key(value):
+    return normalized_country_name(value)
+
+
 def code_from_boundary_properties(properties, country_codes_by_name):
     for property_name in COUNTRY_CODE_PROPERTY_NAMES:
         value = (properties.get(property_name) or "").strip().upper()
@@ -397,17 +401,28 @@ class Command(BaseCommand):
 
         used_category_slugs = set()
         categories_by_source_id = {}
+        categories_by_key = {}
         categories = []
+        merged_categories = 0
 
         for row in category_rows:
             source_id = row["id"]
             names = names_by_category.get(source_id, [])
             english_name = next((name for language, name in names if language == "en"), None)
             first_name = names[0][1] if names else None
+            canonical_name = english_name or first_name or f"category-{source_id}"
+            canonical_key = normalized_category_key(canonical_name) or f"category-{source_id}"
+            existing_category = categories_by_key.get(canonical_key)
+            if existing_category is not None:
+                categories_by_source_id[source_id] = existing_category
+                merged_categories += 1
+                continue
+
             category = Category(
-                slug=unique_slug(english_name or first_name, used_category_slugs, f"category-{source_id}", 120),
+                slug=unique_slug(canonical_name, used_category_slugs, f"category-{source_id}", 120),
                 created_at=imported_at,
             )
+            categories_by_key[canonical_key] = category
             categories_by_source_id[source_id] = category
             categories.append(category)
 
@@ -421,6 +436,7 @@ class Command(BaseCommand):
                 continue
 
             for language_code, name in names:
+                normalized_name = (name or category.slug)[:255]
                 key = (category.pk, language_code)
                 if key in seen_translations:
                     continue
@@ -429,7 +445,7 @@ class Command(BaseCommand):
                     CategoryTranslation(
                         category=category,
                         language_code=language_code,
-                        name=(name or category.slug)[:255],
+                        name=normalized_name,
                     )
                 )
 
@@ -437,6 +453,7 @@ class Command(BaseCommand):
 
         return categories_by_source_id, {
             "categories_created": len(categories),
+            "categories_merged": merged_categories,
             "category_translations_created": len(translation_objects),
         }
 

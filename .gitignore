@@ -11,3 +11,4 @@ POI_data/dataset_metadata.jsonld
 POI_data/dump-rurallure_db.sql
 POI_data/ECHOES_D7.1.pdf
 POI_data/poi.jsonld
+backend/pois/data/geoboundaries_adm0.geojson

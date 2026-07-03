@@ -253,6 +253,14 @@ class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
                 raise ValidationError({"country": "Use a two-letter ISO 3166-1 alpha-2 country code."})
             queryset = queryset.filter(country_code=country.upper())
 
+        ids = (self.request.query_params.get("ids") or "").strip()
+        if ids:
+            try:
+                poi_ids = [int(value) for value in ids.split(",") if value.strip()]
+            except ValueError:
+                raise ValidationError({"ids": "Use a comma-separated list of POI ids."})
+            queryset = queryset.filter(id__in=poi_ids)
+
         language = self.get_language()
         if language:
             queryset = queryset.filter(translations__language_code=language)
@@ -277,6 +285,16 @@ class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(location__within=parse_bbox(bbox))
 
         return queryset.distinct()
+
+    @action(detail=False, methods=["get"])
+    def countries(self, request):
+        country_codes = (
+            POI.objects.exclude(country_code="")
+            .order_by("country_code")
+            .values_list("country_code", flat=True)
+            .distinct()
+        )
+        return Response({"results": list(country_codes)})
 
 
 class POITranslationViewSet(viewsets.ModelViewSet):

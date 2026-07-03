@@ -3,11 +3,12 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from django.contrib.gis.geos import Point
+from django.utils import timezone
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .management.commands.import_rurallure_dump import CountryBoundaryLookup
+from .management.commands.import_rurallure_dump import Command, CountryBoundaryLookup
 from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation, Route
 
 
@@ -91,6 +92,42 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["country_code"], "ES")
+
+    def test_poi_countries_returns_distinct_country_codes(self):
+        POI.objects.create(
+            enabled=True,
+            country_code="PT",
+            location=Point(-8.6000, 42.1000, srid=4326),
+        )
+        POI.objects.create(
+            enabled=True,
+            country_code="",
+            location=Point(-8.5000, 42.0000, srid=4326),
+        )
+
+        response = self.client.get(reverse("poi-countries"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["results"], ["ES", "PT"])
+
+    def test_poi_list_filters_by_ids(self):
+        other_poi = POI.objects.create(
+            enabled=True,
+            location=Point(-8.6000, 42.1000, srid=4326),
+        )
+        POITranslation.objects.create(
+            poi=other_poi,
+            language_code="en",
+            title="Other POI",
+            description="Not requested.",
+            slug="other-poi",
+        )
+
+        response = self.client.get(reverse("poi-list"), {"ids": str(self.poi.id)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], self.poi.id)
 
     def test_buffer_poi_lookup_returns_enabled_pois_inside_buffer(self):
         disabled_poi = POI.objects.create(
@@ -228,6 +265,29 @@ class POIAPITests(APITestCase):
             )
 
         self.assertEqual(lookup.country_code_for_point(Point(-8.7, 42.2, srid=4326)), "ES")
+
+    def test_rurallure_import_merges_duplicate_categories_by_english_name(self):
+        command = Command()
+        categories_by_source_id, stats = command.import_categories(
+            [{"id": "source-1"}, {"id": "source-2"}],
+            [
+                {"category_id": "source-1", "language_id": "lang-en", "description": "Castle"},
+                {"category_id": "source-1", "language_id": "lang-es", "description": "Castillo"},
+                {"category_id": "source-2", "language_id": "lang-en", "description": "Castle"},
+                {"category_id": "source-2", "language_id": "lang-es", "description": "Castillo"},
+            ],
+            {"lang-en": "en", "lang-es": "es"},
+            timezone.now(),
+        )
+
+        self.assertEqual(Category.objects.count(), 2)
+        self.assertEqual(stats["categories_created"], 1)
+        self.assertEqual(stats["categories_merged"], 1)
+        self.assertEqual(categories_by_source_id["source-1"].pk, categories_by_source_id["source-2"].pk)
+        self.assertEqual(
+            set(CategoryTranslation.objects.filter(category=categories_by_source_id["source-1"]).values_list("language_code", "name")),
+            {("en", "Castle"), ("es", "Castillo")},
+        )
 
     def test_itinerary_create_accepts_json_and_translations(self):
         payload = {

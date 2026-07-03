@@ -1,6 +1,7 @@
 import { AsyncPipe } from '@angular/common';
 import { Component, ElementRef, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Category, Poi, PoiImage, Translation } from './api.service';
@@ -22,17 +23,35 @@ interface PoiDraft {
   category_ids: number[];
 }
 
+interface ItineraryPointExport {
+  type?: string;
+  id?: number | string;
+}
+
+interface ItineraryJsonExport {
+  points?: ItineraryPointExport[];
+}
+
 @Component({
   selector: 'app-poi-list',
   standalone: true,
-  imports: [AsyncPipe, FormsModule],
+  imports: [AsyncPipe, FormsModule, RouterLink],
   template: `
     <section class="page">
       <header class="page-header">
         <div>
-          <h1>POIs</h1>
-          <p>Browse and manage points of interest from the backend API.</p>
+          <h1>{{ itineraryId ? 'Itinerary POIs' : 'POIs' }}</h1>
+          <p>
+            @if (itineraryId) {
+              POIs included in {{ itineraryTitle || 'this itinerary' }}.
+            } @else {
+              Browse and manage points of interest from the backend API.
+            }
+          </p>
         </div>
+        @if (itineraryId) {
+          <a class="secondary" [routerLink]="['/itineraries']">Back to itineraries</a>
+        }
       </header>
 
       <div class="toolbar">
@@ -53,15 +72,17 @@ interface PoiDraft {
             <option [value]="category.id">{{ category.name || category.slug }}</option>
           }
         </select>
-        <input
-          class="country-filter"
-          type="text"
-          maxlength="2"
-          placeholder="Country"
-          aria-label="Filter by country code"
-          [ngModel]="selectedCountry"
-          (ngModelChange)="selectedCountry = $event.toUpperCase(); refresh$.next(refresh$.value + 1)"
-        />
+        <select
+          class="toolbar-select"
+          aria-label="Filter by country"
+          [(ngModel)]="selectedCountry"
+          (ngModelChange)="refresh$.next(refresh$.value + 1)"
+        >
+          <option value="">All countries</option>
+          @for (countryCode of availableCountries; track countryCode) {
+            <option [value]="countryCode">{{ countryName(countryCode) }}</option>
+          }
+        </select>
       </div>
 
       @if (statusMessage) {
@@ -101,7 +122,7 @@ interface PoiDraft {
                         <span class="muted">No categories</span>
                       }
                     </td>
-                    <td>{{ poi.country_code || '-' }}</td>
+                    <td>{{ countryName(poi.country_code) }}</td>
                     <td class="enabled-column">
                       <input
                         class="enabled-checkbox"
@@ -220,14 +241,19 @@ export class PoiListComponent {
   @ViewChild('metadataDialog') private readonly metadataDialog?: ElementRef<HTMLDialogElement>;
 
   private readonly api = inject(ApiService);
+  private readonly activatedRoute = inject(ActivatedRoute);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
   query = '';
+  itineraryId: string | null = null;
+  itineraryTitle: string | null = null;
+  itineraryPoiIds: string[] = [];
   selectedCategory = '';
   selectedCountry = '';
   statusMessage = '';
   statusIsError = false;
   availableCategories: Category[] = [];
+  availableCountries: string[] = [];
   editingPoi: Poi | null = null;
   poiDraft: PoiDraft = this.emptyPoiDraft();
   translationDrafts: TranslationDraft[] = [];
@@ -235,18 +261,39 @@ export class PoiListComponent {
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
-    this.refresh$
+    this.refresh$,
+    this.activatedRoute.paramMap.pipe(map(params => params.get('id')))
   ]).pipe(
-    switchMap(([query]) => combineLatest([
-      this.api.listPois(query, '', undefined, this.selectedCategory, this.selectedCountry),
-      this.api.listAllCategories()
-    ]).pipe(
-      map(([page, categories]) => {
-        this.availableCategories = categories;
-        return { items: page.results, error: '' };
-      }),
-      catchError(error => of({ items: [] as Poi[], error: `Could not load POIs. ${error.message}` }))
-    )),
+    switchMap(([query, , itineraryId]) => {
+      this.itineraryId = itineraryId;
+      const itinerary$ = itineraryId ? this.api.getItinerary(itineraryId) : of(null);
+      return combineLatest([
+        itinerary$,
+        this.api.listAllCategories(),
+        this.api.listPoiCountries()
+      ]).pipe(
+        switchMap(([itinerary, categories, countries]) => {
+          this.availableCategories = categories;
+          this.availableCountries = countries;
+          this.itineraryTitle = itinerary?.title || null;
+          this.itineraryPoiIds = itinerary ? this.poiIdsForItinerary(itinerary.itinerary_json) : [];
+          if (itineraryId && this.itineraryPoiIds.length === 0) {
+            return of({ items: [] as Poi[], error: '' });
+          }
+          return this.api.listPois(
+            query,
+            '',
+            undefined,
+            this.selectedCategory,
+            this.selectedCountry,
+            itineraryId ? this.itineraryPoiIds : undefined
+          ).pipe(
+            map(page => ({ items: page.results, error: '' }))
+          );
+        }),
+        catchError(error => of({ items: [] as Poi[], error: `Could not load POIs. ${error.message}` }))
+      );
+    }),
     startWith({ items: [] as Poi[], error: '' })
   );
 
@@ -467,6 +514,31 @@ export class PoiListComponent {
       gps_longitude: null,
       category_ids: []
     };
+  }
+
+  countryName(countryCode: string | null | undefined): string {
+    if (!countryCode) return '-';
+    try {
+      return new Intl.DisplayNames([navigator.language || 'en'], { type: 'region' }).of(countryCode) || countryCode;
+    } catch {
+      return countryCode;
+    }
+  }
+
+  private poiIdsForItinerary(itineraryJson: unknown): string[] {
+    const json = itineraryJson && typeof itineraryJson === 'object'
+      ? itineraryJson as ItineraryJsonExport
+      : {};
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const point of json.points || []) {
+      if (point.type !== 'poi' || point.id === undefined || point.id === null) continue;
+      const id = String(point.id);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+    return ids;
   }
 
   private showStatus(message: string, isError: boolean): void {
