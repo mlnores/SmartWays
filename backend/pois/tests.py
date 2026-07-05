@@ -1,15 +1,17 @@
 import json
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 from django.contrib.gis.geos import Point
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.utils import timezone
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .management.commands.import_rurallure_dump import Command, CountryBoundaryLookup
-from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation, Route
+from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation, Route, RouteTranslation
 
 
 class POIAPITests(APITestCase):
@@ -359,6 +361,28 @@ class POIAPITests(APITestCase):
         self.assertTrue(itinerary.translations.get(language_code="en").is_reference)
         self.assertEqual(response["Access-Control-Allow-Origin"], "*")
 
+    def test_itinerary_detail_uses_reference_translation_when_requested_language_is_missing(self):
+        itinerary = Itinerary.objects.create(
+            enabled=True,
+            itinerary_json={
+                "points": [],
+                "segments": [],
+            },
+        )
+        itinerary.translations.create(
+            language_code="it",
+            title="Tappa italiana",
+            description="Descrizione italiana.",
+            slug="tappa-italiana",
+            is_reference=True,
+        )
+
+        response = self.client.get(reverse("itinerary-detail", args=[itinerary.id]), {"language": "en"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["title"], "Tappa italiana")
+        self.assertEqual(response.data["description"], "Descrizione italiana.")
+
     def test_itinerary_create_requires_translation_title(self):
         response = self.client.post(
             reverse("itinerary-list"),
@@ -563,3 +587,191 @@ class POIAPITests(APITestCase):
         self.assertEqual(localized_response.data["results"][0]["title"], "Paseo del castillo")
         self.assertEqual(search_response.status_code, status.HTTP_200_OK)
         self.assertEqual(search_response.data["count"], 1)
+
+
+class ManagementCommandTests(APITestCase):
+    def write_gpx(self, path, title, coordinates):
+        points = "\n".join(
+            f'        <trkpt lon="{lon}" lat="{lat}"></trkpt>'
+            for lon, lat in coordinates
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"""<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>{title}</name></metadata>
+  <wpt lon="{coordinates[0][0]}" lat="{coordinates[0][1]}"><name>Waypoint</name></wpt>
+  <trk>
+    <name>{title}</name>
+    <trkseg>
+{points}
+    </trkseg>
+  </trk>
+</gpx>
+""",
+            encoding="utf-8",
+        )
+
+    def test_clear_content_data_requires_confirmation(self):
+        with self.assertRaises(CommandError):
+            call_command("clear_content_data")
+
+    def test_clear_content_data_deletes_content(self):
+        category = Category.objects.create(slug="heritage")
+        poi = POI.objects.create(enabled=True, country_code="ES", location=Point(-8.7, 42.2, srid=4326))
+        poi.categories.add(category)
+        POITranslation.objects.create(poi=poi, language_code="en", title="POI", slug="poi", is_reference=True)
+        route = Route.objects.create(enabled=True)
+        RouteTranslation.objects.create(route=route, language_code="en", title="Route", slug="route", is_reference=True)
+        itinerary = Itinerary.objects.create(route=route, stage_number=1, itinerary_json={"points": [], "segments": []})
+        itinerary.translations.create(language_code="en", title="Itinerary", slug="itinerary", is_reference=True)
+
+        call_command("clear_content_data", "--yes")
+
+        self.assertEqual(POI.objects.count(), 0)
+        self.assertEqual(Itinerary.objects.count(), 0)
+        self.assertEqual(Route.objects.count(), 0)
+        self.assertEqual(Category.objects.count(), 0)
+
+    def test_rurallure_import_romea_strata_creates_one_continuous_itinerary(self):
+        with TemporaryDirectory() as temporary_directory:
+            source_dir = Path(temporary_directory)
+            for index in (1, 2):
+                coordinates = (
+                    [[13.0, 45.0], [13.1, 45.1]]
+                    if index == 1
+                    else [[13.1, 45.1], [13.2, 45.2]]
+                )
+                payload = {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "LineString",
+                                "coordinates": coordinates,
+                            },
+                            "properties": {"name": f"stage-{index}"},
+                        }
+                    ],
+                }
+                (source_dir / f"test_part{index:03d}.geojson").write_text(json.dumps(payload), encoding="utf-8")
+
+            call_command("rurallure_import_romea_strata", "--source-dir", str(source_dir), "--route-title", "Romea Strata Test", "--route-slug", "romea-strata-test")
+
+        route = RouteTranslation.objects.get(slug="romea-strata-test").route
+        itineraries = list(route.itineraries.order_by("stage_number"))
+        self.assertEqual(len(itineraries), 1)
+        self.assertEqual(itineraries[0].stage_number, 1)
+        self.assertEqual(itineraries[0].translations.get().title, "Romea Strata Test")
+        self.assertEqual(
+            itineraries[0].itinerary_json["segments"][0]["selectedWalkingRoute"]["geometry"]["type"],
+            "LineString",
+        )
+        self.assertEqual(
+            len(itineraries[0].itinerary_json["segments"][0]["selectedWalkingRoute"]["geometry"]["coordinates"]),
+            3,
+        )
+
+    def test_rurallure_import_via_romea_del_santo_uses_shared_geojson_importer(self):
+        with TemporaryDirectory() as temporary_directory:
+            source_dir = Path(temporary_directory)
+            for index in (1, 2):
+                coordinates = (
+                    [[11.0, 44.0], [11.1, 44.1]]
+                    if index == 1
+                    else [[11.1, 44.1], [11.2, 44.2]]
+                )
+                payload = {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "LineString",
+                                "coordinates": coordinates,
+                            },
+                            "properties": {"name": f"stage-{index}"},
+                        }
+                    ],
+                }
+                (source_dir / f"test_part{index:03d}.geojson").write_text(json.dumps(payload), encoding="utf-8")
+
+            call_command(
+                "rurallure_import_via_romea_del_santo",
+                "--source-dir",
+                str(source_dir),
+                "--route-title",
+                "Via Romea del Santo Test",
+                "--route-slug",
+                "via-romea-del-santo-test",
+            )
+
+        route = RouteTranslation.objects.get(slug="via-romea-del-santo-test").route
+        itinerary = route.itineraries.get()
+        self.assertEqual(itinerary.stage_number, 1)
+        self.assertEqual(itinerary.translations.get().title, "Via Romea del Santo Test")
+        self.assertEqual(
+            len(itinerary.itinerary_json["segments"][0]["selectedWalkingRoute"]["geometry"]["coordinates"]),
+            3,
+        )
+
+    def test_rurallure_import_romea_strata_official_imports_gpx_stages(self):
+        with TemporaryDirectory() as temporary_directory:
+            source_dir = Path(temporary_directory)
+            self.write_gpx(
+                source_dir / "1.Estonia" / "A piedi_on foot" / "rsee01.gpx",
+                "RSEE01 - Tallinn > Saku",
+                [[24.7, 59.4], [24.8, 59.3]],
+            )
+            self.write_gpx(
+                source_dir / "7.Italia" / "A piedi_on foot" / "Cammino principale - Main path (Tarvisio-Roma)" / "rsit01.gpx",
+                "RSIT01 - Tarvisio > Pontebba",
+                [[13.5, 46.5], [13.3, 46.4]],
+            )
+            self.write_gpx(
+                source_dir / "7.Italia" / "A piedi_on foot" / "Romee" / "Romea del Santo" / "rsit01.gpx",
+                "Romea del Santo stage",
+                [[11.7, 45.8], [11.9, 45.6]],
+            )
+            self.write_gpx(
+                source_dir / "7.Italia" / "A piedi_on foot" / "Romee" / "Romea del Santo" / "rsit01_variante.gpx",
+                "Romea del Santo variant",
+                [[11.8, 45.9], [12.0, 45.7]],
+            )
+
+            call_command("rurallure_import_romea_strata_official", "--source-dir", str(source_dir))
+
+        main_route = RouteTranslation.objects.get(slug="romea-strata-official").route
+        branch_route = RouteTranslation.objects.get(slug="romea-strata-official-romea-del-santo").route
+        self.assertEqual(main_route.itineraries.count(), 2)
+        self.assertEqual(branch_route.itineraries.count(), 1)
+        itinerary = main_route.itineraries.order_by("stage_number").first()
+        self.assertEqual(itinerary.translations.get().title, "RSEE01 - Tallinn > Saku")
+        self.assertEqual(
+            itinerary.itinerary_json["segments"][0]["selectedWalkingRoute"]["geometry"]["type"],
+            "LineString",
+        )
+        self.assertEqual(itinerary.itinerary_json["source"]["waypointCount"], 1)
+
+    def test_rurallure_import_romea_strata_official_can_include_variants_disabled(self):
+        with TemporaryDirectory() as temporary_directory:
+            source_dir = Path(temporary_directory)
+            self.write_gpx(
+                source_dir / "7.Italia" / "A piedi_on foot" / "Romee" / "Romea del Santo" / "rsit01.gpx",
+                "Romea del Santo stage",
+                [[11.7, 45.8], [11.9, 45.6]],
+            )
+            self.write_gpx(
+                source_dir / "7.Italia" / "A piedi_on foot" / "Romee" / "Romea del Santo" / "rsit01_variante.gpx",
+                "Romea del Santo variant",
+                [[11.8, 45.9], [12.0, 45.7]],
+            )
+
+            call_command("rurallure_import_romea_strata_official", "--source-dir", str(source_dir), "--include-variants")
+
+        branch_route = RouteTranslation.objects.get(slug="romea-strata-official-romea-del-santo").route
+        itineraries = list(branch_route.itineraries.order_by("stage_number"))
+        self.assertEqual(len(itineraries), 2)
+        self.assertTrue(itineraries[0].enabled)
+        self.assertFalse(itineraries[1].enabled)

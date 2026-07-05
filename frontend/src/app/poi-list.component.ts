@@ -1,7 +1,7 @@
 import { AsyncPipe } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Category, Poi, PoiImage, Translation } from './api.service';
@@ -352,6 +352,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
 
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
   query = '';
@@ -364,7 +365,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   statusIsError = false;
   availableCategories: Category[] = [];
   availableCountries: string[] = [];
-  backLink = '/itineraries';
+  backLink: UrlTree | string = '/itineraries';
   backLabel = 'Back to itineraries';
   editingPoi: Poi | null = null;
   poiDraft: PoiDraft = this.emptyPoiDraft();
@@ -423,7 +424,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     const returnTo = this.activatedRoute.snapshot.queryParamMap.get('returnTo');
     const returnLabel = this.activatedRoute.snapshot.queryParamMap.get('returnLabel');
     if (returnTo?.startsWith('/')) {
-      this.backLink = returnTo;
+      this.backLink = this.router.parseUrl(returnTo);
     }
     if (returnLabel) {
       this.backLabel = returnLabel;

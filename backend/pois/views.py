@@ -268,7 +268,7 @@ class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(id__in=poi_ids)
 
         language = self.get_language()
-        if language:
+        if language and self.action == "list":
             queryset = queryset.filter(translations__language_code=language)
 
         category = self.request.query_params.get("category")
@@ -359,7 +359,7 @@ class ItineraryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(enabled=enabled.lower() in {"true", "1"})
 
         language = self.get_language()
-        if language:
+        if language and self.action == "list":
             queryset = queryset.filter(translations__language_code=language)
 
         route = self.request.query_params.get("route")
@@ -395,7 +395,7 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(enabled=enabled.lower() in {"true", "1"})
 
         language = self.get_language()
-        if language:
+        if language and self.action == "list":
             queryset = queryset.filter(translations__language_code=language)
 
         query = (self.request.query_params.get("q") or self.request.query_params.get("search") or "").strip()

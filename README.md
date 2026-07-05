@@ -389,6 +389,91 @@ python manage.py import_rurallure_dump --country-boundaries /path/to/geoboundari
 python manage.py import_rurallure_dump --skip-country-annotation
 ```
 
+## Import Route GeoJSON Data
+
+Import bundled route GeoJSON files as one route with one continuous itinerary:
+
+```bash
+cd backend
+python manage.py rurallure_import_romea_strata
+python manage.py rurallure_import_via_francigena
+python manage.py rurallure_import_via_francigena_per_alps
+python manage.py rurallure_import_via_romea_del_santo
+```
+
+The commands read:
+
+```text
+routes_data/wp5_routes/wp5_routes/italy/via romea strata/
+routes_data/wp5_routes/wp5_routes/italy/via francigena/
+routes_data/wp5_routes/wp5_routes/italy/via francigena per alps/
+routes_data/wp5_routes/wp5_routes/italy/via romea del santo/
+```
+
+Each command creates or reuses its route, then stitches the ordered GeoJSON `LineString` files into a single itinerary whose selected walking route geometry is the continuous merged line. If the route already has itineraries, the command aborts unless you pass `--replace`:
+
+```bash
+python manage.py rurallure_import_romea_strata --replace
+```
+
+Preview without writing rows, or use a custom source directory/title:
+
+```bash
+python manage.py rurallure_import_romea_strata --dry-run
+python manage.py rurallure_import_romea_strata --source-dir /path/to/geojsons --route-title "Romea Strata"
+```
+
+## Import Official Romea Strata GPX Data
+
+Import the GPX files downloaded from the official Romea Strata site as routes with numbered itinerary stages:
+
+```bash
+cd backend
+python manage.py rurallure_import_romea_strata_official --dry-run
+python manage.py rurallure_import_romea_strata_official
+```
+
+The command reads:
+
+```text
+routes_data/romea_strata_official/
+```
+
+It creates the main `Romea Strata Official` route from the country folders plus Italy's main Tarvisio-Roma path and the Vatican extra mile. The Italian branch and Romee folders are imported as separate routes. Each GPX file becomes one itinerary stage using the GPX track as the selected walking route geometry.
+
+Variant, detour, and outside-route GPX files are skipped by default. Include them as disabled itineraries with:
+
+```bash
+python manage.py rurallure_import_romea_strata_official --include-variants
+```
+
+If a route already has itineraries, the command aborts unless you pass `--replace`:
+
+```bash
+python manage.py rurallure_import_romea_strata_official --replace
+```
+
+## Clear Content Data
+
+Delete POIs, itineraries, routes, and their dependent translations/images:
+
+```bash
+cd backend
+python manage.py clear_content_data --yes
+```
+
+Preview counts without deleting:
+
+```bash
+python manage.py clear_content_data --dry-run
+```
+
+Keep categories while deleting POIs, itineraries, and routes:
+
+```bash
+python manage.py clear_content_data --yes --keep-categories
+```
+
 ## Tests
 
 Tests require a configured spatial database, either the default SQLite/SpatiaLite setup or PostGIS:
