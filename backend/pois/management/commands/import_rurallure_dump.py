@@ -11,6 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
+from pois.country_codes import alpha3_to_alpha2
 from pois.models import Category, CategoryTranslation, POI, POIImage, POITranslation
 
 
@@ -42,38 +43,6 @@ COUNTRY_CODE_PROPERTY_NAMES = (
     "ADM0_A3",
 )
 COUNTRY_NAME_PROPERTY_NAMES = ("shapeName", "name", "NAME", "ADMIN", "admin", "NAME_EN")
-
-ALPHA3_TO_ALPHA2 = {
-    "AND": "AD",
-    "AUT": "AT",
-    "BEL": "BE",
-    "CHE": "CH",
-    "CZE": "CZ",
-    "DEU": "DE",
-    "DNK": "DK",
-    "ESP": "ES",
-    "FIN": "FI",
-    "FRA": "FR",
-    "GBR": "GB",
-    "GRC": "GR",
-    "HRV": "HR",
-    "HUN": "HU",
-    "IRL": "IE",
-    "ISL": "IS",
-    "ITA": "IT",
-    "LIE": "LI",
-    "LUX": "LU",
-    "MCO": "MC",
-    "NLD": "NL",
-    "NOR": "NO",
-    "POL": "PL",
-    "PRT": "PT",
-    "SVK": "SK",
-    "SVN": "SI",
-    "SWE": "SE",
-    "VAT": "VA",
-}
-
 
 def copy_value(value):
     if value == r"\N":
@@ -195,8 +164,10 @@ def code_from_boundary_properties(properties, country_codes_by_name):
         value = (properties.get(property_name) or "").strip().upper()
         if len(value) == 2 and value.isalpha():
             return value
-        if len(value) == 3 and value in ALPHA3_TO_ALPHA2:
-            return ALPHA3_TO_ALPHA2[value]
+        if len(value) == 3:
+            code = alpha3_to_alpha2(value)
+            if code:
+                return code
 
     for property_name in COUNTRY_NAME_PROPERTY_NAMES:
         normalized_name = normalized_country_name(properties.get(property_name))

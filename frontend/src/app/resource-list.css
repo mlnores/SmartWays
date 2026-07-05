@@ -282,6 +282,34 @@ label span {
   font-size: 0.88rem;
 }
 
+.preview-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.preview-action {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  justify-content: start;
+  min-height: 42px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.preview-action span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-action-icon {
+  line-height: 1;
+}
+
 .resource-table {
   width: 100%;
   min-width: 960px;
@@ -524,6 +552,108 @@ label span {
   padding: 16px;
 }
 
+.translation-tabs-panel {
+  display: grid;
+  gap: 0;
+  max-height: min(72vh, 720px);
+  overflow: hidden;
+}
+
+.translation-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 12px 16px;
+  border-bottom: 1px solid #edf1f7;
+  background: #f8fafc;
+}
+
+.translation-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid #cfd6e3;
+  border-radius: 999px;
+  color: #344054;
+  background: #ffffff;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.translation-tab.active {
+  border-color: #1f6feb;
+  color: #1f4fbf;
+  background: #eef4ff;
+  font-weight: 700;
+}
+
+.reference-icon,
+.reference-pill {
+  color: #b54708;
+}
+
+.add-tab-button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  border-radius: 999px;
+}
+
+.translation-tab-content {
+  display: grid;
+  gap: 14px;
+  overflow: auto;
+  padding: 16px;
+}
+
+.translation-tab-header {
+  display: grid;
+  grid-template-columns: minmax(110px, 180px) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.reference-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  font-weight: 700;
+}
+
+.translation-single-column {
+  display: grid;
+  gap: 14px;
+}
+
+.translation-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.translation-comparison section,
+.reference-column {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.reference-column {
+  padding: 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.reference-column input,
+.reference-column textarea {
+  color: #475467;
+  background: #f1f5f9;
+}
+
 .translation-row {
   display: grid;
   grid-template-columns: minmax(86px, 100px) minmax(90px, 120px) minmax(180px, 1fr) minmax(220px, 1.5fr);
@@ -704,6 +834,8 @@ label span {
   .category-translation-row,
   .form-grid,
   .preview-layout,
+  .translation-comparison,
+  .translation-tab-header,
   .translation-row {
     grid-template-columns: 1fr;
   }

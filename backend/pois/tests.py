@@ -110,6 +110,43 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["results"], ["ES", "PT"])
 
+    def test_poi_country_bounds_returns_leaflet_bounds(self):
+        response = self.client.get(reverse("poi-country-bounds"), {"country": "es"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["country"], "ES")
+        self.assertEqual(len(response.data["bounds"]), 2)
+        self.assertLess(response.data["bounds"][0][0], response.data["bounds"][1][0])
+        self.assertLess(response.data["bounds"][0][1], response.data["bounds"][1][1])
+
+    def test_poi_country_bounds_uses_european_overrides(self):
+        cases = {
+            "AU": [[-43.75, 112.90], [-10.00, 153.70]],
+            "CL": [[-56.00, -75.75], [-17.50, -66.40]],
+            "DK": [[54.45, 7.70], [57.85, 15.25]],
+            "EC": [[-5.05, -81.10], [1.70, -75.10]],
+            "GB": [[49.85, -8.65], [60.86, 1.78]],
+            "FR": [[41.30, -5.15], [51.10, 9.57]],
+            "NO": [[57.95, 4.50], [71.20, 31.20]],
+        }
+
+        for country_code, expected_bounds in cases.items():
+            with self.subTest(country_code=country_code):
+                response = self.client.get(reverse("poi-country-bounds"), {"country": country_code})
+
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.data["bounds"], expected_bounds)
+
+    def test_poi_country_bounds_uses_full_bounds_for_excluded_regions(self):
+        focused_response = self.client.get(reverse("poi-country-bounds"), {"country": "DK", "lat": 55.7, "lng": 12.6})
+        greenland_response = self.client.get(reverse("poi-country-bounds"), {"country": "DK", "lat": 64.2, "lng": -51.7})
+
+        self.assertEqual(focused_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(greenland_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(focused_response.data["bounds"], [[54.45, 7.70], [57.85, 15.25]])
+        self.assertNotEqual(greenland_response.data["bounds"], focused_response.data["bounds"])
+        self.assertLess(greenland_response.data["bounds"][0][1], -20)
+
     def test_poi_list_filters_by_ids(self):
         other_poi = POI.objects.create(
             enabled=True,

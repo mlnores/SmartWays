@@ -43,24 +43,6 @@ interface ItineraryJsonExport {
 
 declare const L: any;
 
-const COUNTRY_BOUNDS: Record<string, [[number, number], [number, number]]> = {
-  AT: [[46.37, 9.53], [49.02, 17.16]],
-  CH: [[45.82, 5.96], [47.81, 10.49]],
-  DE: [[47.27, 5.87], [55.06, 15.04]],
-  ES: [[35.17, -9.30], [43.80, 4.33]],
-  FR: [[41.33, -5.14], [51.09, 9.56]],
-  GB: [[49.86, -8.65], [60.86, 1.77]],
-  HU: [[45.74, 16.11], [48.59, 22.91]],
-  IT: [[35.49, 6.63], [47.10, 18.52]],
-  NO: [[57.95, 4.50], [71.19, 31.08]],
-  PL: [[49.00, 14.12], [54.84, 24.15]],
-  PT: [[36.96, -9.55], [42.16, -6.19]],
-  RO: [[43.62, 20.22], [48.27, 29.69]],
-  SK: [[47.73, 16.84], [49.61, 22.57]],
-  TD: [[7.44, 13.47], [23.45, 24.00]],
-  VA: [[41.90, 12.44], [41.91, 12.46]]
-};
-
 @Component({
   selector: 'app-poi-list',
   standalone: true,
@@ -79,7 +61,7 @@ const COUNTRY_BOUNDS: Record<string, [[number, number], [number, number]]> = {
           </p>
         </div>
         @if (itineraryId) {
-          <a class="secondary" [routerLink]="['/itineraries']">Back to itineraries</a>
+          <a class="secondary" [routerLink]="backLink">{{ backLabel }}</a>
         } @else {
           <div class="list-actions">
             <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
@@ -382,6 +364,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   statusIsError = false;
   availableCategories: Category[] = [];
   availableCountries: string[] = [];
+  backLink = '/itineraries';
+  backLabel = 'Back to itineraries';
   editingPoi: Poi | null = null;
   poiDraft: PoiDraft = this.emptyPoiDraft();
   translationDrafts: TranslationDraft[] = [];
@@ -395,6 +379,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private previewMap: any = null;
   private previewLayer: any = null;
   private previewResizeObserver: ResizeObserver | null = null;
+  private previewFitRequestId = 0;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
@@ -435,6 +420,14 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   );
 
   ngAfterViewInit(): void {
+    const returnTo = this.activatedRoute.snapshot.queryParamMap.get('returnTo');
+    const returnLabel = this.activatedRoute.snapshot.queryParamMap.get('returnLabel');
+    if (returnTo?.startsWith('/')) {
+      this.backLink = returnTo;
+    }
+    if (returnLabel) {
+      this.backLabel = returnLabel;
+    }
     this.initializePreviewMap();
   }
 
@@ -755,7 +748,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       .addTo(this.previewLayer);
 
     this.previewMessage = `${Number(poi.gps_latitude).toFixed(5)}, ${Number(poi.gps_longitude).toFixed(5)}`;
-    this.fitPreviewMap(latLng, poi.country_code);
+    void this.fitPreviewMap(latLng, poi.country_code);
   }
 
   private previewMarkerIcon(): any {
@@ -768,14 +761,33 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  private fitPreviewMap(latLng: number[] | null, countryCode = ''): void {
+  private async fitPreviewMap(latLng: number[] | null, countryCode = ''): Promise<void> {
+    const requestId = ++this.previewFitRequestId;
     window.requestAnimationFrame(() => {
-      if (!this.previewMap) return;
+      if (!this.previewMap || requestId !== this.previewFitRequestId) return;
       this.previewMap.invalidateSize(false);
-      const countryBounds = COUNTRY_BOUNDS[(countryCode || '').toUpperCase()];
-      if (countryBounds) {
-        this.previewMap.fitBounds(countryBounds, { padding: [22, 22], maxZoom: 9, animate: false });
-      } else if (latLng) {
+    });
+
+    const country = (countryCode || '').trim().toUpperCase();
+    if (country) {
+      try {
+        const response = await firstValueFrom(this.api.getCountryBounds(country, latLng || undefined));
+        window.requestAnimationFrame(() => {
+          if (!this.previewMap || requestId !== this.previewFitRequestId) return;
+          this.previewMap.invalidateSize(false);
+          this.previewMap.fitBounds(response.bounds, { padding: [22, 22], maxZoom: 9, animate: false });
+          window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+        });
+        return;
+      } catch {
+        // Fall back to the POI position below if country bounds are unavailable.
+      }
+    }
+
+    window.requestAnimationFrame(() => {
+      if (!this.previewMap || requestId !== this.previewFitRequestId) return;
+      this.previewMap.invalidateSize(false);
+      if (latLng) {
         this.previewMap.setView(latLng, 14, { animate: false });
       } else {
         this.previewMap.setView([42.5, -8.5], 5, { animate: false });

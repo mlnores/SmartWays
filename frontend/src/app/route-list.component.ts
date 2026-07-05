@@ -1,12 +1,13 @@
 import { AsyncPipe, DatePipe } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Itinerary, Route, Translation } from './api.service';
 
 interface RouteDraft {
+  language_code: string;
   title: string;
   description: string;
   enabled: boolean;
@@ -45,6 +46,20 @@ interface ItineraryJsonExport {
 }
 
 declare const L: any;
+
+const LANGUAGE_OPTIONS = [
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'fr', label: 'French' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'it', label: 'Italian' },
+  { code: 'de', label: 'German' },
+  { code: 'hu', label: 'Hungarian' },
+  { code: 'no', label: 'Norwegian' },
+  { code: 'pl', label: 'Polish' },
+  { code: 'ro', label: 'Romanian' },
+  { code: 'sk', label: 'Slovak' },
+];
 
 @Component({
   selector: 'app-route-list',
@@ -87,12 +102,13 @@ declare const L: any;
                       <th>Last updated</th>
                       <th>Segments</th>
                       <th class="enabled-column">Enabled</th>
-                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     @for (route of state.routes; track route.id) {
                       <tr
+                        [attr.id]="routeRowId(route)"
+                        [class.highlight-row]="highlightedRouteId === route.id"
                         [class.preview-selected-row]="previewRoute?.id === route.id"
                         (click)="selectPreviewRoute(route)"
                       >
@@ -112,17 +128,10 @@ declare const L: any;
                             (change)="setRouteEnabled(route, $any($event.target).checked)"
                           />
                         </td>
-                        <td>
-                          <div class="table-actions" (click)="$event.stopPropagation()">
-                            <a class="secondary icon-action" title="View itineraries" aria-label="View itineraries" [routerLink]="['/route', route.slug || route.id]">📋</a>
-                            <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(route)">📝</button>
-                            <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteRoute(route)">🗑️</button>
-                          </div>
-                        </td>
                       </tr>
                     } @empty {
                       <tr>
-                        <td colspan="5">No routes found.</td>
+                        <td colspan="4">No routes found.</td>
                       </tr>
                     }
                   </tbody>
@@ -138,6 +147,22 @@ declare const L: any;
               @if (previewMessage) {
                 <p class="muted preview-message">{{ previewMessage }}</p>
               }
+              @if (previewRoute) {
+                <div class="preview-actions" aria-label="Selected route actions">
+                  <a class="secondary preview-action" [routerLink]="['/route', previewRoute.slug || previewRoute.id]">
+                    <span class="preview-action-icon" aria-hidden="true">📋</span>
+                    <span>View itineraries</span>
+                  </a>
+                  <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewRoute)">
+                    <span class="preview-action-icon" aria-hidden="true">📝</span>
+                    <span>Edit metadata and translations</span>
+                  </button>
+                  <button type="button" class="secondary preview-action danger-action" (click)="deleteRoute(previewRoute)">
+                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                    <span>Delete route</span>
+                  </button>
+                </div>
+              }
             </aside>
           </div>
         }
@@ -150,6 +175,14 @@ declare const L: any;
             <button type="button" class="icon-button" aria-label="Close new route dialog" (click)="closeNewRouteDialog()">✖</button>
           </header>
           <div class="form-stack">
+            <label>
+              <span>Language</span>
+              <select [(ngModel)]="newRoute.language_code" name="newRouteLanguage" required>
+                @for (language of languageOptions; track language.code) {
+                  <option [value]="language.code">{{ language.label }}</option>
+                }
+              </select>
+            </label>
             <label>
               <span>Title</span>
               <input type="text" [(ngModel)]="newRoute.title" name="newRouteTitle" placeholder="Route title" />
@@ -176,33 +209,77 @@ declare const L: any;
             <h2>Edit route translations</h2>
             <button type="button" class="icon-button" aria-label="Close translation dialog" (click)="closeTranslationDialog()">✖</button>
           </header>
-          <div class="translation-list">
-            @for (translation of translationDrafts; track $index) {
-              <div class="translation-row">
-                <label class="reference-radio">
-                  <span>Reference</span>
-                  <input
-                    type="radio"
-                    name="routeReferenceTranslation"
-                    [checked]="translation.is_reference"
-                    (change)="setReferenceTranslation($index)"
-                  />
-                </label>
-                <label>
-                  <span>Language</span>
-                  <input type="text" [(ngModel)]="translation.language_code" [name]="'routeLanguage' + $index" />
-                </label>
-                <label>
-                  <span>Title</span>
-                  <input type="text" [(ngModel)]="translation.title" [name]="'routeTitle' + $index" />
-                </label>
-                <label>
-                  <span>Description</span>
-                  <textarea rows="3" [(ngModel)]="translation.description" [name]="'routeDescription' + $index"></textarea>
-                </label>
-              </div>
+          <div class="translation-tabs-panel">
+            <div class="translation-tabs" role="tablist" aria-label="Route translation languages">
+              @for (translation of translationDrafts; track $index) {
+                <button
+                  type="button"
+                  class="translation-tab"
+                  [class.active]="activeTranslationIndex === $index"
+                  (click)="selectTranslationTab($index)"
+                >
+                  @if (translation.is_reference) {
+                    <span class="reference-icon" title="Reference language" aria-label="Reference language">★</span>
+                  }
+                  <span>{{ translation.language_code || 'New language' }}</span>
+                </button>
+              }
+              <button type="button" class="secondary add-tab-button" (click)="addTranslationDraft()">+ Add language</button>
+            </div>
+
+            @if (activeTranslationDraft(); as translation) {
+              <section class="translation-tab-content">
+                <div class="translation-tab-header">
+                  <label>
+                    <span>Language</span>
+                    <input type="text" [(ngModel)]="translation.language_code" [name]="'routeLanguage' + activeTranslationIndex" />
+                  </label>
+                  @if (translation.is_reference) {
+                    <span class="reference-pill"><span aria-hidden="true">★</span> Reference language</span>
+                  } @else {
+                    <button type="button" class="secondary" (click)="setReferenceTranslation(activeTranslationIndex)">Make reference</button>
+                  }
+                </div>
+
+                @if (translation.is_reference) {
+                  <div class="translation-single-column">
+                    <label>
+                      <span>Title</span>
+                      <input type="text" [(ngModel)]="translation.title" [name]="'routeTitle' + activeTranslationIndex" />
+                    </label>
+                    <label>
+                      <span>Description</span>
+                      <textarea rows="5" [(ngModel)]="translation.description" [name]="'routeDescription' + activeTranslationIndex"></textarea>
+                    </label>
+                  </div>
+                } @else {
+                  <div class="translation-comparison">
+                    <section class="reference-column">
+                      <h3><span aria-hidden="true">★</span> Reference</h3>
+                      <label>
+                        <span>Title</span>
+                        <input type="text" [value]="referenceTranslationDraft()?.title || ''" readonly />
+                      </label>
+                      <label>
+                        <span>Description</span>
+                        <textarea rows="5" [value]="referenceTranslationDraft()?.description || ''" readonly></textarea>
+                      </label>
+                    </section>
+                    <section>
+                      <h3>{{ translation.language_code || 'Translation' }}</h3>
+                      <label>
+                        <span>Title</span>
+                        <input type="text" [(ngModel)]="translation.title" [name]="'routeTitle' + activeTranslationIndex" />
+                      </label>
+                      <label>
+                        <span>Description</span>
+                        <textarea rows="5" [(ngModel)]="translation.description" [name]="'routeDescription' + activeTranslationIndex"></textarea>
+                      </label>
+                    </section>
+                  </div>
+                }
+              </section>
             }
-            <button type="button" class="secondary" (click)="addTranslationDraft()">Add translation</button>
           </div>
           <footer class="metadata-dialog-footer">
             <button type="button" class="secondary" (click)="closeTranslationDialog()">Cancel</button>
@@ -219,15 +296,19 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('translationDialog') private readonly translationDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
 
+  private readonly activatedRoute = inject(ActivatedRoute);
   private readonly api = inject(ApiService);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
+  readonly languageOptions = LANGUAGE_OPTIONS;
   query = '';
-  newRoute: RouteDraft = { title: '', description: '', enabled: true };
+  newRoute: RouteDraft = { language_code: 'en', title: '', description: '', enabled: true };
   statusMessage = '';
   statusIsError = false;
   editingRoute: Route | null = null;
   translationDrafts: TranslationDraft[] = [];
+  activeTranslationIndex = 0;
+  highlightedRouteId: number | null = null;
   previewRoute: Route | null = null;
   previewMessage = 'Click a route to preview it.';
   private previewMap: any = null;
@@ -237,13 +318,17 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
-    this.refresh$
+    this.refresh$,
+    this.activatedRoute.queryParamMap.pipe(map(params => Number(params.get('highlight')) || null))
   ]).pipe(
-    switchMap(([query]) => this.api.listRoutes(query).pipe(
-      map(routePage => ({
-        routes: routePage.results,
-        error: ''
-      })),
+    switchMap(([query, , highlightedRouteId]) => this.api.listRoutes(query).pipe(
+      map(routePage => {
+        this.scheduleHighlight(highlightedRouteId, routePage.results);
+        return {
+          routes: routePage.results,
+          error: ''
+        };
+      }),
       catchError(error => of({
         routes: [] as Route[],
         error: `Could not load routes. ${error.message}`
@@ -282,8 +367,17 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  routeRowId(route: Route): string {
+    return `route-row-${route.id}`;
+  }
+
   async createRoute(): Promise<void> {
     const title = this.newRoute.title.trim();
+    const languageCode = this.newRoute.language_code.trim();
+    if (!languageCode) {
+      this.showStatus('Choose the language of the route title and description.', true);
+      return;
+    }
     if (!title) {
       this.showStatus('Enter a route title before creating it.', true);
       return;
@@ -293,13 +387,13 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       await firstValueFrom(this.api.createRoute({
         enabled: this.newRoute.enabled,
         translations: [{
-          language_code: 'en',
+          language_code: languageCode,
           title,
           description: this.newRoute.description.trim(),
           is_reference: true
         }]
       }));
-      this.newRoute = { title: '', description: '', enabled: true };
+      this.newRoute = { language_code: 'en', title: '', description: '', enabled: true };
       this.closeNewRouteDialog();
       this.showStatus('Route created.', false);
       this.refresh$.next(this.refresh$.value + 1);
@@ -348,6 +442,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   openTranslationDialog(route: Route): void {
     this.editingRoute = route;
     this.translationDrafts = this.translationDraftsFrom(route.translations, route.title, route.description);
+    this.activeTranslationIndex = Math.max(0, this.translationDrafts.findIndex(translation => translation.is_reference));
     this.translationDialog?.nativeElement.showModal();
   }
 
@@ -355,22 +450,48 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     this.translationDialog?.nativeElement.close();
     this.editingRoute = null;
     this.translationDrafts = [];
+    this.activeTranslationIndex = 0;
   }
 
   addTranslationDraft(): void {
+    const nextIndex = this.translationDrafts.length;
     this.translationDrafts.push({
       language_code: '',
       title: '',
       description: '',
       is_reference: this.translationDrafts.length === 0
     });
+    this.activeTranslationIndex = nextIndex;
   }
 
   setReferenceTranslation(index: number): void {
+    const currentReferenceIndex = this.translationDrafts.findIndex(translation => translation.is_reference);
+    if (currentReferenceIndex >= 0 && currentReferenceIndex !== index) {
+      const target = this.translationDrafts[index];
+      const current = this.translationDrafts[currentReferenceIndex];
+      const confirmed = window.confirm(
+        `Change the reference language from "${current.language_code || 'current language'}" to "${target?.language_code || 'selected language'}"?`
+      );
+      if (!confirmed) return;
+    }
+
     this.translationDrafts = this.translationDrafts.map((translation, currentIndex) => ({
       ...translation,
       is_reference: currentIndex === index
     }));
+  }
+
+  selectTranslationTab(index: number): void {
+    if (index < 0 || index >= this.translationDrafts.length) return;
+    this.activeTranslationIndex = index;
+  }
+
+  activeTranslationDraft(): TranslationDraft | null {
+    return this.translationDrafts[this.activeTranslationIndex] || this.translationDrafts[0] || null;
+  }
+
+  referenceTranslationDraft(): TranslationDraft | null {
+    return this.translationDrafts.find(translation => translation.is_reference) || this.translationDrafts[0] || null;
   }
 
   async saveTranslationDialog(): Promise<void> {
@@ -404,7 +525,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     this.previewMap = L.map(this.previewMapElement.nativeElement, {
       zoomControl: true,
       attributionControl: false
-    }).setView([42.5, -8.5], 5);
+    });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19
     }).addTo(this.previewMap);
@@ -413,7 +534,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       this.previewMap?.invalidateSize();
     });
     this.previewResizeObserver.observe(this.previewMapElement.nativeElement);
-    window.requestAnimationFrame(() => this.previewMap?.invalidateSize());
+    this.fitPreviewMapToWorld();
   }
 
   private renderPreviewRoute(itineraries: Itinerary[]): void {
@@ -523,8 +644,17 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       if (bounds.isValid()) {
         this.previewMap.fitBounds(bounds, { padding: [22, 22], maxZoom: 15, animate: false });
       } else {
-        this.previewMap.setView([42.5, -8.5], 5, { animate: false });
+        this.previewMap.fitWorld({ animate: false });
       }
+      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+    });
+  }
+
+  private fitPreviewMapToWorld(): void {
+    window.requestAnimationFrame(() => {
+      if (!this.previewMap) return;
+      this.previewMap.invalidateSize(false);
+      this.previewMap.fitWorld({ animate: false });
       window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
     });
   }
@@ -586,6 +716,27 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       translations[0].is_reference = true;
     }
     return translations;
+  }
+
+  private scheduleHighlight(routeId: number | null, routes: Route[]): void {
+    const route = routes.find(candidate => candidate.id === routeId);
+    if (!routeId || !route) return;
+
+    this.highlightedRouteId = routeId;
+    if (this.previewRoute?.id !== routeId) {
+      void this.selectPreviewRoute(route);
+    }
+    window.setTimeout(() => {
+      document.getElementById(`route-row-${routeId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    }, 80);
+    window.setTimeout(() => {
+      if (this.highlightedRouteId === routeId) {
+        this.highlightedRouteId = null;
+      }
+    }, 4500);
   }
 
   private showStatus(message: string, isError: boolean): void {

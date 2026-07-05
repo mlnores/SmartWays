@@ -1,4 +1,6 @@
 <main class="app" #editorRoot>
+  <a class="editor-back-link" [routerLink]="backLink">{{ backLabel }}</a>
+
   <app-itinerary-editor-sidebar
     (revertItinerary)="revertItinerary()"
     (undoItinerary)="undoItinerary()"

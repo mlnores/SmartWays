@@ -1,4 +1,6 @@
 import json
+from functools import lru_cache
+from pathlib import Path
 
 from django.contrib.gis.geos import GEOSGeometry, Polygon
 from django.db import transaction
@@ -11,6 +13,7 @@ from rest_framework.exceptions import ParseError, ValidationError
 from rest_framework.parsers import JSONParser
 from rest_framework.response import Response
 
+from .country_codes import alpha3_to_alpha2
 from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIImage, POITranslation, Route, RouteTranslation
 from .serializers import (
     CategorySerializer,
@@ -24,6 +27,90 @@ from .serializers import (
     RouteTranslationSerializer,
     select_translation,
 )
+
+COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parent / "data" / "geoboundaries_adm0.geojson"
+COUNTRY_CODE_PROPERTY_NAMES = (
+    "ISO_A2",
+    "iso_a2",
+    "country_code",
+    "COUNTRY_CODE",
+    "code",
+    "shapeISO",
+    "shapeGroup",
+    "ISO_A3",
+    "iso_a3",
+    "ADM0_A3",
+)
+COUNTRY_BOUNDS_OVERRIDES = {
+    # Keep map previews focused on the regions users expect here, not overseas territories.
+    "AU": [[-43.75, 112.90], [-10.00, 153.70]],
+    "CL": [[-56.00, -75.75], [-17.50, -66.40]],
+    "DK": [[54.45, 7.70], [57.85, 15.25]],
+    "EC": [[-5.05, -81.10], [1.70, -75.10]],
+    "GB": [[49.85, -8.65], [60.86, 1.78]],
+    "FR": [[41.30, -5.15], [51.10, 9.57]],
+    "NO": [[57.95, 4.50], [71.20, 31.20]],
+}
+FULL_COUNTRY_BOUNDS_OVERRIDES = {
+    # geoBoundaries lists Greenland separately as GL; use the broader Danish realm only for fallback.
+    "DK": [[54.45, -73.10], [83.65, 15.25]],
+}
+
+
+def country_code_from_boundary_properties(properties):
+    for property_name in COUNTRY_CODE_PROPERTY_NAMES:
+        value = (properties.get(property_name) or "").strip().upper()
+        if len(value) == 2 and value.isalpha():
+            return value
+        if len(value) == 3:
+            code = alpha3_to_alpha2(value)
+            if code:
+                return code
+    return ""
+
+
+@lru_cache(maxsize=1)
+def country_bounds_by_code():
+    if not COUNTRY_BOUNDARIES_PATH.exists():
+        return {}
+
+    with COUNTRY_BOUNDARIES_PATH.open(encoding="utf-8") as geojson_file:
+        payload = json.load(geojson_file)
+
+    raw_features = payload.get("features") if payload.get("type") == "FeatureCollection" else [payload]
+    bounds = {}
+    for feature in raw_features or []:
+        properties = feature.get("properties") or {}
+        geometry = feature.get("geometry")
+        country_code = country_code_from_boundary_properties(properties)
+        if not country_code or not geometry:
+            continue
+
+        boundary = GEOSGeometry(json.dumps(geometry), srid=4326)
+        if boundary.empty:
+            continue
+
+        min_lon, min_lat, max_lon, max_lat = boundary.extent
+        bounds[country_code] = [[min_lat, min_lon], [max_lat, max_lon]]
+    bounds.update(FULL_COUNTRY_BOUNDS_OVERRIDES)
+    return bounds
+
+
+def point_inside_bounds(latitude, longitude, bounds):
+    (min_lat, min_lon), (max_lat, max_lon) = bounds
+    return min_lat <= latitude <= max_lat and min_lon <= longitude <= max_lon
+
+
+def focused_or_full_country_bounds(country_code, latitude=None, longitude=None):
+    full_bounds = country_bounds_by_code().get(country_code)
+    focused_bounds = COUNTRY_BOUNDS_OVERRIDES.get(country_code)
+    if not full_bounds:
+        return None
+    if not focused_bounds:
+        return full_bounds
+    if latitude is not None and longitude is not None and not point_inside_bounds(latitude, longitude, focused_bounds):
+        return full_bounds
+    return focused_bounds
 
 
 def cors_json_response(data, status=200):
@@ -214,6 +301,32 @@ class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             .distinct()
         )
         return Response({"results": list(country_codes)})
+
+    @action(detail=False, methods=["get"], url_path="country-bounds")
+    def country_bounds(self, request):
+        country = (request.query_params.get("country") or request.query_params.get("country_code") or "").strip().upper()
+        if len(country) != 2 or not country.isalpha():
+            raise ValidationError({"country": "Use a two-letter ISO 3166-1 alpha-2 country code."})
+
+        latitude = None
+        longitude = None
+        lat_value = request.query_params.get("lat")
+        lng_value = request.query_params.get("lng")
+        if lat_value is not None or lng_value is not None:
+            try:
+                latitude = float(lat_value)
+                longitude = float(lng_value)
+            except (TypeError, ValueError):
+                raise ValidationError({"coordinates": "Use numeric lat and lng query parameters."})
+
+            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+                raise ValidationError({"coordinates": "Latitude must be between -90 and 90; longitude between -180 and 180."})
+
+        bounds = focused_or_full_country_bounds(country, latitude, longitude)
+        if not bounds:
+            raise ValidationError({"country": f"No country bounds are available for {country}."})
+
+        return Response({"country": country, "bounds": bounds})
 
 
 class POITranslationViewSet(viewsets.ModelViewSet):

@@ -1,5 +1,5 @@
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, ViewEncapsulation, inject } from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { EditorApiService } from './editor-api.service';
 import { ItineraryEditorDialogsComponent } from './itinerary-editor-dialogs.component';
 import { ItineraryEditorMapComponent } from './itinerary-editor-map.component';
@@ -22,7 +22,8 @@ declare global {
   imports: [
     ItineraryEditorDialogsComponent,
     ItineraryEditorMapComponent,
-    ItineraryEditorSidebarComponent
+    ItineraryEditorSidebarComponent,
+    RouterLink
   ],
   templateUrl: './itinerary-editor.component.html',
   styleUrl: './itinerary-editor.component.css',
@@ -34,6 +35,9 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
 
   private readonly route = inject(ActivatedRoute);
   private readonly editorApi = inject(EditorApiService);
+  private readonly requestedBackLink = this.route.snapshot.queryParamMap.get('returnTo');
+  readonly backLink = this.requestedBackLink?.startsWith('/') ? this.requestedBackLink : '/itineraries';
+  readonly backLabel = this.route.snapshot.queryParamMap.get('returnLabel') || 'Back to itineraries';
   private editor: ItineraryEditorRuntime | null = null;
 
   ngAfterViewInit(): void {

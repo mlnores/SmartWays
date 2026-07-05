@@ -26,12 +26,27 @@ interface TranslationDraft {
 }
 
 interface NewItineraryDraft {
+  language_code: string;
   title: string;
   description: string;
   enabled: boolean;
   routeId: number | null;
   stageNumber: number | null;
 }
+
+const LANGUAGE_OPTIONS = [
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'fr', label: 'French' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'it', label: 'Italian' },
+  { code: 'de', label: 'German' },
+  { code: 'hu', label: 'Hungarian' },
+  { code: 'no', label: 'Norwegian' },
+  { code: 'pl', label: 'Polish' },
+  { code: 'ro', label: 'Romanian' },
+  { code: 'sk', label: 'Slovak' },
+];
 
 interface PointExport {
   type?: string;
@@ -72,10 +87,13 @@ declare const L: any;
           <h1>{{ routeSlug ? routeTitle || 'Route itineraries' : 'Itineraries' }}</h1>
           <p>{{ routeSlug ? 'Browse the constituent itineraries of this route.' : 'Browse saved itinerary definitions and open the editor.' }}</p>
         </div>
-        @if (!routeSlug) {
-          <button type="button" class="primary" title="New itinerary" aria-label="New itinerary" (click)="openNewItineraryDialog()">New itinerary</button>
+        @if (routeSlug) {
+          <div class="list-actions">
+            <a class="secondary" [routerLink]="['/routes']" [queryParams]="currentRouteId ? { highlight: currentRouteId } : null">Back to routes</a>
+            <button type="button" class="primary" title="New itinerary for this route" aria-label="New itinerary for this route" (click)="openNewItineraryForCurrentRoute()">New itinerary</button>
+          </div>
         } @else {
-          <button type="button" class="primary" title="New itinerary for this route" aria-label="New itinerary for this route" (click)="openNewItineraryForCurrentRoute()">New itinerary</button>
+          <button type="button" class="primary" title="New itinerary" aria-label="New itinerary" (click)="openNewItineraryDialog()">New itinerary</button>
         }
       </header>
 
@@ -122,7 +140,6 @@ declare const L: any;
                           <th>Last point</th>
                           <th>Estimated distance</th>
                           <th class="enabled-column">Enabled</th>
-                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -151,20 +168,6 @@ declare const L: any;
                                 (change)="setItineraryEnabled(itinerary, $any($event.target).checked)"
                               />
                             </td>
-                            <td>
-                              <div class="table-actions" (click)="$event.stopPropagation()">
-                                <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">📝</button>
-                                <a class="secondary icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">🗺️</a>
-                                <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">📍</a>
-                                <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
-                                  📄
-                                </button>
-                                @if (itinerary.route !== null) {
-                                  <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [disabled]="assigningIds.has(itinerary.id)" (click)="unassignItinerary(itinerary)">🚫</button>
-                                }
-                                <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteItinerary(itinerary)">🗑️</button>
-                              </div>
-                            </td>
                           </tr>
                         }
                       </tbody>
@@ -185,6 +188,36 @@ declare const L: any;
               <div class="preview-map" #previewMap></div>
               @if (previewMessage) {
                 <p class="muted preview-message">{{ previewMessage }}</p>
+              }
+              @if (previewItinerary) {
+                <div class="preview-actions" aria-label="Selected itinerary actions">
+                  <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewItinerary)">
+                    <span class="preview-action-icon" aria-hidden="true">📝</span>
+                    <span>Edit metadata and translations</span>
+                  </button>
+                  <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'edit']" [queryParams]="backQueryParams()">
+                    <span class="preview-action-icon" aria-hidden="true">🗺️</span>
+                    <span>Open in editor</span>
+                  </a>
+                  <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'pois']" [queryParams]="backQueryParams()">
+                    <span class="preview-action-icon" aria-hidden="true">📍</span>
+                    <span>View POIs</span>
+                  </a>
+                  <button type="button" class="secondary preview-action" [disabled]="duplicatingIds.has(previewItinerary.id)" (click)="duplicateItinerary(previewItinerary)">
+                    <span class="preview-action-icon" aria-hidden="true">📄</span>
+                    <span>{{ duplicatingIds.has(previewItinerary.id) ? 'Duplicating...' : 'Duplicate' }}</span>
+                  </button>
+                  @if (previewItinerary.route !== null) {
+                    <button type="button" class="secondary preview-action" [disabled]="assigningIds.has(previewItinerary.id)" (click)="unassignItinerary(previewItinerary)">
+                      <span class="preview-action-icon" aria-hidden="true">🚫</span>
+                      <span>{{ assigningIds.has(previewItinerary.id) ? 'Saving...' : 'Remove from route' }}</span>
+                    </button>
+                  }
+                  <button type="button" class="secondary preview-action danger-action" (click)="deleteItinerary(previewItinerary)">
+                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                    <span>Delete itinerary</span>
+                  </button>
+                </div>
               }
             </aside>
           </div>
@@ -207,7 +240,6 @@ declare const L: any;
                 <th>Last point</th>
                 <th>Estimated distance</th>
                 <th class="enabled-column">Enabled</th>
-                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -261,24 +293,10 @@ declare const L: any;
                       (change)="setItineraryEnabled(itinerary, $any($event.target).checked)"
                     />
                   </td>
-                  <td>
-                    <div class="table-actions" (click)="$event.stopPropagation()">
-                      <button type="button" class="secondary icon-action" title="Edit metadata and translations" aria-label="Edit metadata and translations" (click)="openTranslationDialog(itinerary)">📝</button>
-                      <a class="secondary icon-action" title="Open in editor" aria-label="Open in editor" [routerLink]="['/itineraries', itinerary.id, 'edit']">🗺️</a>
-                      <a class="secondary icon-action" title="View itinerary POIs" aria-label="View itinerary POIs" [routerLink]="['/itineraries', itinerary.id, 'pois']">📍</a>
-                      <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(itinerary.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(itinerary.id)" (click)="duplicateItinerary(itinerary)">
-                        📄
-                      </button>
-                      @if (routeSlug && itinerary.route !== null) {
-                        <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Remove from route'" [disabled]="assigningIds.has(itinerary.id)" (click)="unassignItinerary(itinerary)">🚫</button>
-                      }
-                      <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deleteItinerary(itinerary)">🗑️</button>
-                    </div>
-                  </td>
                 </tr>
               } @empty {
                 <tr>
-                  <td [attr.colspan]="routeSlug ? 8 : 7">No itineraries found.</td>
+                  <td [attr.colspan]="routeSlug ? 7 : 6">No itineraries found.</td>
                 </tr>
               }
             </tbody>
@@ -293,6 +311,14 @@ declare const L: any;
             <button type="button" class="icon-button" aria-label="Close new itinerary dialog" (click)="closeNewItineraryDialog()">✖</button>
           </header>
           <div class="form-stack">
+            <label>
+              <span>Language</span>
+              <select [(ngModel)]="newItinerary.language_code" name="newItineraryLanguage" required>
+                @for (language of languageOptions; track language.code) {
+                  <option [value]="language.code">{{ language.label }}</option>
+                }
+              </select>
+            </label>
             <label>
               <span>Title</span>
               <input type="text" [(ngModel)]="newItinerary.title" name="newItineraryTitle" placeholder="Itinerary title" />
@@ -347,33 +373,77 @@ declare const L: any;
             <h2>Edit itinerary translations</h2>
             <button type="button" class="icon-button" aria-label="Close translation dialog" (click)="closeTranslationDialog()">✖</button>
           </header>
-          <div class="translation-list">
-            @for (translation of translationDrafts; track $index) {
-              <div class="translation-row">
-                <label class="reference-radio">
-                  <span>Reference</span>
-                  <input
-                    type="radio"
-                    name="itineraryReferenceTranslation"
-                    [checked]="translation.is_reference"
-                    (change)="setReferenceTranslation($index)"
-                  />
-                </label>
-                <label>
-                  <span>Language</span>
-                  <input type="text" [(ngModel)]="translation.language_code" [name]="'itineraryLanguage' + $index" />
-                </label>
-                <label>
-                  <span>Title</span>
-                  <input type="text" [(ngModel)]="translation.title" [name]="'itineraryTitle' + $index" />
-                </label>
-                <label>
-                  <span>Description</span>
-                  <textarea rows="3" [(ngModel)]="translation.description" [name]="'itineraryDescription' + $index"></textarea>
-                </label>
-              </div>
+          <div class="translation-tabs-panel">
+            <div class="translation-tabs" role="tablist" aria-label="Itinerary translation languages">
+              @for (translation of translationDrafts; track $index) {
+                <button
+                  type="button"
+                  class="translation-tab"
+                  [class.active]="activeTranslationIndex === $index"
+                  (click)="selectTranslationTab($index)"
+                >
+                  @if (translation.is_reference) {
+                    <span class="reference-icon" title="Reference language" aria-label="Reference language">★</span>
+                  }
+                  <span>{{ translation.language_code || 'New language' }}</span>
+                </button>
+              }
+              <button type="button" class="secondary add-tab-button" (click)="addTranslationDraft()">+ Add language</button>
+            </div>
+
+            @if (activeTranslationDraft(); as translation) {
+              <section class="translation-tab-content">
+                <div class="translation-tab-header">
+                  <label>
+                    <span>Language</span>
+                    <input type="text" [(ngModel)]="translation.language_code" [name]="'itineraryLanguage' + activeTranslationIndex" />
+                  </label>
+                  @if (translation.is_reference) {
+                    <span class="reference-pill"><span aria-hidden="true">★</span> Reference language</span>
+                  } @else {
+                    <button type="button" class="secondary" (click)="setReferenceTranslation(activeTranslationIndex)">Make reference</button>
+                  }
+                </div>
+
+                @if (translation.is_reference) {
+                  <div class="translation-single-column">
+                    <label>
+                      <span>Title</span>
+                      <input type="text" [(ngModel)]="translation.title" [name]="'itineraryTitle' + activeTranslationIndex" />
+                    </label>
+                    <label>
+                      <span>Description</span>
+                      <textarea rows="5" [(ngModel)]="translation.description" [name]="'itineraryDescription' + activeTranslationIndex"></textarea>
+                    </label>
+                  </div>
+                } @else {
+                  <div class="translation-comparison">
+                    <section class="reference-column">
+                      <h3><span aria-hidden="true">★</span> Reference</h3>
+                      <label>
+                        <span>Title</span>
+                        <input type="text" [value]="referenceTranslationDraft()?.title || ''" readonly />
+                      </label>
+                      <label>
+                        <span>Description</span>
+                        <textarea rows="5" [value]="referenceTranslationDraft()?.description || ''" readonly></textarea>
+                      </label>
+                    </section>
+                    <section>
+                      <h3>{{ translation.language_code || 'Translation' }}</h3>
+                      <label>
+                        <span>Title</span>
+                        <input type="text" [(ngModel)]="translation.title" [name]="'itineraryTitle' + activeTranslationIndex" />
+                      </label>
+                      <label>
+                        <span>Description</span>
+                        <textarea rows="5" [(ngModel)]="translation.description" [name]="'itineraryDescription' + activeTranslationIndex"></textarea>
+                      </label>
+                    </section>
+                  </div>
+                }
+              </section>
             }
-            <button type="button" class="secondary" (click)="addTranslationDraft()">Add translation</button>
           </div>
           <footer class="metadata-dialog-footer">
             <button type="button" class="secondary" (click)="closeTranslationDialog()">Cancel</button>
@@ -401,16 +471,18 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   routeTitle: string | null = null;
   currentRouteId: number | null = null;
   viewMode: 'flat' | 'grouped' = 'flat';
+  readonly languageOptions = LANGUAGE_OPTIONS;
   statusMessage = '';
   statusIsError = false;
   availableRoutes: Route[] = [];
-  newItinerary: NewItineraryDraft = { title: '', description: '', enabled: true, routeId: null, stageNumber: null };
+  newItinerary: NewItineraryDraft = { language_code: 'en', title: '', description: '', enabled: true, routeId: null, stageNumber: null };
   duplicatedItinerary: Itinerary | null = null;
   highlightedItineraryId: number | null = null;
   pendingHighlightItineraryId: number | null = null;
   currentItineraries: Itinerary[] = [];
   editingItinerary: Itinerary | null = null;
   translationDrafts: TranslationDraft[] = [];
+  activeTranslationIndex = 0;
   readonly duplicatingIds = new Set<number>();
   readonly assigningIds = new Set<number>();
   readonly assignmentDrafts = new Map<number, AssignmentDraft>();
@@ -526,6 +598,11 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
   async createItinerary(): Promise<void> {
     const title = this.newItinerary.title.trim();
+    const languageCode = this.newItinerary.language_code.trim();
+    if (!languageCode) {
+      this.showStatus('Choose the language of the itinerary title and description.', true);
+      return;
+    }
     if (!title) {
       this.showStatus('Enter an itinerary title before creating it.', true);
       return;
@@ -540,13 +617,13 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
         stage_number: stageNumber,
         itinerary_json: { points: [], segments: [] },
         translations: [{
-          language_code: 'en',
+          language_code: languageCode,
           title,
           description: this.newItinerary.description.trim(),
           is_reference: true
         }]
       }));
-      this.newItinerary = { title: '', description: '', enabled: true, routeId: null, stageNumber: null };
+      this.newItinerary = { language_code: 'en', title: '', description: '', enabled: true, routeId: null, stageNumber: null };
       this.closeNewItineraryDialog();
       this.showStatus(`Created itinerary "${itinerary.title || title}".`, false);
       this.pendingHighlightItineraryId = itinerary.id;
@@ -618,6 +695,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   openTranslationDialog(itinerary: Itinerary): void {
     this.editingItinerary = itinerary;
     this.translationDrafts = this.translationDraftsFrom(itinerary.translations, itinerary.title, itinerary.description);
+    this.activeTranslationIndex = Math.max(0, this.translationDrafts.findIndex(translation => translation.is_reference));
     this.translationDialog?.nativeElement.showModal();
   }
 
@@ -625,22 +703,48 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     this.translationDialog?.nativeElement.close();
     this.editingItinerary = null;
     this.translationDrafts = [];
+    this.activeTranslationIndex = 0;
   }
 
   addTranslationDraft(): void {
+    const nextIndex = this.translationDrafts.length;
     this.translationDrafts.push({
       language_code: '',
       title: '',
       description: '',
       is_reference: this.translationDrafts.length === 0
     });
+    this.activeTranslationIndex = nextIndex;
   }
 
   setReferenceTranslation(index: number): void {
+    const currentReferenceIndex = this.translationDrafts.findIndex(translation => translation.is_reference);
+    if (currentReferenceIndex >= 0 && currentReferenceIndex !== index) {
+      const target = this.translationDrafts[index];
+      const current = this.translationDrafts[currentReferenceIndex];
+      const confirmed = window.confirm(
+        `Change the reference language from "${current.language_code || 'current language'}" to "${target?.language_code || 'selected language'}"?`
+      );
+      if (!confirmed) return;
+    }
+
     this.translationDrafts = this.translationDrafts.map((translation, currentIndex) => ({
       ...translation,
       is_reference: currentIndex === index
     }));
+  }
+
+  selectTranslationTab(index: number): void {
+    if (index < 0 || index >= this.translationDrafts.length) return;
+    this.activeTranslationIndex = index;
+  }
+
+  activeTranslationDraft(): TranslationDraft | null {
+    return this.translationDrafts[this.activeTranslationIndex] || this.translationDrafts[0] || null;
+  }
+
+  referenceTranslationDraft(): TranslationDraft | null {
+    return this.translationDrafts.find(translation => translation.is_reference) || this.translationDrafts[0] || null;
   }
 
   async saveTranslationDialog(): Promise<void> {
@@ -782,6 +886,19 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     this.draggedItineraryId = null;
   }
 
+  backQueryParams(): { returnTo: string; returnLabel: string } {
+    if (this.routeSlug) {
+      return {
+        returnTo: `/route/${this.routeSlug}${this.previewItinerary ? `?highlight=${this.previewItinerary.id}` : ''}`,
+        returnLabel: this.routeTitle ? `Back to ${this.routeTitle}` : 'Back to route itineraries'
+      };
+    }
+    return {
+      returnTo: this.previewItinerary ? `/itineraries?highlight=${this.previewItinerary.id}` : '/itineraries',
+      returnLabel: 'Back to itineraries'
+    };
+  }
+
   private initializePreviewMap(): void {
     if (this.previewMap || !this.previewMapElement?.nativeElement) return;
     if (typeof L === 'undefined') {
@@ -792,7 +909,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     this.previewMap = L.map(this.previewMapElement.nativeElement, {
       zoomControl: true,
       attributionControl: false
-    }).setView([42.5, -8.5], 5);
+    });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19
     }).addTo(this.previewMap);
@@ -801,7 +918,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       this.previewMap?.invalidateSize();
     });
     this.previewResizeObserver.observe(this.previewMapElement.nativeElement);
-    window.requestAnimationFrame(() => this.previewMap?.invalidateSize());
+    this.fitPreviewMapToWorld();
   }
 
   private renderPreviewItinerary(): void {
@@ -904,8 +1021,17 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       if (bounds.isValid()) {
         this.previewMap.fitBounds(bounds, { padding: [22, 22], maxZoom: 15, animate: false });
       } else {
-        this.previewMap.setView([42.5, -8.5], 5, { animate: false });
+        this.previewMap.fitWorld({ animate: false });
       }
+      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+    });
+  }
+
+  private fitPreviewMapToWorld(): void {
+    window.requestAnimationFrame(() => {
+      if (!this.previewMap) return;
+      this.previewMap.invalidateSize(false);
+      this.previewMap.fitWorld({ animate: false });
       window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
     });
   }
@@ -971,10 +1097,14 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   private scheduleHighlight(itineraryId: number | null, itineraries: Itinerary[]): void {
-    if (!itineraryId || !itineraries.some(itinerary => itinerary.id === itineraryId)) return;
+    const itinerary = itineraries.find(candidate => candidate.id === itineraryId);
+    if (!itineraryId || !itinerary) return;
 
     this.highlightedItineraryId = itineraryId;
     this.pendingHighlightItineraryId = null;
+    if (this.previewItinerary?.id !== itineraryId) {
+      this.selectPreviewItinerary(itinerary);
+    }
     window.setTimeout(() => {
       document.getElementById(`itinerary-row-${itineraryId}`)?.scrollIntoView({
         behavior: 'smooth',

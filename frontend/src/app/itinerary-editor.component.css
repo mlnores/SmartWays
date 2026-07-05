@@ -19,6 +19,24 @@
   background: #ffffff;
 }
 
+.editor-back-link {
+  position: absolute;
+  left: 376px;
+  top: 14px;
+  z-index: 1200;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid #cfd6e3;
+  border-radius: 8px;
+  color: #1f2937;
+  background: #ffffff;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.12);
+}
+
 /* Critical Leaflet layout fallback. Keeps tiles clipped and positioned even
    if the CDN stylesheet is slow or unavailable. */
 .leaflet-container {
@@ -186,6 +204,7 @@
 }
 
 .app {
+  position: relative;
   display: grid;
   grid-template-columns: var(--panel-width) 1fr;
   height: 100%;
@@ -1369,6 +1388,10 @@ button:disabled:hover {
 }
 
 @media (max-width: 800px) {
+  .editor-back-link {
+    left: 14px;
+  }
+
   .app {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(220px, 42dvh) 1fr;

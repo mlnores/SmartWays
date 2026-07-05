@@ -1,6 +1,6 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { EMPTY, Observable, expand, map, reduce } from 'rxjs';
+import { EMPTY, Observable, expand, map, reduce, shareReplay } from 'rxjs';
 
 const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
@@ -9,6 +9,11 @@ export interface ApiPage<T> {
   next: string | null;
   previous: string | null;
   results: T[];
+}
+
+export interface CountryBounds {
+  country: string;
+  bounds: [[number, number], [number, number]];
 }
 
 export interface Translation {
@@ -135,6 +140,8 @@ export interface PoiPayload {
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
+  private countryBoundsCache = new Map<string, Observable<CountryBounds>>();
+
   constructor(private readonly http: HttpClient) {}
 
   listItineraries(query = '', language = '', route?: number | 'null'): Observable<ApiPage<Itinerary>> {
@@ -257,6 +264,24 @@ export class ApiService {
     return this.http.get<{ results: string[] }>(`${API_BASE_URL}/pois/countries/`).pipe(
       map(response => response.results)
     );
+  }
+
+  getCountryBounds(countryCode: string, latLng?: number[]): Observable<CountryBounds> {
+    const country = countryCode.trim().toUpperCase();
+    const cacheKey = latLng ? `${country}:${latLng[0].toFixed(5)},${latLng[1].toFixed(5)}` : country;
+    const cached = this.countryBoundsCache.get(cacheKey);
+    if (cached) return cached;
+
+    let params = new HttpParams().set('country', country);
+    if (latLng) {
+      params = params.set('lat', String(latLng[0]));
+      params = params.set('lng', String(latLng[1]));
+    }
+    const request = this.http.get<CountryBounds>(`${API_BASE_URL}/pois/country-bounds/`, {
+      params
+    }).pipe(shareReplay(1));
+    this.countryBoundsCache.set(cacheKey, request);
+    return request;
   }
 
   listCategories(query = '', language = ''): Observable<ApiPage<Category>> {
