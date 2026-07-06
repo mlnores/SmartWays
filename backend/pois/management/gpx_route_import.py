@@ -308,7 +308,7 @@ class BaseGpxRouteImportCommand(BaseCommand):
                 GpxRoutePlan(
                     title=self.base_route_title,
                     slug=self.base_route_slug,
-                    description=f"Official Romea Strata GPX main route imported from {source_dir}.",
+                    description="",
                     files=main_files,
                 )
             )
@@ -322,12 +322,12 @@ class BaseGpxRouteImportCommand(BaseCommand):
                 files = self.importable_files(directory, include_variants)
                 if not files:
                     continue
-                title = f"{self.base_route_title}: {directory.name}"
+                title = directory.name
                 plans.append(
                     GpxRoutePlan(
                         title=title,
                         slug=slugify(title),
-                        description=f"Official Romea Strata GPX branch imported from {directory}.",
+                        description="",
                         files=files,
                     )
                 )
@@ -365,15 +365,7 @@ class BaseGpxRouteImportCommand(BaseCommand):
         return Itinerary.objects.filter(itinerary_json__source__fingerprint=fingerprint).first()
 
     def stage_description(self, stage, plan):
-        details = [
-            f"Imported from official Romea Strata GPX file: {stage.path.name}.",
-            f"Route: {plan.title}.",
-        ]
-        if stage.is_variant:
-            details.append("This itinerary was marked as a variant or detour by filename and imported disabled.")
-        if stage.track_count != 1:
-            details.append(f"The GPX file contains {stage.track_count} tracks.")
-        return " ".join(details)
+        return ""
 
     def write_dry_run(self, source_dir, prepared_routes):
         total_stages = sum(len(stages) for _, stages in prepared_routes)

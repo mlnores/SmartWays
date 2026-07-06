@@ -248,6 +248,45 @@ label span {
   min-width: 0;
 }
 
+.route-preview-layout {
+  grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
+  align-items: start;
+}
+
+.route-preview-layout .resource-table {
+  min-width: 0;
+}
+
+.route-preview-layout .description-preview {
+  max-width: none;
+}
+
+.route-preview-layout .preview-panel {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.route-preview-layout .preview-map {
+  aspect-ratio: 16 / 9;
+  min-height: 360px;
+  max-height: calc(100vh - 230px);
+}
+
+.route-preview-layout .preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.route-preview-layout .preview-action {
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  flex: 0 1 auto;
+}
+
 .preview-panel {
   position: sticky;
   top: 16px;

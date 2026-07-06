@@ -737,11 +737,16 @@ class ManagementCommandTests(APITestCase):
             call_command("rurallure_import_romea_strata_official", "--source-dir", str(source_dir))
 
         main_route = RouteTranslation.objects.get(slug="romea-strata-official").route
-        branch_route = RouteTranslation.objects.get(slug="romea-strata-official-romea-del-santo").route
+        branch_translation = RouteTranslation.objects.get(slug="romea-del-santo")
+        branch_route = branch_translation.route
+        self.assertEqual(branch_translation.title, "Romea del Santo")
+        self.assertEqual(main_route.translations.get().description, "")
+        self.assertEqual(branch_translation.description, "")
         self.assertEqual(main_route.itineraries.count(), 2)
         self.assertEqual(branch_route.itineraries.count(), 1)
         itinerary = main_route.stages.select_related("itinerary").order_by("stage_number").first().itinerary
         self.assertEqual(itinerary.translations.get().title, "RSEE01 - Tallinn > Saku")
+        self.assertEqual(itinerary.translations.get().description, "")
         self.assertEqual(
             itinerary.itinerary_json["segments"][0]["selectedWalkingRoute"]["geometry"]["type"],
             "LineString",
@@ -764,7 +769,7 @@ class ManagementCommandTests(APITestCase):
 
             call_command("rurallure_import_romea_strata_official", "--source-dir", str(source_dir), "--include-variants")
 
-        branch_route = RouteTranslation.objects.get(slug="romea-strata-official-romea-del-santo").route
+        branch_route = RouteTranslation.objects.get(slug="romea-del-santo").route
         stages = list(branch_route.stages.select_related("itinerary").order_by("stage_number"))
         itineraries = [stage.itinerary for stage in stages]
         self.assertEqual(len(itineraries), 2)
@@ -789,7 +794,7 @@ class ManagementCommandTests(APITestCase):
             call_command("rurallure_import_romea_strata_official", "--source-dir", str(source_dir))
 
         main_route = RouteTranslation.objects.get(slug="romea-strata-official").route
-        branch_route = RouteTranslation.objects.get(slug="romea-strata-official-romea-del-santo").route
+        branch_route = RouteTranslation.objects.get(slug="romea-del-santo").route
         main_stage = main_route.stages.get(stage_number=1)
         branch_stage = branch_route.stages.get(stage_number=1)
         self.assertEqual(main_stage.itinerary_id, branch_stage.itinerary_id)

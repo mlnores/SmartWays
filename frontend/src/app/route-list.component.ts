@@ -1,4 +1,4 @@
-import { AsyncPipe, DatePipe } from '@angular/common';
+import { AsyncPipe } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -65,7 +65,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
 @Component({
   selector: 'app-route-list',
   standalone: true,
-  imports: [AsyncPipe, DatePipe, FormsModule, RouterLink],
+  imports: [AsyncPipe, FormsModule, RouterLink],
   template: `
     <section class="page">
       <header class="page-header">
@@ -93,7 +93,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
         @if (state.error) {
           <p class="status error">{{ state.error }}</p>
         } @else {
-          <div class="preview-layout">
+          <div class="preview-layout route-preview-layout">
             <div class="preview-list">
               <div class="table-wrap">
                 <table class="resource-table">
@@ -110,7 +110,6 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                         />
                       </th>
                       <th>Title</th>
-                      <th>Last updated</th>
                       <th>Segments</th>
                       <th class="enabled-column">Enabled</th>
                     </tr>
@@ -120,8 +119,8 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                       <tr
                         [attr.id]="routeRowId(route)"
                         [class.highlight-row]="highlightedRouteId === route.id"
-                        [class.preview-selected-row]="previewRoute?.id === route.id || selectedRouteIds.has(route.id)"
-                        (click)="selectPreviewRoute(route)"
+                        [class.preview-selected-row]="selectedRouteIds.has(route.id)"
+                        (click)="setRouteSelected(route, !selectedRouteIds.has(route.id))"
                       >
                         <td class="selection-column" (click)="$event.stopPropagation()">
                           <input
@@ -136,7 +135,6 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                           <strong>{{ route.title || 'Untitled route' }}</strong>
                           <p class="description-preview">{{ route.description || 'No description' }}</p>
                         </td>
-                        <td>{{ route.updated_at | date:'medium' }}</td>
                         <td>{{ route.itinerary_count }}</td>
                         <td class="enabled-column" (click)="$event.stopPropagation()">
                           <input
@@ -151,7 +149,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                       </tr>
                     } @empty {
                       <tr>
-                        <td colspan="5">No routes found.</td>
+                        <td colspan="4">No routes found.</td>
                       </tr>
                     }
                   </tbody>
@@ -161,21 +159,24 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
             <aside class="preview-panel" aria-label="Route map preview">
               <header>
                 <h2>Map preview</h2>
-                <p>{{ selectedRouteIds.size > 1 ? selectedRouteIds.size + ' selected routes' : previewRoute ? previewRoute.title || 'Untitled route' : 'Click a route to preview it.' }}</p>
+                <p>{{ previewLabel() }}</p>
               </header>
               <div class="preview-map" #previewMap></div>
               @if (previewMessage) {
                 <p class="muted preview-message">{{ previewMessage }}</p>
               }
-              @if (selectedRouteIds.size > 1) {
-                <div class="preview-actions" aria-label="Selected route actions">
+              <div class="preview-actions" aria-label="Route preview actions">
+                <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentRoutes()">
+                  <span class="preview-action-icon" aria-hidden="true">🎯</span>
+                  <span>Fit map</span>
+                </button>
+
+                @if (selectedRouteIds.size > 1) {
                   <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedRoutes()">
                     <span class="preview-action-icon" aria-hidden="true">🗑️</span>
                     <span>Delete selected routes</span>
                   </button>
-                </div>
-              } @else if (previewRoute) {
-                <div class="preview-actions" aria-label="Selected route actions">
+                } @else if (previewRoute) {
                   <a class="secondary preview-action" [routerLink]="['/route', previewRoute.slug || previewRoute.id]">
                     <span class="preview-action-icon" aria-hidden="true">📋</span>
                     <span>View itineraries</span>
@@ -188,8 +189,8 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                     <span class="preview-action-icon" aria-hidden="true">🗑️</span>
                     <span>Delete route</span>
                   </button>
-                </div>
-              }
+                }
+              </div>
             </aside>
           </div>
         }
@@ -356,7 +357,11 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       map(routePage => {
         this.currentRoutes = routePage.results;
         this.pruneSelectedRoutes(routePage.results);
-        this.renderSelectedRoutePreviewIfNeeded(!this.selectedPreviewFitLocked);
+        if (this.selectedRouteIds.size > 0) {
+          this.renderSelectedRoutePreviewIfNeeded(!this.selectedPreviewFitLocked);
+        } else {
+          void this.renderVisibleRoutesPreview(routePage.results);
+        }
         this.scheduleHighlight(highlightedRouteId, routePage.results);
         return {
           routes: routePage.results,
@@ -408,10 +413,10 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   setRouteSelected(route: Route, selected: boolean): void {
     if (selected) {
       this.selectedRouteIds.add(route.id);
-      this.previewRoute = route;
     } else {
       this.selectedRouteIds.delete(route.id);
     }
+    this.previewRoute = this.selectedRouteIds.size === 1 ? this.selectedRoutes()[0] || null : null;
     if (this.selectedRouteIds.size > 0) {
       const shouldFit = !this.selectedPreviewFitLocked;
       if (this.selectedRouteIds.size >= 2) {
@@ -420,7 +425,8 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       void this.renderSelectedRoutePreviewIfNeeded(shouldFit);
     } else {
       this.selectedPreviewFitLocked = false;
-      void this.selectPreviewRoute(route);
+      this.previewRoute = null;
+      void this.renderVisibleRoutesPreview(this.currentRoutes);
     }
   }
 
@@ -434,21 +440,20 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     });
 
     if (selected && routes.length > 0) {
-      this.previewRoute = routes[routes.length - 1];
+      this.previewRoute = this.selectedRouteIds.size === 1 ? this.selectedRoutes()[0] || null : null;
     }
 
     if (this.selectedRouteIds.size > 0) {
-      const shouldFit = !this.selectedPreviewFitLocked;
+      this.previewRoute = this.selectedRouteIds.size === 1 ? this.selectedRoutes()[0] || null : null;
       if (this.selectedRouteIds.size >= 2) {
         this.selectedPreviewFitLocked = true;
       }
-      void this.renderSelectedRoutePreviewIfNeeded(shouldFit);
+      void this.renderSelectedRoutePreviewIfNeeded(true);
     } else {
       this.selectedPreviewFitLocked = false;
       this.previewRoute = null;
       this.previewLayer?.clearLayers();
-      this.previewMessage = 'Click a route to preview it.';
-      this.fitPreviewMapToWorld();
+      void this.renderVisibleRoutesPreview(this.currentRoutes);
     }
   }
 
@@ -458,6 +463,21 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   areSomeRoutesSelected(routes: Route[]): boolean {
     return routes.some(route => this.selectedRouteIds.has(route.id)) && !this.areAllRoutesSelected(routes);
+  }
+
+  previewLabel(): string {
+    const selected = this.selectedRoutes();
+    if (selected.length > 1) return `${selected.length} selected routes`;
+    if (selected.length === 1) return selected[0].title || 'Untitled route';
+    return 'All routes';
+  }
+
+  fitPreviewToCurrentRoutes(): void {
+    if (this.selectedRouteIds.size > 0) {
+      void this.renderSelectedRoutePreviewIfNeeded(true);
+    } else {
+      void this.renderVisibleRoutesPreview(this.currentRoutes);
+    }
   }
 
   routeRowId(route: Route): string {
@@ -689,7 +709,11 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
         selected.map(route => firstValueFrom(this.api.listAllItineraries('', '', route.id)))
       );
       if (requestId !== this.previewRequestId) return;
-      this.renderPreviewRoutes(routeItineraries.map(itineraries => this.sortedItineraries(itineraries)), shouldFit);
+      this.renderPreviewRoutes(
+        routeItineraries.map(itineraries => this.sortedItineraries(itineraries)),
+        shouldFit,
+        'selected routes'
+      );
     } catch (error) {
       if (requestId !== this.previewRequestId) return;
       this.previewMessage = `Could not load selected route previews. ${error instanceof Error ? error.message : 'Request failed.'}`;
@@ -697,7 +721,39 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private renderPreviewRoutes(routeItineraries: Itinerary[][], shouldFit = true): void {
+  private async renderVisibleRoutesPreview(routes: Route[]): Promise<void> {
+    this.previewRoute = null;
+    if (routes.length === 0) {
+      this.previewLayer?.clearLayers();
+      this.previewMessage = 'No routes found.';
+      this.fitPreviewMapToWorld();
+      return;
+    }
+
+    const requestId = ++this.previewRequestId;
+    this.previewMessage = 'Loading route previews...';
+    try {
+      const routeItineraries = await Promise.all(
+        routes.map(route => firstValueFrom(this.api.listAllItineraries('', '', route.id)))
+      );
+      if (requestId !== this.previewRequestId || this.selectedRouteIds.size > 0 || this.previewRoute) return;
+      this.renderPreviewRoutes(
+        routeItineraries.map(itineraries => this.sortedItineraries(itineraries)),
+        true,
+        'routes'
+      );
+    } catch (error) {
+      if (requestId !== this.previewRequestId) return;
+      this.previewMessage = `Could not load route previews. ${error instanceof Error ? error.message : 'Request failed.'}`;
+      this.previewLayer?.clearLayers();
+    }
+  }
+
+  private renderPreviewRoutes(
+    routeItineraries: Itinerary[][],
+    shouldFit = true,
+    scopeLabel = 'selected routes'
+  ): void {
     this.initializePreviewMap();
     if (!this.previewMap || !this.previewLayer) return;
 
@@ -722,9 +778,9 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     }
 
     if (routeItineraries.every(itineraries => itineraries.length === 0)) {
-      this.previewMessage = 'The selected routes have no itineraries yet.';
+      this.previewMessage = `The ${scopeLabel} have no itineraries yet.`;
     } else if (!bounds.isValid() && routeGeometryCount === 0) {
-      this.previewMessage = 'The selected routes do not store coordinates yet.';
+      this.previewMessage = `The ${scopeLabel} do not store coordinates yet.`;
     } else if (!hasPointCoordinates) {
       this.previewMessage = 'Previewing saved route geometry. Point coordinates are not stored.';
     } else if (straightSegmentCount > 0 && routeGeometryCount > 0) {
@@ -736,7 +792,10 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private drawRoutePreview(itineraries: Itinerary[], color: string): { bounds: any; routeGeometryCount: number; straightSegmentCount: number; hasPointCoordinates: boolean } {
+  private drawRoutePreview(
+    itineraries: Itinerary[],
+    color: string
+  ): { bounds: any; routeGeometryCount: number; straightSegmentCount: number; hasPointCoordinates: boolean } {
     const bounds = L.latLngBounds([]);
     let routeGeometryCount = 0;
     let straightSegmentCount = 0;
@@ -795,6 +854,9 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     });
     if (this.selectedRouteIds.size === 0) {
       this.selectedPreviewFitLocked = false;
+      this.previewRoute = null;
+    } else {
+      this.previewRoute = this.selectedRouteIds.size === 1 ? this.selectedRoutes()[0] || null : null;
     }
   }
 
