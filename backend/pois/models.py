@@ -168,6 +168,12 @@ class POIImage(models.Model):
 
 class Route(models.Model):
     enabled = models.BooleanField(default=True)
+    itineraries = models.ManyToManyField(
+        "Itinerary",
+        through="RouteStage",
+        related_name="routes",
+        blank=True,
+    )
     created_at = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -232,14 +238,6 @@ class RouteTranslation(models.Model):
 
 class Itinerary(models.Model):
     enabled = models.BooleanField(default=True)
-    route = models.ForeignKey(
-        Route,
-        related_name="itineraries",
-        on_delete=models.SET_NULL,
-        blank=True,
-        null=True,
-    )
-    stage_number = models.PositiveIntegerField(blank=True, null=True)
     itinerary_json = models.JSONField()
     created_at = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(auto_now=True)
@@ -250,14 +248,6 @@ class Itinerary(models.Model):
         indexes = [
             models.Index(fields=["enabled"]),
             models.Index(fields=["created_at"]),
-            models.Index(fields=["route", "stage_number"]),
-        ]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["route", "stage_number"],
-                condition=models.Q(route__isnull=False, stage_number__isnull=False),
-                name="unique_itinerary_stage_per_route",
-            ),
         ]
 
     def __str__(self):
@@ -265,6 +255,42 @@ class Itinerary(models.Model):
             "language_code"
         ).first()
         return translation.title if translation else f"Itinerary {self.pk}"
+
+
+class RouteStage(models.Model):
+    route = models.ForeignKey(
+        Route,
+        related_name="stages",
+        on_delete=models.CASCADE,
+    )
+    itinerary = models.ForeignKey(
+        Itinerary,
+        related_name="route_stages",
+        on_delete=models.CASCADE,
+    )
+    stage_number = models.PositiveIntegerField()
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["route", "stage_number", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["route", "stage_number"],
+                name="unique_stage_number_per_route",
+            ),
+            models.UniqueConstraint(
+                fields=["route", "itinerary"],
+                name="unique_itinerary_per_route",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["route", "stage_number"]),
+            models.Index(fields=["itinerary"]),
+        ]
+
+    def __str__(self):
+        return f"{self.route} stage {self.stage_number}: {self.itinerary}"
 
 
 class ItineraryTranslation(models.Model):

@@ -11,7 +11,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .management.commands.import_rurallure_dump import Command, CountryBoundaryLookup
-from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation, Route, RouteTranslation
+from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation, Route, RouteStage, RouteTranslation
 
 
 class POIAPITests(APITestCase):
@@ -499,17 +499,11 @@ class POIAPITests(APITestCase):
             description="A multi-stage route.",
             slug="camino-route",
         )
-        first = Itinerary.objects.create(
-            route=route,
-            stage_number=1,
-            itinerary_json={"points": [], "segments": []},
-        )
+        first = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        RouteStage.objects.create(route=route, itinerary=first, stage_number=1)
         first.translations.create(language_code="en", title="First", slug="first")
-        second = Itinerary.objects.create(
-            route=route,
-            stage_number=2,
-            itinerary_json={"points": [], "segments": []},
-        )
+        second = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        RouteStage.objects.create(route=route, itinerary=second, stage_number=2)
         second.translations.create(language_code="en", title="Second", slug="second")
 
         response = self.client.post(
@@ -524,10 +518,8 @@ class POIAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        first.refresh_from_db()
-        second.refresh_from_db()
-        self.assertEqual(first.stage_number, 2)
-        self.assertEqual(second.stage_number, 1)
+        self.assertEqual(RouteStage.objects.get(route=route, itinerary=first).stage_number, 2)
+        self.assertEqual(RouteStage.objects.get(route=route, itinerary=second).stage_number, 1)
 
     def test_route_remove_itinerary_compacts_stages(self):
         route = Route.objects.create(enabled=True)
@@ -537,11 +529,14 @@ class POIAPITests(APITestCase):
             description="A multi-stage route.",
             slug="camino-route",
         )
-        first = Itinerary.objects.create(route=route, stage_number=1, itinerary_json={"points": [], "segments": []})
+        first = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        RouteStage.objects.create(route=route, itinerary=first, stage_number=1)
         first.translations.create(language_code="en", title="First", slug="first")
-        second = Itinerary.objects.create(route=route, stage_number=2, itinerary_json={"points": [], "segments": []})
+        second = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        RouteStage.objects.create(route=route, itinerary=second, stage_number=2)
         second.translations.create(language_code="en", title="Second", slug="second")
-        third = Itinerary.objects.create(route=route, stage_number=3, itinerary_json={"points": [], "segments": []})
+        third = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        RouteStage.objects.create(route=route, itinerary=third, stage_number=3)
         third.translations.create(language_code="en", title="Third", slug="third")
 
         response = self.client.post(
@@ -551,13 +546,9 @@ class POIAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        first.refresh_from_db()
-        second.refresh_from_db()
-        third.refresh_from_db()
-        self.assertEqual(first.stage_number, 1)
-        self.assertIsNone(second.route)
-        self.assertIsNone(second.stage_number)
-        self.assertEqual(third.stage_number, 2)
+        self.assertEqual(RouteStage.objects.get(route=route, itinerary=first).stage_number, 1)
+        self.assertFalse(RouteStage.objects.filter(route=route, itinerary=second).exists())
+        self.assertEqual(RouteStage.objects.get(route=route, itinerary=third).stage_number, 2)
 
     def test_itinerary_list_returns_localized_content_and_searches(self):
         itinerary = Itinerary.objects.create(
@@ -623,7 +614,8 @@ class ManagementCommandTests(APITestCase):
         POITranslation.objects.create(poi=poi, language_code="en", title="POI", slug="poi", is_reference=True)
         route = Route.objects.create(enabled=True)
         RouteTranslation.objects.create(route=route, language_code="en", title="Route", slug="route", is_reference=True)
-        itinerary = Itinerary.objects.create(route=route, stage_number=1, itinerary_json={"points": [], "segments": []})
+        itinerary = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        RouteStage.objects.create(route=route, itinerary=itinerary, stage_number=1)
         itinerary.translations.create(language_code="en", title="Itinerary", slug="itinerary", is_reference=True)
 
         call_command("clear_content_data", "--yes")
@@ -660,9 +652,10 @@ class ManagementCommandTests(APITestCase):
             call_command("rurallure_import_romea_strata", "--source-dir", str(source_dir), "--route-title", "Romea Strata Test", "--route-slug", "romea-strata-test")
 
         route = RouteTranslation.objects.get(slug="romea-strata-test").route
-        itineraries = list(route.itineraries.order_by("stage_number"))
+        stages = list(route.stages.select_related("itinerary").order_by("stage_number"))
+        itineraries = [stage.itinerary for stage in stages]
         self.assertEqual(len(itineraries), 1)
-        self.assertEqual(itineraries[0].stage_number, 1)
+        self.assertEqual(stages[0].stage_number, 1)
         self.assertEqual(itineraries[0].translations.get().title, "Romea Strata Test")
         self.assertEqual(
             itineraries[0].itinerary_json["segments"][0]["selectedWalkingRoute"]["geometry"]["type"],
@@ -708,8 +701,9 @@ class ManagementCommandTests(APITestCase):
             )
 
         route = RouteTranslation.objects.get(slug="via-romea-del-santo-test").route
-        itinerary = route.itineraries.get()
-        self.assertEqual(itinerary.stage_number, 1)
+        stage = route.stages.select_related("itinerary").get()
+        itinerary = stage.itinerary
+        self.assertEqual(stage.stage_number, 1)
         self.assertEqual(itinerary.translations.get().title, "Via Romea del Santo Test")
         self.assertEqual(
             len(itinerary.itinerary_json["segments"][0]["selectedWalkingRoute"]["geometry"]["coordinates"]),
@@ -746,7 +740,7 @@ class ManagementCommandTests(APITestCase):
         branch_route = RouteTranslation.objects.get(slug="romea-strata-official-romea-del-santo").route
         self.assertEqual(main_route.itineraries.count(), 2)
         self.assertEqual(branch_route.itineraries.count(), 1)
-        itinerary = main_route.itineraries.order_by("stage_number").first()
+        itinerary = main_route.stages.select_related("itinerary").order_by("stage_number").first().itinerary
         self.assertEqual(itinerary.translations.get().title, "RSEE01 - Tallinn > Saku")
         self.assertEqual(
             itinerary.itinerary_json["segments"][0]["selectedWalkingRoute"]["geometry"]["type"],
@@ -771,7 +765,54 @@ class ManagementCommandTests(APITestCase):
             call_command("rurallure_import_romea_strata_official", "--source-dir", str(source_dir), "--include-variants")
 
         branch_route = RouteTranslation.objects.get(slug="romea-strata-official-romea-del-santo").route
-        itineraries = list(branch_route.itineraries.order_by("stage_number"))
+        stages = list(branch_route.stages.select_related("itinerary").order_by("stage_number"))
+        itineraries = [stage.itinerary for stage in stages]
         self.assertEqual(len(itineraries), 2)
         self.assertTrue(itineraries[0].enabled)
         self.assertFalse(itineraries[1].enabled)
+
+    def test_rurallure_import_romea_strata_official_reuses_overlapping_stages(self):
+        with TemporaryDirectory() as temporary_directory:
+            source_dir = Path(temporary_directory)
+            shared_coordinates = [[13.5, 46.5], [13.3, 46.4]]
+            self.write_gpx(
+                source_dir / "7.Italia" / "A piedi_on foot" / "Cammino principale - Main path (Tarvisio-Roma)" / "rsit01.gpx",
+                "RSIT01 - Tarvisio > Pontebba",
+                shared_coordinates,
+            )
+            self.write_gpx(
+                source_dir / "7.Italia" / "A piedi_on foot" / "Romee" / "Romea del Santo" / "rsit01.gpx",
+                "Romea del Santo shared stage",
+                shared_coordinates,
+            )
+
+            call_command("rurallure_import_romea_strata_official", "--source-dir", str(source_dir))
+
+        main_route = RouteTranslation.objects.get(slug="romea-strata-official").route
+        branch_route = RouteTranslation.objects.get(slug="romea-strata-official-romea-del-santo").route
+        main_stage = main_route.stages.get(stage_number=1)
+        branch_stage = branch_route.stages.get(stage_number=1)
+        self.assertEqual(main_stage.itinerary_id, branch_stage.itinerary_id)
+        self.assertEqual(Itinerary.objects.count(), 1)
+
+    def test_rurallure_import_romea_strata_official_skips_duplicate_stage_inside_same_route(self):
+        with TemporaryDirectory() as temporary_directory:
+            source_dir = Path(temporary_directory)
+            shared_coordinates = [[13.5, 46.5], [13.3, 46.4]]
+            self.write_gpx(
+                source_dir / "7.Italia" / "A piedi_on foot" / "Cammino principale - Main path (Tarvisio-Roma)" / "rsit01.gpx",
+                "RSIT01 - Tarvisio > Pontebba",
+                shared_coordinates,
+            )
+            self.write_gpx(
+                source_dir / "7.Italia" / "A piedi_on foot" / "Cammino principale - Main path (Tarvisio-Roma)" / "rsit01_duplicate.gpx",
+                "RSIT01 duplicate",
+                shared_coordinates,
+            )
+
+            call_command("rurallure_import_romea_strata_official", "--source-dir", str(source_dir))
+
+        main_route = RouteTranslation.objects.get(slug="romea-strata-official").route
+        self.assertEqual(main_route.stages.count(), 1)
+        self.assertEqual(main_route.stages.get().stage_number, 1)
+        self.assertEqual(Itinerary.objects.count(), 1)

@@ -324,6 +324,12 @@ label span {
   vertical-align: top;
 }
 
+.resource-table .selection-column {
+  width: 42px;
+  text-align: center;
+  vertical-align: middle;
+}
+
 .resource-table th {
   color: #344054;
   background: #f8fafc;

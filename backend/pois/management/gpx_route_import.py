@@ -1,5 +1,7 @@
 import math
 import re
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -8,7 +10,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils.text import slugify
 
-from pois.models import Itinerary, ItineraryTranslation, Route, RouteTranslation
+from pois.models import Itinerary, ItineraryTranslation, Route, RouteStage, RouteTranslation
 
 
 GPX_NS = {"g": "http://www.topografix.com/GPX/1/1"}
@@ -49,6 +51,12 @@ def haversine_meters(left, right):
 
 def line_distance_meters(coordinates):
     return sum(haversine_meters(left, right) for left, right in zip(coordinates, coordinates[1:]))
+
+
+def stage_fingerprint(stage):
+    rounded_coordinates = [[round(float(lon), 7), round(float(lat), 7)] for lon, lat in stage.coordinates]
+    payload = json.dumps(rounded_coordinates, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def natural_sort_key(path):
@@ -217,6 +225,10 @@ class BaseGpxRouteImportCommand(BaseCommand):
 
         with transaction.atomic():
             imported_count = 0
+            created_itinerary_count = 0
+            reused_itinerary_count = 0
+            skipped_duplicate_stage_count = 0
+            itinerary_by_fingerprint = {}
             for plan, stages in prepared_routes:
                 route = self.get_or_create_route(plan, language)
                 existing_count = route.itineraries.count()
@@ -226,26 +238,53 @@ class BaseGpxRouteImportCommand(BaseCommand):
                         "Use --replace to delete them before importing."
                     )
                 if existing_count:
-                    route.itineraries.all().delete()
+                    route.stages.all().delete()
 
-                for stage_number, stage in enumerate(stages, start=1):
-                    itinerary = Itinerary.objects.create(
-                        enabled=not stage.is_variant,
+                route_itinerary_ids = set()
+                next_stage_number = 1
+                for stage in stages:
+                    fingerprint = stage_fingerprint(stage)
+                    itinerary = itinerary_by_fingerprint.get(fingerprint)
+                    if itinerary is None:
+                        itinerary = self.find_existing_itinerary(fingerprint)
+                    if itinerary is None:
+                        itinerary = Itinerary.objects.create(
+                            enabled=not stage.is_variant,
+                            itinerary_json=itinerary_json_for_stage(stage, plan.title, source_dir),
+                        )
+                        itinerary.itinerary_json.setdefault("source", {})["fingerprint"] = fingerprint
+                        itinerary.save(update_fields=["itinerary_json", "updated_at"])
+                        ItineraryTranslation.objects.create(
+                            itinerary=itinerary,
+                            language_code=language,
+                            title=stage.title,
+                            description=self.stage_description(stage, plan),
+                            slug=slugify(stage.title)[:255],
+                            is_reference=True,
+                        )
+                        created_itinerary_count += 1
+                    else:
+                        reused_itinerary_count += 1
+                    itinerary_by_fingerprint[fingerprint] = itinerary
+                    if itinerary.id in route_itinerary_ids:
+                        skipped_duplicate_stage_count += 1
+                        continue
+                    route_itinerary_ids.add(itinerary.id)
+                    RouteStage.objects.create(
                         route=route,
-                        stage_number=stage_number,
-                        itinerary_json=itinerary_json_for_stage(stage, plan.title, source_dir),
-                    )
-                    ItineraryTranslation.objects.create(
                         itinerary=itinerary,
-                        language_code=language,
-                        title=stage.title,
-                        description=self.stage_description(stage, plan),
-                        slug=slugify(stage.title)[:255],
-                        is_reference=True,
+                        stage_number=next_stage_number,
                     )
+                    next_stage_number += 1
                     imported_count += 1
 
-        self.stdout.write(self.style.SUCCESS(f"Imported {imported_count} itineraries into {len(prepared_routes)} routes."))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Imported {imported_count} route stages into {len(prepared_routes)} routes "
+                f"({created_itinerary_count} new itineraries, {reused_itinerary_count} reused, "
+                f"{skipped_duplicate_stage_count} duplicate stages skipped)."
+            )
+        )
 
     def build_route_plans(self, source_dir, include_variants=False):
         country_dirs = [source_dir / name / "A piedi_on foot" for name in [
@@ -321,6 +360,9 @@ class BaseGpxRouteImportCommand(BaseCommand):
             is_reference=True,
         )
         return route
+
+    def find_existing_itinerary(self, fingerprint):
+        return Itinerary.objects.filter(itinerary_json__source__fingerprint=fingerprint).first()
 
     def stage_description(self, stage, plan):
         details = [

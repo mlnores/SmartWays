@@ -9,6 +9,7 @@ from .models import (
     POIImage,
     POITranslation,
     Route,
+    RouteStage,
     RouteTranslation,
 )
 
@@ -78,12 +79,18 @@ class RouteTranslationInline(admin.TabularInline):
     extra = 1
 
 
+class RouteStageInline(admin.TabularInline):
+    model = RouteStage
+    fields = ["stage_number", "itinerary"]
+    extra = 0
+
+
 @admin.register(Route)
 class RouteAdmin(admin.ModelAdmin):
     list_display = ["id", "title", "slug", "enabled", "updated_at", "created_at"]
     list_filter = ["enabled"]
     search_fields = ["translations__title", "translations__description", "translations__slug"]
-    inlines = [RouteTranslationInline]
+    inlines = [RouteTranslationInline, RouteStageInline]
 
     @admin.display(description="title")
     def title(self, obj):
@@ -102,8 +109,8 @@ class RouteAdmin(admin.ModelAdmin):
 
 @admin.register(Itinerary)
 class ItineraryAdmin(admin.ModelAdmin):
-    list_display = ["id", "slug", "route", "stage_number", "enabled", "updated_at", "created_at"]
-    list_filter = ["enabled", "route"]
+    list_display = ["id", "slug", "route_memberships", "enabled", "updated_at", "created_at"]
+    list_filter = ["enabled", "routes"]
     search_fields = ["translations__title", "translations__description", "translations__slug"]
     inlines = [ItineraryTranslationInline]
 
@@ -113,6 +120,20 @@ class ItineraryAdmin(admin.ModelAdmin):
             "language_code"
         ).first()
         return translation.slug if translation else ""
+
+    @admin.display(description="routes")
+    def route_memberships(self, obj):
+        return ", ".join(
+            f"{stage.route} #{stage.stage_number}"
+            for stage in obj.route_stages.select_related("route").order_by("route__id", "stage_number")
+        )
+
+
+@admin.register(RouteStage)
+class RouteStageAdmin(admin.ModelAdmin):
+    list_display = ["id", "route", "itinerary", "stage_number", "updated_at", "created_at"]
+    list_filter = ["route"]
+    search_fields = ["route__translations__title", "itinerary__translations__title"]
 
 
 @admin.register(ItineraryTranslation)

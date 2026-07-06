@@ -14,7 +14,7 @@ from rest_framework.parsers import JSONParser
 from rest_framework.response import Response
 
 from .country_codes import alpha3_to_alpha2
-from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIImage, POITranslation, Route, RouteTranslation
+from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIImage, POITranslation, Route, RouteStage, RouteTranslation
 from .serializers import (
     CategorySerializer,
     CategoryTranslationSerializer,
@@ -349,8 +349,20 @@ class POITranslationViewSet(viewsets.ModelViewSet):
 class ItineraryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
     serializer_class = ItinerarySerializer
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        route = self.request.query_params.get("route")
+        if route and route.isdigit():
+            context["route_id"] = int(route)
+        return context
+
     def get_queryset(self):
-        queryset = Itinerary.objects.select_related("route").prefetch_related("translations", "route__translations").distinct()
+        queryset = Itinerary.objects.prefetch_related(
+            "translations",
+            "route_stages",
+            "route_stages__route",
+            "route_stages__route__translations",
+        ).distinct()
 
         enabled = self.request.query_params.get("enabled")
         if enabled is not None:
@@ -365,9 +377,9 @@ class ItineraryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
         route = self.request.query_params.get("route")
         if route:
             if route.lower() in {"none", "null", "unassigned"}:
-                queryset = queryset.filter(route__isnull=True)
+                queryset = queryset.filter(route_stages__isnull=True)
             elif route.isdigit():
-                queryset = queryset.filter(route_id=int(route))
+                queryset = queryset.filter(route_stages__route_id=int(route)).order_by("route_stages__stage_number", "id")
             else:
                 raise ValidationError({"route": "Use a route id or null."})
 
@@ -386,7 +398,12 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
     serializer_class = RouteSerializer
 
     def get_queryset(self):
-        queryset = Route.objects.prefetch_related("translations", "itineraries", "itineraries__translations").distinct()
+        queryset = Route.objects.prefetch_related(
+            "translations",
+            "stages",
+            "stages__itinerary",
+            "stages__itinerary__translations",
+        ).distinct()
 
         enabled = self.request.query_params.get("enabled")
         if enabled is not None:
@@ -435,32 +452,34 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             seen_stages.add(stage_number)
             assignments.append((itinerary_id, stage_number))
 
-        route_itineraries = {
-            itinerary.id: itinerary
-            for itinerary in route.itineraries.filter(id__in=seen_ids)
-        }
-        missing_ids = seen_ids - set(route_itineraries)
-        if missing_ids:
-            raise ValidationError({"itineraries": "All itineraries must belong to this route."})
-
         with transaction.atomic():
+            route_stages = {
+                stage.itinerary_id: stage
+                for stage in route.stages.select_for_update().filter(itinerary_id__in=seen_ids)
+            }
+            missing_ids = seen_ids - set(route_stages)
+            if missing_ids:
+                raise ValidationError({"itineraries": "All itineraries must belong to this route."})
+
             temporary_offset = 1000000
             for index, (itinerary_id, _) in enumerate(assignments, start=1):
-                itinerary = route_itineraries[itinerary_id]
-                itinerary.stage_number = temporary_offset + index
-                itinerary.save(update_fields=["stage_number", "updated_at"])
+                stage = route_stages[itinerary_id]
+                stage.stage_number = temporary_offset + index
+                stage.save(update_fields=["stage_number", "updated_at"])
 
             for itinerary_id, stage_number in assignments:
-                itinerary = route_itineraries[itinerary_id]
-                itinerary.stage_number = stage_number
-                itinerary.save(update_fields=["stage_number", "updated_at"])
+                stage = route_stages[itinerary_id]
+                stage.stage_number = stage_number
+                stage.save(update_fields=["stage_number", "updated_at"])
 
         queryset = (
-            route.itineraries.select_related("route")
-            .prefetch_related("translations", "route__translations")
-            .order_by("stage_number", "id")
+            Itinerary.objects.filter(route_stages__route=route)
+            .prefetch_related("translations", "route_stages", "route_stages__route", "route_stages__route__translations")
+            .order_by("route_stages__stage_number", "id")
         )
-        serializer = ItinerarySerializer(queryset, many=True, context=self.get_serializer_context())
+        context = self.get_serializer_context()
+        context["route_id"] = route.id
+        serializer = ItinerarySerializer(queryset, many=True, context=context)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="remove-itinerary")
@@ -471,25 +490,23 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             raise ValidationError({"itinerary": "Provide an itinerary id."})
 
         with transaction.atomic():
-            itinerary = route.itineraries.select_for_update().filter(id=itinerary_id).first()
-            if itinerary is None:
+            route_stage = route.stages.select_for_update().select_related("itinerary").filter(itinerary_id=itinerary_id).first()
+            if route_stage is None:
                 raise ValidationError({"itinerary": "Itinerary does not belong to this route."})
 
-            itinerary.route = None
-            itinerary.stage_number = None
-            itinerary.save(update_fields=["route", "stage_number", "updated_at"])
+            itinerary = route_stage.itinerary
+            route_stage.delete()
 
-            remaining_itineraries = list(
-                route.itineraries.select_for_update()
-                .exclude(id=itinerary_id)
+            remaining_stages = list(
+                route.stages.select_for_update()
                 .order_by("stage_number", "id")
             )
             temporary_offset = 1000000
-            for index, remaining in enumerate(remaining_itineraries, start=1):
+            for index, remaining in enumerate(remaining_stages, start=1):
                 remaining.stage_number = temporary_offset + index
                 remaining.save(update_fields=["stage_number", "updated_at"])
 
-            for index, remaining in enumerate(remaining_itineraries, start=1):
+            for index, remaining in enumerate(remaining_stages, start=1):
                 remaining.stage_number = index
                 remaining.save(update_fields=["stage_number", "updated_at"])
 

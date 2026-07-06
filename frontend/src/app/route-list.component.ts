@@ -60,6 +60,7 @@ const LANGUAGE_OPTIONS = [
   { code: 'ro', label: 'Romanian' },
   { code: 'sk', label: 'Slovak' },
 ];
+const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '#0891b2', '#be123c', '#4d7c0f'];
 
 @Component({
   selector: 'app-route-list',
@@ -98,6 +99,16 @@ const LANGUAGE_OPTIONS = [
                 <table class="resource-table">
                   <thead>
                     <tr>
+                      <th class="selection-column" aria-label="Select">
+                        <input
+                          type="checkbox"
+                          title="Select all routes"
+                          aria-label="Select all routes"
+                          [checked]="areAllRoutesSelected(state.routes)"
+                          [indeterminate]="areSomeRoutesSelected(state.routes)"
+                          (change)="setRoutesSelected(state.routes, $any($event.target).checked)"
+                        />
+                      </th>
                       <th>Title</th>
                       <th>Last updated</th>
                       <th>Segments</th>
@@ -109,9 +120,18 @@ const LANGUAGE_OPTIONS = [
                       <tr
                         [attr.id]="routeRowId(route)"
                         [class.highlight-row]="highlightedRouteId === route.id"
-                        [class.preview-selected-row]="previewRoute?.id === route.id"
+                        [class.preview-selected-row]="previewRoute?.id === route.id || selectedRouteIds.has(route.id)"
                         (click)="selectPreviewRoute(route)"
                       >
+                        <td class="selection-column" (click)="$event.stopPropagation()">
+                          <input
+                            type="checkbox"
+                            title="Select route for preview"
+                            aria-label="Select route for preview"
+                            [checked]="selectedRouteIds.has(route.id)"
+                            (change)="setRouteSelected(route, $any($event.target).checked)"
+                          />
+                        </td>
                         <td>
                           <strong>{{ route.title || 'Untitled route' }}</strong>
                           <p class="description-preview">{{ route.description || 'No description' }}</p>
@@ -131,7 +151,7 @@ const LANGUAGE_OPTIONS = [
                       </tr>
                     } @empty {
                       <tr>
-                        <td colspan="4">No routes found.</td>
+                        <td colspan="5">No routes found.</td>
                       </tr>
                     }
                   </tbody>
@@ -141,13 +161,20 @@ const LANGUAGE_OPTIONS = [
             <aside class="preview-panel" aria-label="Route map preview">
               <header>
                 <h2>Map preview</h2>
-                <p>{{ previewRoute ? previewRoute.title || 'Untitled route' : 'Click a route to preview it.' }}</p>
+                <p>{{ selectedRouteIds.size > 1 ? selectedRouteIds.size + ' selected routes' : previewRoute ? previewRoute.title || 'Untitled route' : 'Click a route to preview it.' }}</p>
               </header>
               <div class="preview-map" #previewMap></div>
               @if (previewMessage) {
                 <p class="muted preview-message">{{ previewMessage }}</p>
               }
-              @if (previewRoute) {
+              @if (selectedRouteIds.size > 1) {
+                <div class="preview-actions" aria-label="Selected route actions">
+                  <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedRoutes()">
+                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                    <span>Delete selected routes</span>
+                  </button>
+                </div>
+              } @else if (previewRoute) {
                 <div class="preview-actions" aria-label="Selected route actions">
                   <a class="secondary preview-action" [routerLink]="['/route', previewRoute.slug || previewRoute.id]">
                     <span class="preview-action-icon" aria-hidden="true">📋</span>
@@ -309,12 +336,16 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   translationDrafts: TranslationDraft[] = [];
   activeTranslationIndex = 0;
   highlightedRouteId: number | null = null;
+  currentRoutes: Route[] = [];
+  readonly selectedRouteIds = new Set<number>();
   previewRoute: Route | null = null;
   previewMessage = 'Click a route to preview it.';
   private previewMap: any = null;
   private previewLayer: any = null;
   private previewResizeObserver: ResizeObserver | null = null;
   private previewRequestId = 0;
+  private previewFitRequestId = 0;
+  private selectedPreviewFitLocked = false;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
@@ -323,6 +354,9 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   ]).pipe(
     switchMap(([query, , highlightedRouteId]) => this.api.listRoutes(query).pipe(
       map(routePage => {
+        this.currentRoutes = routePage.results;
+        this.pruneSelectedRoutes(routePage.results);
+        this.renderSelectedRoutePreviewIfNeeded(!this.selectedPreviewFitLocked);
         this.scheduleHighlight(highlightedRouteId, routePage.results);
         return {
           routes: routePage.results,
@@ -352,6 +386,10 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   async selectPreviewRoute(route: Route): Promise<void> {
     this.previewRoute = route;
+    if (this.selectedRouteIds.size > 0) {
+      this.selectedRouteIds.clear();
+      this.selectedPreviewFitLocked = false;
+    }
     const requestId = this.previewRequestId + 1;
     this.previewRequestId = requestId;
     this.previewMessage = 'Loading route preview...';
@@ -365,6 +403,61 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       this.previewMessage = `Could not load route preview. ${error instanceof Error ? error.message : 'Request failed.'}`;
       this.previewLayer?.clearLayers();
     }
+  }
+
+  setRouteSelected(route: Route, selected: boolean): void {
+    if (selected) {
+      this.selectedRouteIds.add(route.id);
+      this.previewRoute = route;
+    } else {
+      this.selectedRouteIds.delete(route.id);
+    }
+    if (this.selectedRouteIds.size > 0) {
+      const shouldFit = !this.selectedPreviewFitLocked;
+      if (this.selectedRouteIds.size >= 2) {
+        this.selectedPreviewFitLocked = true;
+      }
+      void this.renderSelectedRoutePreviewIfNeeded(shouldFit);
+    } else {
+      this.selectedPreviewFitLocked = false;
+      void this.selectPreviewRoute(route);
+    }
+  }
+
+  setRoutesSelected(routes: Route[], selected: boolean): void {
+    routes.forEach(route => {
+      if (selected) {
+        this.selectedRouteIds.add(route.id);
+      } else {
+        this.selectedRouteIds.delete(route.id);
+      }
+    });
+
+    if (selected && routes.length > 0) {
+      this.previewRoute = routes[routes.length - 1];
+    }
+
+    if (this.selectedRouteIds.size > 0) {
+      const shouldFit = !this.selectedPreviewFitLocked;
+      if (this.selectedRouteIds.size >= 2) {
+        this.selectedPreviewFitLocked = true;
+      }
+      void this.renderSelectedRoutePreviewIfNeeded(shouldFit);
+    } else {
+      this.selectedPreviewFitLocked = false;
+      this.previewRoute = null;
+      this.previewLayer?.clearLayers();
+      this.previewMessage = 'Click a route to preview it.';
+      this.fitPreviewMapToWorld();
+    }
+  }
+
+  areAllRoutesSelected(routes: Route[]): boolean {
+    return routes.length > 0 && routes.every(route => this.selectedRouteIds.has(route.id));
+  }
+
+  areSomeRoutesSelected(routes: Route[]): boolean {
+    return routes.some(route => this.selectedRouteIds.has(route.id)) && !this.areAllRoutesSelected(routes);
   }
 
   routeRowId(route: Route): string {
@@ -428,6 +521,26 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not delete route. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async deleteSelectedRoutes(): Promise<void> {
+    const selected = this.selectedRoutes();
+    if (selected.length < 2) return;
+    const confirmed = window.confirm(
+      `Delete ${selected.length} selected routes? Their constituent itineraries will not be deleted.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await Promise.all(selected.map(route => firstValueFrom(this.api.deleteRoute(route.id))));
+      this.selectedRouteIds.clear();
+      this.selectedPreviewFitLocked = false;
+      this.previewRoute = null;
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not delete selected routes. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
@@ -542,15 +655,97 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     if (!this.previewMap || !this.previewLayer) return;
 
     this.previewLayer.clearLayers();
+    const result = this.drawRoutePreview(itineraries, PREVIEW_COLORS[0]);
+    this.fitPreviewMap(result.bounds);
+
+    if (itineraries.length === 0) {
+      this.previewMessage = 'This route has no itineraries yet.';
+    } else if (!result.bounds.isValid() && result.routeGeometryCount === 0) {
+      this.previewMessage = 'This route does not store coordinates yet.';
+    } else if (!result.hasPointCoordinates) {
+      this.previewMessage = 'Previewing saved route geometry. Point coordinates are not stored.';
+    } else if (result.straightSegmentCount > 0 && result.routeGeometryCount > 0) {
+      this.previewMessage = 'Straight segments do not have saved walking routes yet.';
+    } else if (result.straightSegmentCount > 0) {
+      this.previewMessage = 'Previewing straight lines for segments without walking routes.';
+    } else {
+      this.previewMessage = '';
+    }
+  }
+
+  private async renderSelectedRoutePreviewIfNeeded(shouldFit = true): Promise<void> {
+    if (this.selectedRouteIds.size === 0) return;
+    const selected = this.selectedRoutes();
+    if (selected.length === 0) {
+      this.selectedRouteIds.clear();
+      this.selectedPreviewFitLocked = false;
+      return;
+    }
+
+    const requestId = ++this.previewRequestId;
+    this.previewMessage = 'Loading selected route previews...';
+    try {
+      const routeItineraries = await Promise.all(
+        selected.map(route => firstValueFrom(this.api.listAllItineraries('', '', route.id)))
+      );
+      if (requestId !== this.previewRequestId) return;
+      this.renderPreviewRoutes(routeItineraries.map(itineraries => this.sortedItineraries(itineraries)), shouldFit);
+    } catch (error) {
+      if (requestId !== this.previewRequestId) return;
+      this.previewMessage = `Could not load selected route previews. ${error instanceof Error ? error.message : 'Request failed.'}`;
+      this.previewLayer?.clearLayers();
+    }
+  }
+
+  private renderPreviewRoutes(routeItineraries: Itinerary[][], shouldFit = true): void {
+    this.initializePreviewMap();
+    if (!this.previewMap || !this.previewLayer) return;
+
+    this.previewLayer.clearLayers();
     const bounds = L.latLngBounds([]);
     let routeGeometryCount = 0;
     let straightSegmentCount = 0;
-    let markerIndex = 1;
+    let hasPointCoordinates = false;
+
+    routeItineraries.forEach((itineraries, index) => {
+      const result = this.drawRoutePreview(itineraries, PREVIEW_COLORS[index % PREVIEW_COLORS.length]);
+      if (result.bounds.isValid()) bounds.extend(result.bounds);
+      routeGeometryCount += result.routeGeometryCount;
+      straightSegmentCount += result.straightSegmentCount;
+      hasPointCoordinates ||= result.hasPointCoordinates;
+    });
+
+    if (shouldFit) {
+      this.fitPreviewMap(bounds);
+    } else {
+      this.previewMap.invalidateSize(false);
+    }
+
+    if (routeItineraries.every(itineraries => itineraries.length === 0)) {
+      this.previewMessage = 'The selected routes have no itineraries yet.';
+    } else if (!bounds.isValid() && routeGeometryCount === 0) {
+      this.previewMessage = 'The selected routes do not store coordinates yet.';
+    } else if (!hasPointCoordinates) {
+      this.previewMessage = 'Previewing saved route geometry. Point coordinates are not stored.';
+    } else if (straightSegmentCount > 0 && routeGeometryCount > 0) {
+      this.previewMessage = 'Straight segments do not have saved walking routes yet.';
+    } else if (straightSegmentCount > 0) {
+      this.previewMessage = 'Previewing straight lines for segments without walking routes.';
+    } else {
+      this.previewMessage = '';
+    }
+  }
+
+  private drawRoutePreview(itineraries: Itinerary[], color: string): { bounds: any; routeGeometryCount: number; straightSegmentCount: number; hasPointCoordinates: boolean } {
+    const bounds = L.latLngBounds([]);
+    let routeGeometryCount = 0;
+    let straightSegmentCount = 0;
+    let hasPointCoordinates = false;
 
     for (const itinerary of itineraries) {
       const json = this.itineraryJson(itinerary);
       const pointCoordinates = this.previewPointCoordinatesByIndex(json.points || []);
-      const coordinates = pointCoordinates.filter((point): point is { lat: number; lng: number; label: string } => point !== null);
+      hasPointCoordinates ||= pointCoordinates.some(point => point !== null);
       const segments = json.segments || [];
       const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
 
@@ -559,7 +754,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
         if (geometry) {
           const routeLayer = L.geoJSON(geometry, {
             style: {
-              color: '#1f6feb',
+              color,
               weight: 5,
               opacity: 0.8
             }
@@ -576,41 +771,30 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
         const end = pointCoordinates[index + 1];
         if (start && end) {
           const line = L.polyline([[start.lat, start.lng], [end.lat, end.lng]], {
-            color: '#1f6feb',
+            color,
             weight: 4,
-            opacity: 0.75,
-            dashArray: '8 8'
+            opacity: 0.75
           }).addTo(this.previewLayer);
           bounds.extend(line.getBounds());
           straightSegmentCount += 1;
         }
       }
-
-      coordinates.forEach(point => {
-        L.marker([point.lat, point.lng], {
-          icon: this.previewMarkerIcon(markerIndex)
-        })
-          .bindTooltip(`${markerIndex}. ${point.label}`, { direction: 'top' })
-          .addTo(this.previewLayer);
-        bounds.extend([point.lat, point.lng]);
-        markerIndex += 1;
-      });
     }
 
-    this.fitPreviewMap(bounds);
+    return { bounds, routeGeometryCount, straightSegmentCount, hasPointCoordinates };
+  }
 
-    if (itineraries.length === 0) {
-      this.previewMessage = 'This route has no itineraries yet.';
-    } else if (markerIndex === 1 && routeGeometryCount === 0) {
-      this.previewMessage = 'This route does not store coordinates yet.';
-    } else if (markerIndex === 1) {
-      this.previewMessage = 'Previewing saved route geometry. Point coordinates are not stored.';
-    } else if (straightSegmentCount > 0 && routeGeometryCount > 0) {
-      this.previewMessage = 'Dashed segments do not have saved walking routes yet.';
-    } else if (straightSegmentCount > 0) {
-      this.previewMessage = 'Previewing straight dashed lines for segments without walking routes.';
-    } else {
-      this.previewMessage = '';
+  private selectedRoutes(): Route[] {
+    return this.currentRoutes.filter(route => this.selectedRouteIds.has(route.id));
+  }
+
+  private pruneSelectedRoutes(routes: Route[]): void {
+    const visibleIds = new Set(routes.map(route => route.id));
+    [...this.selectedRouteIds].forEach(id => {
+      if (!visibleIds.has(id)) this.selectedRouteIds.delete(id);
+    });
+    if (this.selectedRouteIds.size === 0) {
+      this.selectedPreviewFitLocked = false;
     }
   }
 
@@ -627,35 +811,35 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  private previewMarkerIcon(index: number): any {
-    return L.divIcon({
-      className: 'preview-marker',
-      html: `<span>${index}</span>`,
-      iconSize: [34, 34],
-      iconAnchor: [17, 17],
-      tooltipAnchor: [0, -18]
-    });
-  }
-
   private fitPreviewMap(bounds: any): void {
+    const requestId = ++this.previewFitRequestId;
     window.requestAnimationFrame(() => {
-      if (!this.previewMap) return;
+      if (!this.previewMap || requestId !== this.previewFitRequestId) return;
       this.previewMap.invalidateSize(false);
       if (bounds.isValid()) {
         this.previewMap.fitBounds(bounds, { padding: [22, 22], maxZoom: 15, animate: false });
       } else {
         this.previewMap.fitWorld({ animate: false });
       }
-      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+      window.requestAnimationFrame(() => {
+        if (requestId === this.previewFitRequestId) {
+          this.previewMap?.invalidateSize(false);
+        }
+      });
     });
   }
 
   private fitPreviewMapToWorld(): void {
+    const requestId = ++this.previewFitRequestId;
     window.requestAnimationFrame(() => {
-      if (!this.previewMap) return;
+      if (!this.previewMap || requestId !== this.previewFitRequestId) return;
       this.previewMap.invalidateSize(false);
       this.previewMap.fitWorld({ animate: false });
-      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+      window.requestAnimationFrame(() => {
+        if (requestId === this.previewFitRequestId) {
+          this.previewMap?.invalidateSize(false);
+        }
+      });
     });
   }
 

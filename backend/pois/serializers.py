@@ -12,6 +12,7 @@ from .models import (
     POIImage,
     POITranslation,
     Route,
+    RouteStage,
     RouteTranslation,
 )
 
@@ -336,8 +337,10 @@ class ItinerarySerializer(serializers.ModelSerializer):
     title = serializers.SerializerMethodField()
     description = serializers.SerializerMethodField()
     slug = serializers.SerializerMethodField()
+    route = serializers.IntegerField(required=False, allow_null=True, write_only=True)
     route_title = serializers.SerializerMethodField()
     route_slug = serializers.SerializerMethodField()
+    stage_number = serializers.SerializerMethodField()
     translations = NestedItineraryTranslationSerializer(many=True, required=False)
 
     class Meta:
@@ -372,31 +375,61 @@ class ItinerarySerializer(serializers.ModelSerializer):
         return translation.slug if translation else None
 
     def get_route_title(self, obj):
-        if not obj.route_id:
+        stage = self._stage_membership(obj)
+        if not stage:
             return None
-        translation = select_translation(obj.route.translations.all(), self.context.get("language"))
+        translation = select_translation(stage.route.translations.all(), self.context.get("language"))
         return translation.title if translation else None
 
     def get_route_slug(self, obj):
-        if not obj.route_id:
+        stage = self._stage_membership(obj)
+        if not stage:
             return None
-        translation = select_translation(obj.route.translations.all(), self.context.get("language"))
+        translation = select_translation(stage.route.translations.all(), self.context.get("language"))
         return translation.slug if translation else None
+
+    def get_stage_number(self, obj):
+        stage = self._stage_membership(obj)
+        return stage.stage_number if stage else None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        stage = self._stage_membership(instance)
+        data["route"] = stage.route_id if stage else None
+        return data
 
     def _localized_translation(self, obj):
         language = self.context.get("language")
         return select_translation(obj.translations.all(), language)
 
+    def _stage_membership(self, obj):
+        route_id = self.context.get("route_id")
+        stages = list(getattr(obj, "_prefetched_objects_cache", {}).get("route_stages", []))
+        if not stages:
+            stages = list(obj.route_stages.select_related("route").prefetch_related("route__translations").order_by("stage_number", "id"))
+        if route_id:
+            for stage in stages:
+                if stage.route_id == route_id:
+                    return stage
+        return stages[0] if stages else None
+
     def validate(self, attrs):
         if not isinstance(attrs.get("itinerary_json", self.instance.itinerary_json if self.instance else None), dict):
             raise serializers.ValidationError({"itinerary_json": "Expected an itinerary JSON object."})
 
-        route = attrs.get("route", self.instance.route if self.instance else None)
-        stage_number = attrs.get("stage_number", self.instance.stage_number if self.instance else None)
-        if route is not None and stage_number is None:
+        route_id = attrs.get("route", serializers.empty)
+        stage_number = self.initial_data.get("stage_number", serializers.empty)
+        if route_id is not serializers.empty and route_id is not None and stage_number is serializers.empty:
             raise serializers.ValidationError({"stage_number": "Stage number is required when an itinerary belongs to a route."})
-        if route is None and stage_number is not None:
+        if route_id is not serializers.empty and route_id is None and stage_number not in {serializers.empty, None}:
             raise serializers.ValidationError({"route": "Route is required when a stage number is set."})
+        if route_id is not serializers.empty and route_id is not None:
+            if not isinstance(route_id, int):
+                raise serializers.ValidationError({"route": "Route must be an integer id or null."})
+            if not Route.objects.filter(id=route_id).exists():
+                raise serializers.ValidationError({"route": "Route does not exist."})
+            if not isinstance(stage_number, int) or stage_number < 1:
+                raise serializers.ValidationError({"stage_number": "Stage number must be a positive integer."})
 
         translations = attrs.get("translations")
         if self.instance is None and not translations:
@@ -415,17 +448,28 @@ class ItinerarySerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         translations = validated_data.pop("translations", [])
+        route_id = validated_data.pop("route", None)
+        stage_number = self.initial_data.get("stage_number")
         itinerary = Itinerary.objects.create(**validated_data)
         for translation_data in translations:
             ItineraryTranslation.objects.create(itinerary=itinerary, **translation_data)
+        if route_id is not None:
+            RouteStage.objects.create(route_id=route_id, itinerary=itinerary, stage_number=stage_number)
         return itinerary
 
     def update(self, instance, validated_data):
         translations = validated_data.pop("translations", None)
+        route_id = validated_data.pop("route", serializers.empty)
+        stage_number = self.initial_data.get("stage_number", serializers.empty)
 
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
+
+        if route_id is not serializers.empty:
+            instance.route_stages.all().delete()
+            if route_id is not None:
+                RouteStage.objects.create(route_id=route_id, itinerary=instance, stage_number=stage_number)
 
         if translations is not None:
             instance.translations.all().delete()

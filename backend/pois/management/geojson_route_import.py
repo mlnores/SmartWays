@@ -7,7 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils.text import slugify
 
-from pois.models import Itinerary, ItineraryTranslation, Route, RouteTranslation
+from pois.models import Itinerary, ItineraryTranslation, Route, RouteStage, RouteTranslation
 
 
 DEFAULT_LANGUAGE = "en"
@@ -130,14 +130,13 @@ class BaseGeojsonRouteImportCommand(BaseCommand):
                     "Use --replace to delete them before importing."
                 )
             if existing_count:
-                route.itineraries.all().delete()
+                route.stages.all().delete()
 
             itinerary = Itinerary.objects.create(
                 enabled=True,
-                route=route,
-                stage_number=1,
                 itinerary_json=prepared["itinerary_json"],
             )
+            RouteStage.objects.create(route=route, itinerary=itinerary, stage_number=1)
             ItineraryTranslation.objects.create(
                 itinerary=itinerary,
                 language_code=language,
