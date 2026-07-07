@@ -11,7 +11,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .management.commands.import_rurallure_dump import Command, CountryBoundaryLookup
-from .models import Category, CategoryTranslation, Itinerary, POI, POIImage, POITranslation, Route, RouteStage, RouteTranslation
+from .models import Category, CategoryTranslation, Itinerary, POI, POIMedia, POITranslation, Route, RouteStage, RouteTranslation
 
 
 class POIAPITests(APITestCase):
@@ -49,9 +49,10 @@ class POIAPITests(APITestCase):
             description="Un lugar fortificado.",
             slug="castillo",
         )
-        POIImage.objects.create(
+        POIMedia.objects.create(
             poi=self.poi,
-            image_url="https://example.com/castle.jpg",
+            media_type=POIMedia.MediaType.IMAGE,
+            url="https://example.com/castle.jpg",
             position=1,
             is_primary=True,
         )
@@ -212,6 +213,8 @@ class POIAPITests(APITestCase):
         self.assertEqual(result["snippet"], "A fortified place.")
         self.assertEqual(result["imageUrl"], "https://example.com/castle.jpg")
         self.assertEqual(result["imageUrls"], ["https://example.com/castle.jpg"])
+        self.assertEqual(result["media"][0]["type"], "image")
+        self.assertEqual(result["media"][0]["url"], "https://example.com/castle.jpg")
         self.assertEqual(result["lat"], self.poi.gps_latitude)
         self.assertEqual(result["lng"], self.poi.gps_longitude)
         self.assertEqual(result["categories"], [{"slug": "heritage", "name": "Heritage"}])
@@ -249,7 +252,8 @@ class POIAPITests(APITestCase):
         self.assertEqual(poi.gps_latitude, 42.1)
         self.assertEqual(poi.gps_longitude, -8.6)
         self.assertEqual(poi.translations.count(), 1)
-        self.assertEqual(poi.images.count(), 1)
+        self.assertEqual(poi.media.count(), 1)
+        self.assertEqual(poi.media.get().media_type, POIMedia.MediaType.IMAGE)
         self.assertTrue(poi.translations.get(language_code="en").is_reference)
 
     def test_poi_create_rejects_multiple_reference_translations(self):

@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 from pois.country_codes import alpha3_to_alpha2
-from pois.models import Category, CategoryTranslation, POI, POIImage, POITranslation
+from pois.models import Category, CategoryTranslation, POI, POIMedia, POITranslation
 
 
 COPY_TABLES = {
@@ -27,7 +27,7 @@ COPY_TABLES = {
     "public.point_of_interest_translation",
 }
 
-DEFAULT_IMAGE_BASE_URL = "https://rurallure-web-files-prod.s3.eu-west-2.amazonaws.com/images/"
+DEFAULT_MEDIA_BASE_URL = "https://rurallure-web-files-prod.s3.eu-west-2.amazonaws.com/images/"
 DEFAULT_COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parents[2] / "data" / "geoboundaries_adm0.geojson"
 
 COUNTRY_CODE_PROPERTY_NAMES = (
@@ -159,6 +159,19 @@ def normalized_category_key(value):
     return normalized_country_name(value)
 
 
+def media_type_from_filename(filename):
+    extension = Path(filename).suffix.lower().lstrip(".")
+    if extension in {"jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "svg"}:
+        return POIMedia.MediaType.IMAGE
+    if extension in {"mp4", "mov", "m4v", "webm", "avi", "mkv"}:
+        return POIMedia.MediaType.VIDEO
+    if extension in {"mp3", "m4a", "wav", "ogg", "oga", "flac"}:
+        return POIMedia.MediaType.AUDIO
+    if extension in {"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt"}:
+        return POIMedia.MediaType.DOCUMENT
+    return POIMedia.MediaType.OTHER
+
+
 def code_from_boundary_properties(properties, country_codes_by_name):
     for property_name in COUNTRY_CODE_PROPERTY_NAMES:
         value = (properties.get(property_name) or "").strip().upper()
@@ -226,8 +239,8 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--image-base-url",
-            default=DEFAULT_IMAGE_BASE_URL,
-            help="Base URL prepended to file_uploaded.filename for POI images.",
+            default=DEFAULT_MEDIA_BASE_URL,
+            help="Base URL prepended to file_uploaded.filename for POI media from the RurAllure image table.",
         )
         parser.add_argument(
             "--country-boundaries",
@@ -242,7 +255,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--clear",
             action="store_true",
-            help="Delete existing POI, category, translation, and image rows before importing.",
+            help="Delete existing POI, category, translation, and media rows before importing.",
         )
         parser.add_argument(
             "--dry-run",
@@ -271,13 +284,13 @@ class Command(BaseCommand):
             )
 
         if not options["clear"] and any(
-            model.objects.exists() for model in (POI, POITranslation, Category, CategoryTranslation, POIImage)
+            model.objects.exists() for model in (POI, POITranslation, Category, CategoryTranslation, POIMedia)
         ):
             raise CommandError("Target POI tables are not empty. Re-run with --clear or start from an empty database.")
 
         with transaction.atomic():
             if options["clear"]:
-                POIImage.objects.all().delete()
+                POIMedia.objects.all().delete()
                 POITranslation.objects.all().delete()
                 POI.objects.all().delete()
                 CategoryTranslation.objects.all().delete()
@@ -331,7 +344,7 @@ class Command(BaseCommand):
             pois_by_source_id,
             categories_by_source_id,
         )
-        image_stats = self.import_images(
+        media_stats = self.import_media(
             data["public.file_uploaded"],
             data["public.image_point_of_interest"],
             pois_by_source_id,
@@ -343,7 +356,7 @@ class Command(BaseCommand):
             **poi_stats,
             **translation_stats,
             **relation_stats,
-            **image_stats,
+            **media_stats,
         }
 
     def build_language_codes(self, rows):
@@ -547,13 +560,13 @@ class Command(BaseCommand):
             "poi_category_relations_skipped": skipped,
         }
 
-    def import_images(self, file_rows, image_rows, pois_by_source_id, image_base_url):
+    def import_media(self, file_rows, image_rows, pois_by_source_id, image_base_url):
         filenames_by_source_id = {
             row["id"]: row["filename"]
             for row in file_rows
             if row["filename"]
         }
-        images_by_poi = defaultdict(list)
+        media_by_poi = defaultdict(list)
         skipped = 0
 
         for row in image_rows:
@@ -563,27 +576,28 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            images_by_poi[poi.pk].append(
+            media_by_poi[poi.pk].append(
                 (
                     int(row["position"] or 0),
-                    POIImage(
+                    POIMedia(
                         poi=poi,
-                        image_url=f"{image_base_url.rstrip('/')}/{filename}",
+                        media_type=media_type_from_filename(filename),
+                        url=f"{image_base_url.rstrip('/')}/{filename}",
                         position=int(row["position"] or 0),
                     ),
                 )
             )
 
-        image_objects = []
-        for poi_id, poi_images in images_by_poi.items():
-            ordered_images = sorted(poi_images, key=lambda item: item[0])
-            for index, (_position, image) in enumerate(ordered_images):
-                image.is_primary = index == 0
-                image_objects.append(image)
+        media_objects = []
+        for poi_id, poi_media in media_by_poi.items():
+            ordered_media = sorted(poi_media, key=lambda item: item[0])
+            for index, (_position, media) in enumerate(ordered_media):
+                media.is_primary = index == 0
+                media_objects.append(media)
 
-        POIImage.objects.bulk_create(image_objects)
+        POIMedia.objects.bulk_create(media_objects)
 
         return {
-            "poi_images_created": len(image_objects),
-            "poi_images_skipped": skipped,
+            "poi_media_created": len(media_objects),
+            "poi_media_skipped": skipped,
         }

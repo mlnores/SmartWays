@@ -14,13 +14,13 @@ from rest_framework.parsers import JSONParser
 from rest_framework.response import Response
 
 from .country_codes import alpha3_to_alpha2
-from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIImage, POITranslation, Route, RouteStage, RouteTranslation
+from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIMedia, POITranslation, Route, RouteStage, RouteTranslation
 from .serializers import (
     CategorySerializer,
     CategoryTranslationSerializer,
     ItinerarySerializer,
     ItineraryTranslationSerializer,
-    POIImageSerializer,
+    POIMediaSerializer,
     POISerializer,
     POITranslationSerializer,
     RouteSerializer,
@@ -157,7 +157,7 @@ def buffer_poi_lookup(request):
 
     queryset = (
         POI.objects.filter(enabled=True, location__within=buffer_geometry)
-        .prefetch_related("translations", "images", "categories", "categories__translations")
+        .prefetch_related("translations", "media", "categories", "categories__translations")
         .order_by("id")[:limit]
     )
     pois = [poi_for_buffer_response(poi, language) for poi in queryset]
@@ -169,18 +169,27 @@ mock_poi_lookup = buffer_poi_lookup
 
 def poi_for_buffer_response(poi, language_code):
     translation = select_translation(poi.translations.all(), language_code)
-    images = list(poi.images.all())
+    images = [media for media in poi.media.all() if media.media_type == POIMedia.MediaType.IMAGE]
     categories = list(poi.categories.all())
     primary_image = next((image for image in images if image.is_primary), None)
     image = primary_image or (images[0] if images else None)
-    image_urls = [image.image_url for image in images]
+    image_urls = [image.url for image in images]
 
     return {
         "id": str(poi.pk),
         "label": translation.title if translation else f"POI {poi.pk}",
         "snippet": translation.description if translation else "",
-        "imageUrl": image.image_url if image else "",
+        "imageUrl": image.url if image else "",
         "imageUrls": image_urls,
+        "media": [
+            {
+                "type": media.media_type,
+                "url": media.url,
+                "position": media.position,
+                "isPrimary": media.is_primary,
+            }
+            for media in poi.media.all()
+        ],
         "lat": poi.gps_latitude,
         "lng": poi.gps_longitude,
         "website": poi.website,
@@ -240,7 +249,7 @@ class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             POI.objects.all()
             .prefetch_related(
                 "translations",
-                "images",
+                "media",
                 "categories",
                 "categories__translations",
             )
@@ -650,9 +659,9 @@ class CategoryTranslationViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class POIImageViewSet(viewsets.ModelViewSet):
-    serializer_class = POIImageSerializer
-    queryset = POIImage.objects.select_related("poi").all()
+class POIMediaViewSet(viewsets.ModelViewSet):
+    serializer_class = POIMediaSerializer
+    queryset = POIMedia.objects.select_related("poi").all()
 
     def get_queryset(self):
         queryset = super().get_queryset()

@@ -112,6 +112,15 @@ export interface PoiImage {
   is_primary: boolean;
 }
 
+export interface PoiMedia {
+  id?: number;
+  media_type: 'image' | 'video' | 'audio' | 'document' | 'link' | 'other';
+  url: string;
+  image_url?: string;
+  position: number;
+  is_primary: boolean;
+}
+
 export interface Poi {
   id: number;
   enabled: boolean;
@@ -126,6 +135,7 @@ export interface Poi {
   slug: string | null;
   categories: Array<{ id: number; slug: string; name: string | null }>;
   translations: Translation[];
+  media: PoiMedia[];
   images: PoiImage[];
   itinerary_inclusions: PoiItineraryInclusion[];
 }
@@ -152,6 +162,7 @@ export interface PoiPayload {
     slug?: string;
     is_reference?: boolean;
   }>;
+  media?: PoiMedia[];
   images?: PoiImage[];
 }
 
@@ -279,6 +290,14 @@ export class ApiService {
 
   createPoi(payload: PoiPayload): Observable<Poi> {
     return this.http.post<Poi>(`${API_BASE_URL}/pois/`, payload);
+  }
+
+  getPoi(id: number | string, language = ''): Observable<Poi> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
+    return this.http.get<Poi>(`${API_BASE_URL}/pois/${encodeURIComponent(String(id))}/`, { params });
   }
 
   updatePoi(id: number, payload: Partial<PoiPayload>): Observable<Poi> {

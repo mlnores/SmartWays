@@ -138,13 +138,22 @@ class CategoryTranslation(models.Model):
         return f"{self.name} ({self.language_code})"
 
 
-class POIImage(models.Model):
+class POIMedia(models.Model):
+    class MediaType(models.TextChoices):
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+        AUDIO = "audio", "Audio"
+        DOCUMENT = "document", "Document"
+        LINK = "link", "Link"
+        OTHER = "other", "Other"
+
     poi = models.ForeignKey(
         POI,
-        related_name="images",
+        related_name="media",
         on_delete=models.CASCADE,
     )
-    image_url = models.URLField(max_length=1000)
+    media_type = models.CharField(max_length=20, choices=MediaType.choices, default=MediaType.IMAGE)
+    url = models.URLField(max_length=1000)
     position = models.PositiveIntegerField(default=0)
     is_primary = models.BooleanField(default=False)
 
@@ -154,16 +163,17 @@ class POIImage(models.Model):
             models.UniqueConstraint(
                 fields=["poi"],
                 condition=models.Q(is_primary=True),
-                name="unique_primary_image_per_poi",
+                name="unique_primary_media_per_poi",
             ),
         ]
         indexes = [
-            models.Index(fields=["position"], name="pois_poiima_positio_8f58b3_idx"),
-            models.Index(fields=["is_primary"], name="pois_poiima_is_prim_9a1275_idx"),
+            models.Index(fields=["media_type"], name="pois_poimed_media_t_f87a71_idx"),
+            models.Index(fields=["position"], name="pois_poimed_positio_2be32b_idx"),
+            models.Index(fields=["is_primary"], name="pois_poimed_is_prim_565904_idx"),
         ]
 
     def __str__(self):
-        return f"Image for POI {self.poi_id}"
+        return f"{self.get_media_type_display()} for POI {self.poi_id}"
 
 
 class Route(models.Model):

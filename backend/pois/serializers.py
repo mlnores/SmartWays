@@ -9,7 +9,7 @@ from .models import (
     Itinerary,
     ItineraryTranslation,
     POI,
-    POIImage,
+    POIMedia,
     POITranslation,
     Route,
     RouteStage,
@@ -94,10 +94,12 @@ class NestedCategoryTranslationSerializer(serializers.ModelSerializer):
         read_only_fields = ["id"]
 
 
-class POIImageSerializer(serializers.ModelSerializer):
+class POIMediaSerializer(serializers.ModelSerializer):
+    image_url = serializers.URLField(source="url", required=False)
+
     class Meta:
-        model = POIImage
-        fields = ["id", "poi", "image_url", "position", "is_primary"]
+        model = POIMedia
+        fields = ["id", "poi", "media_type", "url", "image_url", "position", "is_primary"]
         read_only_fields = ["id"]
 
 
@@ -108,11 +110,18 @@ class NestedPOITranslationSerializer(serializers.ModelSerializer):
         read_only_fields = ["id"]
 
 
-class NestedPOIImageSerializer(serializers.ModelSerializer):
+class NestedPOIMediaSerializer(serializers.ModelSerializer):
+    image_url = serializers.URLField(source="url", required=False)
+
     class Meta:
-        model = POIImage
-        fields = ["id", "image_url", "position", "is_primary"]
+        model = POIMedia
+        fields = ["id", "media_type", "url", "image_url", "position", "is_primary"]
         read_only_fields = ["id"]
+
+
+class NestedPOIImageSerializer(NestedPOIMediaSerializer):
+    class Meta(NestedPOIMediaSerializer.Meta):
+        fields = ["id", "image_url", "position", "is_primary"]
 
 
 class ItineraryTranslationSerializer(serializers.ModelSerializer):
@@ -205,7 +214,8 @@ class POISerializer(serializers.ModelSerializer):
     description = serializers.SerializerMethodField()
     slug = serializers.SerializerMethodField()
     translations = NestedPOITranslationSerializer(many=True, required=False)
-    images = NestedPOIImageSerializer(many=True, required=False)
+    media = NestedPOIMediaSerializer(many=True, required=False)
+    images = NestedPOIImageSerializer(source="media", many=True, required=False)
     itinerary_inclusions = serializers.SerializerMethodField()
     categories = NestedCategorySerializer(many=True, read_only=True)
     category_ids = serializers.PrimaryKeyRelatedField(
@@ -233,6 +243,7 @@ class POISerializer(serializers.ModelSerializer):
             "translations",
             "categories",
             "category_ids",
+            "media",
             "images",
             "itinerary_inclusions",
         ]
@@ -343,20 +354,22 @@ class POISerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         translations = validated_data.pop("translations", [])
-        images = validated_data.pop("images", [])
+        media = validated_data.pop("media", None)
+        images = validated_data.pop("images", None)
         categories = validated_data.pop("categories", [])
         poi = POI.objects.create(**validated_data)
         poi.categories.set(categories)
 
         for translation_data in translations:
             POITranslation.objects.create(poi=poi, **translation_data)
-        for image_data in images:
-            POIImage.objects.create(poi=poi, **image_data)
+        for media_data in self._media_payload(media, images):
+            POIMedia.objects.create(poi=poi, **media_data)
 
         return poi
 
     def update(self, instance, validated_data):
         translations = validated_data.pop("translations", None)
+        media = validated_data.pop("media", None)
         images = validated_data.pop("images", None)
         categories = validated_data.pop("categories", None)
 
@@ -370,12 +383,18 @@ class POISerializer(serializers.ModelSerializer):
             instance.translations.all().delete()
             for translation_data in translations:
                 POITranslation.objects.create(poi=instance, **translation_data)
-        if images is not None:
-            instance.images.all().delete()
-            for image_data in images:
-                POIImage.objects.create(poi=instance, **image_data)
+        if media is not None or images is not None:
+            instance.media.all().delete()
+            for media_data in self._media_payload(media, images):
+                POIMedia.objects.create(poi=instance, **media_data)
 
         return instance
+
+    def _media_payload(self, media, images):
+        payload = media if media is not None else images or []
+        for item in payload:
+            item.setdefault("media_type", POIMedia.MediaType.IMAGE)
+        return payload
 
 
 class ItinerarySerializer(serializers.ModelSerializer):

@@ -7,7 +7,7 @@ from pois.models import (
     Itinerary,
     ItineraryTranslation,
     POI,
-    POIImage,
+    POIMedia,
     POITranslation,
     Route,
     RouteTranslation,
@@ -39,7 +39,7 @@ class Command(BaseCommand):
             raise CommandError("This command deletes content data. Re-run with --yes to confirm.")
 
         counts = {
-            "poi_images": POIImage.objects.count(),
+            "poi_media": POIMedia.objects.count(),
             "poi_translations": POITranslation.objects.count(),
             "pois": POI.objects.count(),
             "itinerary_translations": ItineraryTranslation.objects.count(),
@@ -62,7 +62,7 @@ class Command(BaseCommand):
             return
 
         with transaction.atomic():
-            POIImage.objects.all().delete()
+            POIMedia.objects.all().delete()
             POITranslation.objects.all().delete()
             POI.objects.all().delete()
             ItineraryTranslation.objects.all().delete()
