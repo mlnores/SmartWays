@@ -176,12 +176,11 @@ declare const L: any;
                                 [checked]="areAllItinerariesSelected(group.items)"
                                 [indeterminate]="areSomeItinerariesSelected(group.items)"
                                 (change)="setItinerariesSelected(group.items, $any($event.target).checked)"
-                              />
-                            </th>
-                            <th>Stage</th>
-                            <th>Title</th>
-                            <th>First point</th>
-                            <th>Last point</th>
+                            />
+                          </th>
+                          <th>Title</th>
+                          <th>First point</th>
+                          <th>Last point</th>
                             <th>Estimated distance</th>
                             <th class="enabled-column">Enabled</th>
                           </tr>
@@ -193,6 +192,7 @@ declare const L: any;
                               [class.highlight-row]="highlightedItineraryId === itinerary.id"
                               [class.preview-selected-row]="selectedItineraryIds.has(itinerary.id)"
                               (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
+                              (dblclick)="openItineraryInEditor(itinerary)"
                             >
                               <td class="selection-column" (click)="$event.stopPropagation()">
                                 <input
@@ -201,12 +201,11 @@ declare const L: any;
                                   aria-label="Select itinerary for preview"
                                   [checked]="selectedItineraryIds.has(itinerary.id)"
                                   (change)="setItinerarySelected(itinerary, $any($event.target).checked)"
-                                />
-                              </td>
-                              <td>{{ itinerary.stage_number || '-' }}</td>
-                              <td>
-                                {{ itinerary.title || 'Untitled itinerary' }}
-                                <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
+                              />
+                            </td>
+                            <td>
+                              {{ itinerary.title || 'Untitled itinerary' }}
+                              <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
                               </td>
                               <td>{{ firstPointName(itinerary) }}</td>
                               <td>{{ lastPointName(itinerary) }}</td>
@@ -265,7 +264,7 @@ declare const L: any;
                     <span class="preview-action-icon" aria-hidden="true">📝</span>
                     <span>Edit metadata and translations</span>
                   </button>
-                  <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'edit']" [queryParams]="backQueryParams()">
+                  <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'edit']" [queryParams]="backQueryParamsFor(previewItinerary)">
                     <span class="preview-action-icon" aria-hidden="true">🗺️</span>
                     <span>Open in editor</span>
                   </a>
@@ -329,6 +328,7 @@ declare const L: any;
                   [class.dragging-row]="draggedItineraryId === itinerary.id"
                   [attr.draggable]="routeSlug ? true : null"
                   (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
+                  (dblclick)="openItineraryInEditor(itinerary)"
                   (dragstart)="startStageDrag(itinerary)"
                   (dragover)="allowStageDrop($event)"
                   (drop)="dropStage(itinerary, items)"
@@ -749,6 +749,12 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  openItineraryInEditor(itinerary: Itinerary): void {
+    void this.router.navigate(['/itineraries', itinerary.id, 'edit'], {
+      queryParams: this.backQueryParamsFor(itinerary)
+    });
+  }
+
   filterToPreviewArea(): void {
     if (!this.previewMap) return;
     const bounds = this.previewMap.getBounds();
@@ -1122,14 +1128,18 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   backQueryParams(): { returnTo: string; returnLabel: string } {
+    return this.backQueryParamsFor(this.previewItinerary);
+  }
+
+  backQueryParamsFor(itinerary: Itinerary | null): { returnTo: string; returnLabel: string } {
     if (this.routeSlug) {
       return {
-        returnTo: `/route/${this.routeSlug}${this.previewItinerary ? `?highlight=${this.previewItinerary.id}` : ''}`,
+        returnTo: `/route/${this.routeSlug}${itinerary ? `?highlight=${itinerary.id}` : ''}`,
         returnLabel: this.routeTitle ? `Back to ${this.routeTitle}` : 'Back to route itineraries'
       };
     }
     return {
-      returnTo: this.previewItinerary ? `/itineraries?highlight=${this.previewItinerary.id}` : '/itineraries',
+      returnTo: itinerary ? `/itineraries?highlight=${itinerary.id}` : '/itineraries',
       returnLabel: 'Back to itineraries'
     };
   }
@@ -1295,7 +1305,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     const hasPointCoordinates = pointCoordinates.some(point => point !== null);
 
     const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
-    const markerCoordinate = markerNumber === null ? null : pointCoordinates.find(point => point !== null);
+    const markerCoordinate = markerNumber === null ? null : this.itineraryPreviewMidpoint(pointCoordinates, segments);
     if (markerCoordinate && markerNumber !== null) {
       L.marker([markerCoordinate.lat, markerCoordinate.lng], {
         icon: this.previewMarkerIcon(markerNumber)
@@ -1367,6 +1377,82 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       iconSize: [34, 34],
       iconAnchor: [17, 17]
     });
+  }
+
+  private itineraryPreviewMidpoint(
+    pointCoordinates: Array<{ lat: number; lng: number; label: string } | null>,
+    segments: SegmentExport[]
+  ): { lat: number; lng: number } | null {
+    const pathCoordinates: Array<{ lat: number; lng: number }> = [];
+    const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
+
+    for (let index = 0; index < segmentCount; index += 1) {
+      const geometryCoordinates: Array<{ lat: number; lng: number }> = [];
+      this.collectGeometryCoordinates(segments[index]?.selectedWalkingRoute?.geometry, geometryCoordinates);
+      if (geometryCoordinates.length > 0) {
+        this.appendPathCoordinates(pathCoordinates, geometryCoordinates);
+        continue;
+      }
+
+      const start = pointCoordinates[index];
+      const end = pointCoordinates[index + 1];
+      if (start && end) {
+        this.appendPathCoordinates(pathCoordinates, [start, end]);
+      }
+    }
+
+    if (pathCoordinates.length === 0) {
+      return pointCoordinates.find(point => point !== null) || null;
+    }
+    if (pathCoordinates.length === 1) return pathCoordinates[0];
+
+    const totalDistance = pathCoordinates
+      .slice(1)
+      .reduce((total, coordinate, index) => total + this.coordinateDistance(pathCoordinates[index], coordinate), 0);
+    if (totalDistance <= 0) return pathCoordinates[Math.floor(pathCoordinates.length / 2)];
+
+    const targetDistance = totalDistance / 2;
+    let accumulatedDistance = 0;
+    for (let index = 1; index < pathCoordinates.length; index += 1) {
+      const start = pathCoordinates[index - 1];
+      const end = pathCoordinates[index];
+      const segmentDistance = this.coordinateDistance(start, end);
+      if (accumulatedDistance + segmentDistance >= targetDistance) {
+        const ratio = segmentDistance > 0 ? (targetDistance - accumulatedDistance) / segmentDistance : 0;
+        return {
+          lat: start.lat + (end.lat - start.lat) * ratio,
+          lng: start.lng + (end.lng - start.lng) * ratio
+        };
+      }
+      accumulatedDistance += segmentDistance;
+    }
+    return pathCoordinates[pathCoordinates.length - 1];
+  }
+
+  private appendPathCoordinates(
+    target: Array<{ lat: number; lng: number }>,
+    coordinates: Array<{ lat: number; lng: number }>
+  ): void {
+    for (const coordinate of coordinates) {
+      const previous = target[target.length - 1];
+      if (previous && previous.lat === coordinate.lat && previous.lng === coordinate.lng) continue;
+      target.push({ lat: coordinate.lat, lng: coordinate.lng });
+    }
+  }
+
+  private coordinateDistance(start: { lat: number; lng: number }, end: { lat: number; lng: number }): number {
+    const radiusMeters = 6371000;
+    const startLat = this.degreesToRadians(start.lat);
+    const endLat = this.degreesToRadians(end.lat);
+    const deltaLat = this.degreesToRadians(end.lat - start.lat);
+    const deltaLng = this.degreesToRadians(end.lng - start.lng);
+    const a = Math.sin(deltaLat / 2) ** 2
+      + Math.cos(startLat) * Math.cos(endLat) * Math.sin(deltaLng / 2) ** 2;
+    return 2 * radiusMeters * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  private degreesToRadians(value: number): number {
+    return value * Math.PI / 180;
   }
 
   private selectedItineraries(): Itinerary[] {

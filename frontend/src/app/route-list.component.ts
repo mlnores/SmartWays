@@ -1,7 +1,7 @@
 import { AsyncPipe } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Itinerary, Route, Translation } from './api.service';
@@ -121,6 +121,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                         [class.highlight-row]="highlightedRouteId === route.id"
                         [class.preview-selected-row]="selectedRouteIds.has(route.id)"
                         (click)="setRouteSelected(route, !selectedRouteIds.has(route.id))"
+                        (dblclick)="openRouteItineraries(route)"
                       >
                         <td class="selection-column" (click)="$event.stopPropagation()">
                           <input
@@ -326,6 +327,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   private readonly activatedRoute = inject(ActivatedRoute);
   private readonly api = inject(ApiService);
+  private readonly router = inject(Router);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
   readonly languageOptions = LANGUAGE_OPTIONS;
@@ -478,6 +480,10 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     } else {
       void this.renderVisibleRoutesPreview(this.currentRoutes);
     }
+  }
+
+  openRouteItineraries(route: Route): void {
+    void this.router.navigate(['/route', route.slug || route.id]);
   }
 
   routeRowId(route: Route): string {
