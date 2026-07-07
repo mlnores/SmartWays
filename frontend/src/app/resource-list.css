@@ -478,6 +478,14 @@ label span {
   font-weight: 400;
 }
 
+.route-color-swatch {
+  display: block;
+  width: 56px;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 999px;
+}
+
 .table-actions {
   display: flex;
   flex-wrap: wrap;

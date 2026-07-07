@@ -136,7 +136,14 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                           <strong>{{ route.title || 'Untitled route' }}</strong>
                           <p class="description-preview">{{ route.description || 'No description' }}</p>
                         </td>
-                        <td>{{ route.itinerary_count }}</td>
+                        <td>
+                          <span>{{ route.itinerary_count }}</span>
+                          <span
+                            class="route-color-swatch"
+                            [style.backgroundColor]="previewColorForRoute(route)"
+                            aria-hidden="true"
+                          ></span>
+                        </td>
                         <td class="enabled-column" (click)="$event.stopPropagation()">
                           <input
                             class="enabled-checkbox"
@@ -484,6 +491,13 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   openRouteItineraries(route: Route): void {
     void this.router.navigate(['/route', route.slug || route.id]);
+  }
+
+  previewColorForRoute(route: Route): string {
+    const previewRoutes = this.selectedRouteIds.size > 0 ? this.selectedRoutes() : this.currentRoutes;
+    const index = previewRoutes.findIndex(candidate => candidate.id === route.id);
+    if (index < 0) return '#cfd6e3';
+    return PREVIEW_COLORS[index % PREVIEW_COLORS.length];
   }
 
   routeRowId(route: Route): string {
