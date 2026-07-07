@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
-import { ApiService, Category, Poi, PoiImage, Translation } from './api.service';
+import { ApiService, Category, Poi, Translation } from './api.service';
 
 interface TranslationDraft {
   language_code: string;
@@ -39,6 +39,13 @@ interface ItineraryPointExport {
 
 interface ItineraryJsonExport {
   points?: ItineraryPointExport[];
+}
+
+interface MapBoundsFilter {
+  south: number;
+  west: number;
+  north: number;
+  east: number;
 }
 
 declare const L: any;
@@ -99,6 +106,16 @@ declare const L: any;
             <option [value]="countryCode">{{ countryName(countryCode) }}</option>
           }
         </select>
+        <button type="button" class="secondary toolbar-action" (click)="filterToPreviewArea()">
+          <span aria-hidden="true">▣</span>
+          <span>Filter to map area</span>
+        </button>
+        @if (mapBoundsFilter) {
+          <button type="button" class="secondary filter-chip" title="Remove map area filter" aria-label="Remove map area filter" (click)="clearMapAreaFilter()">
+            <span>Map area filter</span>
+            <span aria-hidden="true">×</span>
+          </button>
+        }
       </div>
 
       @if (statusMessage) {
@@ -109,28 +126,63 @@ declare const L: any;
         @if (state.error) {
           <p class="status error">{{ state.error }}</p>
         } @else {
-          <div class="preview-layout">
+          <div class="preview-layout poi-preview-layout">
             <div class="preview-list">
               <div class="table-wrap">
                 <table class="resource-table">
                   <thead>
                     <tr>
-                      <th>Name</th>
+                      <th class="selection-column" aria-label="Select">
+                        <input
+                          type="checkbox"
+                          title="Select all POIs"
+                          aria-label="Select all POIs"
+                          [checked]="areAllPoisSelected(state.items)"
+                          [indeterminate]="areSomePoisSelected(state.items)"
+                          (change)="setPoisSelected(state.items, $any($event.target).checked)"
+                        />
+                      </th>
+                      <th class="poi-name-column">POI</th>
+                      <th>Included in</th>
                       <th>Categories</th>
                       <th>Country</th>
-                      <th class="enabled-column">Enabled</th>
-                      <th>Actions</th>
+                      <th class="enabled-column">Draft</th>
                     </tr>
                   </thead>
                   <tbody>
                     @for (poi of state.items; track poi.id) {
                       <tr
-                        [class.preview-selected-row]="previewPoi?.id === poi.id"
-                        (click)="selectPreviewPoi(poi)"
+                        [attr.id]="poiRowId(poi)"
+                        [class.highlight-row]="highlightedPoiId === poi.id"
+                        [class.preview-selected-row]="selectedPoiIds.has(poi.id)"
+                        (click)="setPoiSelected(poi, !selectedPoiIds.has(poi.id))"
                       >
-                        <td>
+                        <td class="selection-column" (click)="$event.stopPropagation()">
+                          <input
+                            type="checkbox"
+                            title="Select POI for preview"
+                            aria-label="Select POI for preview"
+                            [checked]="selectedPoiIds.has(poi.id)"
+                            (change)="setPoiSelected(poi, $any($event.target).checked)"
+                          />
+                        </td>
+                        <td class="poi-name-column">
                           <strong>{{ poi.title || 'Untitled POI' }}</strong>
                           <p class="description-preview">{{ poi.description || 'No description' }}</p>
+                        </td>
+                        <td>
+                          <div class="route-membership-badges">
+                            @for (inclusion of poi.itinerary_inclusions; track inclusion.itinerary) {
+                              <span class="route-membership-badge poi-inclusion-badge">
+                                <span>{{ inclusion.itinerary_title || 'Itinerary ' + inclusion.itinerary }}</span>
+                                @if (inclusion.stage_number !== null) {
+                                  <span>{{ inclusion.stage_number }}</span>
+                                }
+                              </span>
+                            } @empty {
+                              <span class="muted">No itineraries</span>
+                            }
+                          </div>
                         </td>
                         <td>
                           @if (poi.categories.length) {
@@ -148,23 +200,16 @@ declare const L: any;
                           <input
                             class="enabled-checkbox"
                             type="checkbox"
-                            title="Enable"
-                            aria-label="Enable"
-                            [checked]="poi.enabled"
-                            (change)="setPoiEnabled(poi, $any($event.target).checked)"
+                            title="Draft"
+                            aria-label="Draft"
+                            [checked]="!poi.enabled"
+                            (change)="setPoiEnabled(poi, !$any($event.target).checked)"
                           />
-                        </td>
-                        <td>
-                          <div class="table-actions" (click)="$event.stopPropagation()">
-                            <button type="button" class="secondary icon-action" title="Edit metadata" aria-label="Edit metadata" (click)="openMetadataDialog(poi)">📝</button>
-                            <button type="button" class="secondary icon-action" [title]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [attr.aria-label]="duplicatingIds.has(poi.id) ? 'Duplicating...' : 'Duplicate'" [disabled]="duplicatingIds.has(poi.id)" (click)="duplicatePoi(poi)">📄</button>
-                            <button type="button" class="secondary icon-action danger-action" title="Delete" aria-label="Delete" (click)="deletePoi(poi)">🗑️</button>
-                          </div>
                         </td>
                       </tr>
                     } @empty {
                       <tr>
-                        <td colspan="5">No POIs found.</td>
+                        <td colspan="6">No POIs found.</td>
                       </tr>
                     }
                   </tbody>
@@ -174,12 +219,34 @@ declare const L: any;
             <aside class="preview-panel" aria-label="POI map preview">
               <header>
                 <h2>Map preview</h2>
-                <p>{{ previewPoi ? previewPoi.title || 'Untitled POI' : 'Click a POI to preview it.' }}</p>
+                <p>{{ previewLabel() }}</p>
               </header>
               <div class="preview-map" #previewMap></div>
               @if (previewMessage) {
                 <p class="muted preview-message">{{ previewMessage }}</p>
               }
+              <div class="preview-actions" aria-label="POI preview actions">
+                <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentPois()">
+                  <span class="preview-action-icon" aria-hidden="true">🎯</span>
+                  <span>Fit view to selection</span>
+                </button>
+
+                @if (selectedPoiIds.size > 1) {
+                  <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedPois()">
+                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                    <span>Delete selected POIs</span>
+                  </button>
+                } @else if (previewPoi) {
+                  <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']">
+                    <span class="preview-action-icon" aria-hidden="true">🗺️</span>
+                    <span>Open in editor</span>
+                  </a>
+                  <button type="button" class="secondary preview-action danger-action" (click)="deletePoi(previewPoi)">
+                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                    <span>Delete POI</span>
+                  </button>
+                }
+              </div>
             </aside>
           </div>
         }
@@ -355,6 +422,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private readonly router = inject(Router);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
+  readonly mapFilter$ = new BehaviorSubject(0);
   query = '';
   itineraryId: string | null = null;
   itineraryTitle: string | null = null;
@@ -374,20 +442,26 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   categoryDraft: CategoryDraft = this.emptyCategoryDraft();
   categoryTranslationDrafts: CategoryTranslationDraft[] = [];
   mergeTargetCategoryId: number | null = null;
-  readonly duplicatingIds = new Set<number>();
+  readonly selectedPoiIds = new Set<number>();
+  currentPois: Poi[] = [];
+  mapBoundsFilter: MapBoundsFilter | null = null;
+  highlightedPoiId: number | null = null;
   previewPoi: Poi | null = null;
   previewMessage = 'Click a POI to preview it.';
   private previewMap: any = null;
   private previewLayer: any = null;
+  private previewFilterLayer: any = null;
   private previewResizeObserver: ResizeObserver | null = null;
   private previewFitRequestId = 0;
+  private selectedPreviewFitLocked = false;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
     this.refresh$,
+    this.mapFilter$,
     this.activatedRoute.paramMap.pipe(map(params => params.get('id')))
   ]).pipe(
-    switchMap(([query, , itineraryId]) => {
+    switchMap(([query, , , itineraryId]) => {
       this.itineraryId = itineraryId;
       const itinerary$ = itineraryId ? this.api.getItinerary(itineraryId) : of(null);
       return combineLatest([
@@ -409,9 +483,19 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
             undefined,
             this.selectedCategory,
             this.selectedCountry,
-            itineraryId ? this.itineraryPoiIds : undefined
+            itineraryId ? this.itineraryPoiIds : undefined,
+            this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : undefined
           ).pipe(
-            map(page => ({ items: page.results, error: '' }))
+            map(page => {
+              this.currentPois = page.results;
+              this.pruneSelectedPois(page.results);
+              if (this.selectedPoiIds.size > 0) {
+                this.renderSelectedPoiPreviewIfNeeded(!this.selectedPreviewFitLocked);
+              } else {
+                this.renderVisiblePoisPreview(page.results);
+              }
+              return { items: page.results, error: '' };
+            })
           );
         }),
         catchError(error => of({ items: [] as Poi[], error: `Could not load POIs. ${error.message}` }))
@@ -443,7 +527,116 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
 
   selectPreviewPoi(poi: Poi): void {
     this.previewPoi = poi;
+    if (this.selectedPoiIds.size > 0) {
+      this.selectedPoiIds.clear();
+      this.selectedPreviewFitLocked = false;
+    }
     this.renderPreviewPoi(poi);
+  }
+
+  setPoiSelected(poi: Poi, selected: boolean): void {
+    if (selected) {
+      this.selectedPoiIds.add(poi.id);
+    } else {
+      this.selectedPoiIds.delete(poi.id);
+    }
+    this.previewPoi = this.selectedPoiIds.size === 1 ? this.selectedPois()[0] || null : null;
+    if (this.selectedPoiIds.size > 0) {
+      const shouldFit = !this.selectedPreviewFitLocked;
+      if (this.selectedPoiIds.size >= 2) {
+        this.selectedPreviewFitLocked = true;
+      }
+      this.renderSelectedPoiPreviewIfNeeded(shouldFit);
+    } else {
+      this.selectedPreviewFitLocked = false;
+      this.previewPoi = null;
+      this.renderVisiblePoisPreview(this.currentPois);
+    }
+  }
+
+  setPoisSelected(pois: Poi[], selected: boolean): void {
+    pois.forEach(poi => {
+      if (selected) {
+        this.selectedPoiIds.add(poi.id);
+      } else {
+        this.selectedPoiIds.delete(poi.id);
+      }
+    });
+    this.previewPoi = this.selectedPoiIds.size === 1 ? this.selectedPois()[0] || null : null;
+    if (this.selectedPoiIds.size > 0) {
+      if (this.selectedPoiIds.size >= 2) {
+        this.selectedPreviewFitLocked = true;
+      }
+      this.renderSelectedPoiPreviewIfNeeded(true);
+    } else {
+      this.selectedPreviewFitLocked = false;
+      this.previewPoi = null;
+      this.renderVisiblePoisPreview(this.currentPois);
+    }
+  }
+
+  areAllPoisSelected(pois: Poi[]): boolean {
+    return pois.length > 0 && pois.every(poi => this.selectedPoiIds.has(poi.id));
+  }
+
+  areSomePoisSelected(pois: Poi[]): boolean {
+    return pois.some(poi => this.selectedPoiIds.has(poi.id)) && !this.areAllPoisSelected(pois);
+  }
+
+  previewLabel(): string {
+    const selected = this.selectedPois();
+    if (selected.length > 1) return `${selected.length} selected POIs`;
+    if (selected.length === 1) return selected[0].title || 'Untitled POI';
+    return 'All POIs';
+  }
+
+  fitPreviewToCurrentPois(): void {
+    if (this.selectedPoiIds.size > 0) {
+      this.renderSelectedPoiPreviewIfNeeded(true);
+    } else {
+      this.renderVisiblePoisPreview(this.currentPois);
+    }
+  }
+
+  selectPoiFromPreviewMarker(poi: Poi): void {
+    this.setPoiSelected(poi, true);
+    this.highlightedPoiId = poi.id;
+    window.setTimeout(() => {
+      document.getElementById(this.poiRowId(poi))?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    }, 80);
+    window.setTimeout(() => {
+      if (this.highlightedPoiId === poi.id) {
+        this.highlightedPoiId = null;
+      }
+    }, 2500);
+  }
+
+  filterToPreviewArea(): void {
+    if (!this.previewMap) return;
+    const bounds = this.previewMap.getBounds();
+    this.mapBoundsFilter = {
+      south: bounds.getSouth(),
+      west: bounds.getWest(),
+      north: bounds.getNorth(),
+      east: bounds.getEast()
+    };
+    this.selectedPoiIds.clear();
+    this.selectedPreviewFitLocked = false;
+    this.previewPoi = null;
+    this.mapFilter$.next(this.mapFilter$.value + 1);
+    this.drawMapBoundsFilter();
+  }
+
+  clearMapAreaFilter(): void {
+    this.mapBoundsFilter = null;
+    this.previewFilterLayer?.clearLayers();
+    this.selectedPoiIds.clear();
+    this.selectedPreviewFitLocked = false;
+    this.previewPoi = null;
+    this.mapFilter$.next(this.mapFilter$.value + 1);
   }
 
   async setPoiEnabled(poi: Poi, enabled: boolean): Promise<void> {
@@ -669,42 +862,38 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  async duplicatePoi(poi: Poi): Promise<void> {
-    const title = window.prompt('New title for duplicated POI:', `Copy of ${poi.title || 'Untitled POI'}`)?.trim();
-    if (!title) return;
-
-    this.duplicatingIds.add(poi.id);
-    this.clearStatus();
-
-    try {
-      await firstValueFrom(this.api.createPoi({
-        enabled: poi.enabled,
-        country_code: poi.country_code,
-        gps_latitude: poi.gps_latitude,
-        gps_longitude: poi.gps_longitude,
-        website: poi.website || '',
-        category_ids: poi.categories.map(category => category.id),
-        translations: this.duplicateTranslations(poi, title),
-        images: this.duplicateImages(poi.images)
-      }));
-      this.refresh$.next(this.refresh$.value + 1);
-    } catch (error) {
-      this.showStatus(`Could not duplicate POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
-    } finally {
-      this.duplicatingIds.delete(poi.id);
-    }
-  }
-
   async deletePoi(poi: Poi): Promise<void> {
     const confirmed = window.confirm(`Delete POI "${poi.title || 'Untitled POI'}"?`);
     if (!confirmed) return;
 
     try {
       await firstValueFrom(this.api.deletePoi(poi.id));
+      this.selectedPoiIds.delete(poi.id);
+      if (this.previewPoi?.id === poi.id) {
+        this.previewPoi = null;
+      }
       this.clearStatus();
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not delete POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async deleteSelectedPois(): Promise<void> {
+    const selected = this.selectedPois();
+    if (selected.length < 2) return;
+    const confirmed = window.confirm(`Delete ${selected.length} selected POIs? Itineraries that reference them will not be deleted.`);
+    if (!confirmed) return;
+
+    try {
+      await Promise.all(selected.map(poi => firstValueFrom(this.api.deletePoi(poi.id))));
+      this.selectedPoiIds.clear();
+      this.selectedPreviewFitLocked = false;
+      this.previewPoi = null;
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not delete selected POIs. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
@@ -723,6 +912,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       maxZoom: 19
     }).addTo(this.previewMap);
     this.previewLayer = L.layerGroup().addTo(this.previewMap);
+    this.previewFilterLayer = L.layerGroup().addTo(this.previewMap);
     this.previewResizeObserver = new ResizeObserver(() => {
       this.previewMap?.invalidateSize();
     });
@@ -735,6 +925,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     if (!this.previewMap || !this.previewLayer) return;
 
     this.previewLayer.clearLayers();
+    this.drawMapBoundsFilter();
     if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) {
       this.previewMessage = 'This POI does not have valid coordinates.';
       this.fitPreviewMap(null);
@@ -744,21 +935,126 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     const latLng = [poi.gps_latitude, poi.gps_longitude];
     L.marker(latLng, {
       icon: this.previewMarkerIcon()
-    })
-      .bindTooltip(poi.title || `POI #${poi.id}`, { direction: 'top' })
-      .addTo(this.previewLayer);
+    }).addTo(this.previewLayer);
 
     this.previewMessage = `${Number(poi.gps_latitude).toFixed(5)}, ${Number(poi.gps_longitude).toFixed(5)}`;
     void this.fitPreviewMap(latLng, poi.country_code);
   }
 
+  private renderSelectedPoiPreviewIfNeeded(shouldFit = true): void {
+    if (this.selectedPoiIds.size === 0) return;
+    const selected = this.selectedPois();
+    if (selected.length === 0) {
+      this.selectedPoiIds.clear();
+      this.selectedPreviewFitLocked = false;
+      this.previewPoi = null;
+      this.renderVisiblePoisPreview(this.currentPois);
+      return;
+    }
+    this.previewPoi = selected.length === 1 ? selected[0] : null;
+    this.renderPreviewPois(selected, shouldFit, 'selected POIs');
+  }
+
+  private renderVisiblePoisPreview(pois: Poi[]): void {
+    this.previewPoi = null;
+    if (pois.length === 0) {
+      this.previewLayer?.clearLayers();
+      this.drawMapBoundsFilter();
+      this.previewMessage = 'No POIs found.';
+      this.fitPreviewMapToWorld();
+      return;
+    }
+    this.renderPreviewPois(pois, true, 'visible POIs');
+  }
+
+  private renderPreviewPois(pois: Poi[], shouldFit = true, scopeLabel = 'POIs'): void {
+    this.initializePreviewMap();
+    if (!this.previewMap || !this.previewLayer) return;
+
+    this.previewLayer.clearLayers();
+    this.drawMapBoundsFilter();
+    const bounds = L.latLngBounds([]);
+    let validCoordinateCount = 0;
+
+    pois.forEach(poi => {
+      if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) return;
+      const latLng = [poi.gps_latitude, poi.gps_longitude];
+      validCoordinateCount += 1;
+      bounds.extend(latLng);
+      L.marker(latLng, {
+        icon: this.previewMarkerIcon()
+      })
+        .on('click', () => this.selectPoiFromPreviewMarker(poi))
+        .addTo(this.previewLayer);
+    });
+
+    if (shouldFit) {
+      this.fitPreviewBounds(bounds);
+    } else {
+      this.previewMap.invalidateSize(false);
+    }
+
+    if (validCoordinateCount === 0) {
+      this.previewMessage = `The ${scopeLabel} do not have valid coordinates.`;
+    } else {
+      this.previewMessage = validCoordinateCount === 1
+        ? '1 POI with coordinates.'
+        : `${validCoordinateCount} POIs with coordinates.`;
+    }
+  }
+
   private previewMarkerIcon(): any {
     return L.divIcon({
-      className: 'preview-marker',
-      html: '<span>1</span>',
-      iconSize: [34, 34],
-      iconAnchor: [17, 17],
-      tooltipAnchor: [0, -18]
+      className: 'preview-marker poi-preview-marker',
+      html: '<span></span>',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8]
+    });
+  }
+
+  private drawMapBoundsFilter(): void {
+    if (!this.previewFilterLayer) return;
+    this.previewFilterLayer.clearLayers();
+    if (!this.mapBoundsFilter) return;
+    L.rectangle(
+      [
+        [this.mapBoundsFilter.south, this.mapBoundsFilter.west],
+        [this.mapBoundsFilter.north, this.mapBoundsFilter.east]
+      ],
+      {
+        color: '#1f6feb',
+        weight: 2,
+        opacity: 0.9,
+        dashArray: '3 6',
+        fill: true,
+        fillColor: '#93c5fd',
+        fillOpacity: 0.22,
+        interactive: false
+      }
+    ).addTo(this.previewFilterLayer);
+  }
+
+  private fitPreviewBounds(bounds: any): void {
+    const requestId = ++this.previewFitRequestId;
+    window.requestAnimationFrame(() => {
+      if (!this.previewMap || requestId !== this.previewFitRequestId) return;
+      this.previewMap.invalidateSize(false);
+      if (bounds?.isValid?.()) {
+        this.previewMap.fitBounds(bounds, { padding: [22, 22], maxZoom: 14, animate: false });
+      } else {
+        this.previewMap.fitWorld({ animate: false });
+      }
+      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+    });
+  }
+
+  private fitPreviewMapToWorld(): void {
+    const requestId = ++this.previewFitRequestId;
+    window.requestAnimationFrame(() => {
+      if (!this.previewMap || requestId !== this.previewFitRequestId) return;
+      this.previewMap.invalidateSize(false);
+      this.previewMap.fitWorld({ animate: false });
+      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
     });
   }
 
@@ -795,52 +1091,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       }
       window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
     });
-  }
-
-  private duplicateTranslations(poi: Poi, title: string) {
-    const translations = poi.translations.length > 0
-      ? poi.translations
-      : [{ language_code: 'en', title: poi.title || '', description: poi.description || '', slug: '', is_reference: true }];
-    let hasEnglishTranslation = false;
-
-    const duplicatedTranslations = translations
-      .filter(translation => translation.language_code)
-      .map(translation => {
-        const languageCode = translation.language_code;
-        const isEnglish = languageCode.toLowerCase() === 'en';
-        hasEnglishTranslation = hasEnglishTranslation || isEnglish;
-        return {
-          language_code: languageCode,
-          title: isEnglish ? title : this.translationTitle(translation, poi),
-          description: translation.description || '',
-          is_reference: Boolean(translation.is_reference)
-        };
-      });
-
-    if (!hasEnglishTranslation) {
-      duplicatedTranslations.unshift({
-        language_code: 'en',
-        title,
-        description: poi.description || '',
-        is_reference: !duplicatedTranslations.some(translation => translation.is_reference)
-      });
-    }
-    if (!duplicatedTranslations.some(translation => translation.is_reference) && duplicatedTranslations.length > 0) {
-      duplicatedTranslations[0].is_reference = true;
-    }
-    return duplicatedTranslations;
-  }
-
-  private duplicateImages(images: PoiImage[]): PoiImage[] {
-    return images.map(image => ({
-      image_url: image.image_url,
-      position: image.position,
-      is_primary: image.is_primary
-    }));
-  }
-
-  private translationTitle(translation: Translation, poi: Poi): string {
-    return translation.title || poi.title || 'Untitled POI';
   }
 
   private translationDraftsFrom(
@@ -938,6 +1188,31 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       ids.push(id);
     }
     return ids;
+  }
+
+  private selectedPois(): Poi[] {
+    return this.currentPois.filter(poi => this.selectedPoiIds.has(poi.id));
+  }
+
+  poiRowId(poi: Poi): string {
+    return `poi-row-${poi.id}`;
+  }
+
+  private pruneSelectedPois(pois: Poi[]): void {
+    const visibleIds = new Set(pois.map(poi => poi.id));
+    [...this.selectedPoiIds].forEach(id => {
+      if (!visibleIds.has(id)) this.selectedPoiIds.delete(id);
+    });
+    if (this.selectedPoiIds.size === 0) {
+      this.selectedPreviewFitLocked = false;
+      this.previewPoi = null;
+    } else {
+      this.previewPoi = this.selectedPoiIds.size === 1 ? this.selectedPois()[0] || null : null;
+    }
+  }
+
+  private bboxParam(bounds: MapBoundsFilter): string {
+    return [bounds.west, bounds.south, bounds.east, bounds.north].join(',');
   }
 
   private showStatus(message: string, isError: boolean): void {

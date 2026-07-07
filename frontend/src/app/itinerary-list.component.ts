@@ -84,6 +84,7 @@ interface PreviewLineStyle {
 interface PreviewRenderOptions {
   showMarkers?: boolean;
   fitItineraryIds?: Set<number>;
+  markerClickFor?: (itinerary: Itinerary) => void;
 }
 
 interface MapBoundsFilter {
@@ -788,6 +789,22 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  selectItineraryFromPreviewMarker(itinerary: Itinerary): void {
+    this.setItinerarySelected(itinerary, true);
+    this.highlightedItineraryId = itinerary.id;
+    window.setTimeout(() => {
+      document.getElementById(this.itineraryRowId(itinerary))?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    }, 80);
+    window.setTimeout(() => {
+      if (this.highlightedItineraryId === itinerary.id) {
+        this.highlightedItineraryId = null;
+      }
+    }, 2500);
+  }
+
   openItineraryInEditor(itinerary: Itinerary): void {
     void this.router.navigate(['/itineraries', itinerary.id, 'edit'], {
       queryParams: this.backQueryParamsFor(itinerary)
@@ -1333,7 +1350,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     }
     this.previewItinerary = selected.length === 1 ? selected[0] : null;
     this.renderPreviewItineraries(selected, shouldFit, 'selected itineraries', undefined, {
-      showMarkers: Boolean(this.routeSlug)
+      showMarkers: Boolean(this.routeSlug),
+      markerClickFor: this.routeSlug ? itinerary => this.selectItineraryFromPreviewMarker(itinerary) : undefined
     });
   }
 
@@ -1363,6 +1381,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       undefined,
       {
         showMarkers: true,
+        markerClickFor: itinerary => this.selectItineraryFromPreviewMarker(itinerary)
       }
     );
   }
@@ -1390,7 +1409,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
         itinerary,
         PREVIEW_COLORS[index % PREVIEW_COLORS.length],
         lineStyleFor?.(itinerary, index),
-        options.showMarkers ? index + 1 : null
+        options.showMarkers ? index + 1 : null,
+        options.markerClickFor ? () => options.markerClickFor?.(itinerary) : undefined
       );
       if (result.bounds.isValid()) bounds.extend(result.bounds);
       if (result.bounds.isValid() && (!options.fitItineraryIds || options.fitItineraryIds.has(itinerary.id))) {
@@ -1423,7 +1443,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     itinerary: Itinerary,
     color: string,
     lineStyle: PreviewLineStyle = { weight: 5, opacity: 0.8 },
-    markerNumber: number | null = null
+    markerNumber: number | null = null,
+    markerClick?: () => void
   ): { bounds: any; routeGeometryCount: number; straightSegmentCount: number; hasPointCoordinates: boolean } {
     const json = this.itineraryJson(itinerary);
     const pointCoordinates = this.previewPointCoordinatesByIndex(json.points || []);
@@ -1436,9 +1457,12 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
     const markerCoordinate = markerNumber === null ? null : this.itineraryPreviewMidpoint(pointCoordinates, segments);
     if (markerCoordinate && markerNumber !== null) {
-      L.marker([markerCoordinate.lat, markerCoordinate.lng], {
+      const marker = L.marker([markerCoordinate.lat, markerCoordinate.lng], {
         icon: this.previewMarkerIcon(markerNumber)
       }).addTo(this.previewLayer);
+      if (markerClick) {
+        marker.on('click', markerClick);
+      }
     }
 
     for (let index = 0; index < segmentCount; index += 1) {

@@ -206,6 +206,7 @@ class POISerializer(serializers.ModelSerializer):
     slug = serializers.SerializerMethodField()
     translations = NestedPOITranslationSerializer(many=True, required=False)
     images = NestedPOIImageSerializer(many=True, required=False)
+    itinerary_inclusions = serializers.SerializerMethodField()
     categories = NestedCategorySerializer(many=True, read_only=True)
     category_ids = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(),
@@ -233,6 +234,7 @@ class POISerializer(serializers.ModelSerializer):
             "categories",
             "category_ids",
             "images",
+            "itinerary_inclusions",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
@@ -248,9 +250,52 @@ class POISerializer(serializers.ModelSerializer):
         translation = self._localized_translation(obj)
         return translation.slug if translation else None
 
+    def get_itinerary_inclusions(self, obj):
+        inclusion_map = self.context.get("poi_itinerary_inclusions")
+        if inclusion_map is None:
+            inclusion_map = self._build_poi_itinerary_inclusions()
+            self.context["poi_itinerary_inclusions"] = inclusion_map
+        return inclusion_map.get(obj.id, [])
+
     def _localized_translation(self, obj):
         language = self.context.get("language")
         return select_translation(obj.translations.all(), language)
+
+    def _build_poi_itinerary_inclusions(self):
+        inclusions = {}
+        language = self.context.get("language")
+        itineraries = Itinerary.objects.prefetch_related("translations", "route_stages", "route_stages__route", "route_stages__route__translations")
+        for itinerary in itineraries:
+            points = (itinerary.itinerary_json or {}).get("points") or []
+            poi_ids = []
+            seen = set()
+            for point in points:
+                if not isinstance(point, dict) or point.get("type") != "poi":
+                    continue
+                try:
+                    poi_id = int(point.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                if poi_id in seen:
+                    continue
+                seen.add(poi_id)
+                poi_ids.append(poi_id)
+            if not poi_ids:
+                continue
+            translation = select_translation(itinerary.translations.all(), language)
+            stages = list(getattr(itinerary, "_prefetched_objects_cache", {}).get("route_stages", []))
+            stage = stages[0] if stages else None
+            route_translation = select_translation(stage.route.translations.all(), language) if stage else None
+            inclusion = {
+                "itinerary": itinerary.id,
+                "itinerary_title": translation.title if translation else None,
+                "route": stage.route_id if stage else None,
+                "route_title": route_translation.title if route_translation else None,
+                "stage_number": stage.stage_number if stage else None,
+            }
+            for poi_id in poi_ids:
+                inclusions.setdefault(poi_id, []).append(inclusion)
+        return inclusions
 
     def validate(self, attrs):
         latitude = attrs.pop("gps_latitude", None)

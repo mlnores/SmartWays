@@ -305,19 +305,32 @@ label span {
   align-items: start;
 }
 
+.poi-preview-layout {
+  grid-template-columns: minmax(360px, 0.85fr) minmax(520px, 1.15fr);
+  align-items: start;
+}
+
 .route-preview-layout .resource-table,
-.itinerary-preview-layout .resource-table {
+.itinerary-preview-layout .resource-table,
+.poi-preview-layout .resource-table {
   min-width: 0;
 }
 
-.itinerary-preview-layout .resource-table {
+.itinerary-preview-layout .resource-table,
+.poi-preview-layout .resource-table {
   table-layout: fixed;
 }
 
 .itinerary-preview-layout .resource-table th,
-.itinerary-preview-layout .resource-table td {
+.itinerary-preview-layout .resource-table td,
+.poi-preview-layout .resource-table th,
+.poi-preview-layout .resource-table td {
   overflow-wrap: anywhere;
   word-break: normal;
+}
+
+.poi-preview-layout .poi-name-column {
+  width: 24%;
 }
 
 .itinerary-preview-layout .length-column {
@@ -325,18 +338,21 @@ label span {
   white-space: nowrap;
 }
 
-.itinerary-preview-layout .enabled-column {
+.itinerary-preview-layout .enabled-column,
+.poi-preview-layout .enabled-column {
   width: 72px;
   white-space: nowrap;
 }
 
 .route-preview-layout .description-preview,
-.itinerary-preview-layout .description-preview {
+.itinerary-preview-layout .description-preview,
+.poi-preview-layout .description-preview {
   max-width: none;
 }
 
 .route-preview-layout .preview-panel,
-.itinerary-preview-layout .preview-panel {
+.itinerary-preview-layout .preview-panel,
+.poi-preview-layout .preview-panel {
   position: sticky;
   top: 16px;
   max-height: calc(100vh - 48px);
@@ -344,21 +360,24 @@ label span {
 }
 
 .route-preview-layout .preview-map,
-.itinerary-preview-layout .preview-map {
+.itinerary-preview-layout .preview-map,
+.poi-preview-layout .preview-map {
   aspect-ratio: 16 / 9;
   min-height: 360px;
   max-height: calc(100vh - 230px);
 }
 
 .route-preview-layout .preview-actions,
-.itinerary-preview-layout .preview-actions {
+.itinerary-preview-layout .preview-actions,
+.poi-preview-layout .preview-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
 }
 
 .route-preview-layout .preview-action,
-.itinerary-preview-layout .preview-action {
+.itinerary-preview-layout .preview-action,
+.poi-preview-layout .preview-action {
   display: inline-flex;
   width: auto;
   max-width: 100%;
@@ -591,6 +610,10 @@ label span {
   padding-left: 6px;
   border-left: 1px solid #bfd3ff;
   color: #475467;
+}
+
+.poi-inclusion-badge {
+  cursor: default;
 }
 
 .inclusion-list {

@@ -127,6 +127,15 @@ export interface Poi {
   categories: Array<{ id: number; slug: string; name: string | null }>;
   translations: Translation[];
   images: PoiImage[];
+  itinerary_inclusions: PoiItineraryInclusion[];
+}
+
+export interface PoiItineraryInclusion {
+  itinerary: number;
+  itinerary_title: string | null;
+  route: number | null;
+  route_title: string | null;
+  stage_number: number | null;
 }
 
 export interface PoiPayload {
@@ -235,7 +244,8 @@ export class ApiService {
     enabled?: boolean,
     category?: number | string,
     country?: string,
-    ids?: Array<number | string>
+    ids?: Array<number | string>,
+    bbox?: string
   ): Observable<ApiPage<Poi>> {
     let params = new HttpParams();
     if (language) {
@@ -253,6 +263,9 @@ export class ApiService {
     }
     if (ids && ids.length > 0) {
       params = params.set('ids', ids.map(id => String(id)).join(','));
+    }
+    if (bbox) {
+      params = params.set('bbox', bbox);
     }
     if (query.trim()) {
       params = params.set('q', query.trim());
