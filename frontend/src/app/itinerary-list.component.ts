@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
-import { ApiService, Itinerary, Route, Translation } from './api.service';
+import { ApiService, Itinerary, ItineraryRouteMembership, Route, Translation } from './api.service';
 
 interface ItineraryGroup {
   routeId: number | null;
@@ -83,6 +83,7 @@ interface PreviewLineStyle {
 
 interface PreviewRenderOptions {
   showMarkers?: boolean;
+  fitItineraryIds?: Set<number>;
 }
 
 interface MapBoundsFilter {
@@ -127,6 +128,10 @@ declare const L: any;
             <button type="button" [class.active]="viewMode === 'flat'" (click)="viewMode = 'flat'">Plain list</button>
             <button type="button" [class.active]="viewMode === 'grouped'" (click)="viewMode = 'grouped'">Grouped by route</button>
           </div>
+          <button type="button" class="secondary toolbar-action" (click)="filterToPreviewArea()">
+            <span aria-hidden="true">▣</span>
+            <span>Filter to map area</span>
+          </button>
           @if (mapBoundsFilter) {
             <button type="button" class="secondary filter-chip" title="Remove map area filter" aria-label="Remove map area filter" (click)="clearMapAreaFilter()">
               <span>Map area filter</span>
@@ -178,11 +183,9 @@ declare const L: any;
                                 (change)="setItinerariesSelected(group.items, $any($event.target).checked)"
                             />
                           </th>
-                          <th>Title</th>
-                          <th>First point</th>
-                          <th>Last point</th>
-                            <th>Estimated distance</th>
-                            <th class="enabled-column">Enabled</th>
+                          <th>Itinerary</th>
+                            <th class="length-column">Length</th>
+                            <th class="enabled-column">Draft</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -206,18 +209,17 @@ declare const L: any;
                             <td>
                               {{ itinerary.title || 'Untitled itinerary' }}
                               <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
+                              <p class="point-preview">{{ firstPointName(itinerary) }} → {{ lastPointName(itinerary) }}</p>
                               </td>
-                              <td>{{ firstPointName(itinerary) }}</td>
-                              <td>{{ lastPointName(itinerary) }}</td>
-                              <td>{{ estimatedDistance(itinerary) }}</td>
+                              <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
                               <td class="enabled-column" (click)="$event.stopPropagation()">
                                 <input
                                   class="enabled-checkbox"
                                   type="checkbox"
-                                  title="Enable"
-                                  aria-label="Enable"
-                                  [checked]="itinerary.enabled"
-                                  (change)="setItineraryEnabled(itinerary, $any($event.target).checked)"
+                                  title="Draft"
+                                  aria-label="Draft"
+                                  [checked]="!itinerary.enabled"
+                                  (change)="setItineraryEnabled(itinerary, !$any($event.target).checked)"
                                 />
                               </td>
                             </tr>
@@ -243,18 +245,16 @@ declare const L: any;
                 <p class="muted preview-message">{{ previewMessage }}</p>
               }
               <div class="preview-actions" aria-label="Itinerary preview actions">
-                @if (!routeSlug) {
-                  <button type="button" class="secondary preview-action" (click)="filterToPreviewArea()">
-                    <span class="preview-action-icon" aria-hidden="true">▣</span>
-                    <span>Filter to map area</span>
-                  </button>
-                }
                 <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentItineraries()">
                   <span class="preview-action-icon" aria-hidden="true">🎯</span>
-                  <span>Fit map</span>
+                  <span>Fit view to selection</span>
                 </button>
 
                 @if (selectedItineraryIds.size > 1) {
+                  <button type="button" class="secondary preview-action" (click)="openRouteInclusionDialog()">
+                    <span class="preview-action-icon" aria-hidden="true">🔗</span>
+                    <span>Manage route inclusions</span>
+                  </button>
                   <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedItineraries()">
                     <span class="preview-action-icon" aria-hidden="true">🗑️</span>
                     <span>Delete selected itineraries</span>
@@ -276,12 +276,10 @@ declare const L: any;
                     <span class="preview-action-icon" aria-hidden="true">📄</span>
                     <span>{{ duplicatingIds.has(previewItinerary.id) ? 'Duplicating...' : 'Duplicate' }}</span>
                   </button>
-                  @if (previewItinerary.route !== null) {
-                    <button type="button" class="secondary preview-action" [disabled]="assigningIds.has(previewItinerary.id)" (click)="unassignItinerary(previewItinerary)">
-                      <span class="preview-action-icon" aria-hidden="true">🚫</span>
-                      <span>{{ assigningIds.has(previewItinerary.id) ? 'Saving...' : 'Remove from route' }}</span>
-                    </button>
-                  }
+                  <button type="button" class="secondary preview-action" (click)="openRouteInclusionDialog()">
+                    <span class="preview-action-icon" aria-hidden="true">🔗</span>
+                    <span>Manage route inclusions</span>
+                  </button>
                   <button type="button" class="secondary preview-action danger-action" (click)="deleteItinerary(previewItinerary)">
                     <span class="preview-action-icon" aria-hidden="true">🗑️</span>
                     <span>Delete itinerary</span>
@@ -308,15 +306,12 @@ declare const L: any;
                     (change)="setItinerariesSelected(items, $any($event.target).checked)"
                   />
                 </th>
+                <th>Itinerary</th>
                 @if (!routeSlug) {
-                  <th>Route</th>
-                } @else {
+                  <th>Included in</th>
                 }
-                <th>Title</th>
-                <th>First point</th>
-                <th>Last point</th>
-                <th>Estimated distance</th>
-                <th class="enabled-column">Enabled</th>
+                <th class="length-column">Length</th>
+                <th class="enabled-column">Draft</th>
               </tr>
             </thead>
             <tbody>
@@ -345,36 +340,41 @@ declare const L: any;
                       />
                     </div>
                   </td>
-                  @if (!routeSlug) {
-                    <td (click)="$event.stopPropagation()">
-                      <div class="route-assignment-cell">
-                        <select [ngModel]="assignmentDraftFor(itinerary).routeId" (ngModelChange)="setAssignmentRoute(itinerary, $event)">
-                          <option [ngValue]="null">No route</option>
-                          @for (route of routes; track route.id) {
-                            <option [ngValue]="route.id">{{ route.title || 'Route ' + route.id }}</option>
-                          }
-                        </select>
-                        <button type="button" class="secondary icon-action" [title]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Assign'" [attr.aria-label]="assigningIds.has(itinerary.id) ? 'Saving...' : 'Assign'" [disabled]="assigningIds.has(itinerary.id)" (click)="saveAssignment(itinerary)">
-                          ✅
-                        </button>
-                      </div>
-                    </td>
-                  }
                   <td>
                     {{ itinerary.title || 'Untitled itinerary' }}
                     <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
+                    <p class="point-preview">{{ firstPointName(itinerary) }} → {{ lastPointName(itinerary) }}</p>
                   </td>
-                  <td>{{ firstPointName(itinerary) }}</td>
-                  <td>{{ lastPointName(itinerary) }}</td>
-                  <td>{{ estimatedDistance(itinerary) }}</td>
+                  @if (!routeSlug) {
+                    <td>
+                      <div class="route-membership-badges">
+                        @for (membership of routeMembershipsFor(itinerary); track membership.route) {
+                          <button
+                            type="button"
+                            class="route-membership-badge"
+                            title="Open route itineraries"
+                            aria-label="Open route itineraries"
+                            (click)="$event.stopPropagation()"
+                            (dblclick)="openRouteMembership(membership, itinerary, $event)"
+                          >
+                            <span>{{ membership.route_title || 'Route ' + membership.route }}</span>
+                            <span>{{ membership.stage_number }}</span>
+                          </button>
+                        } @empty {
+                          <span class="muted">No routes</span>
+                        }
+                      </div>
+                    </td>
+                  }
+                  <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
                   <td class="enabled-column" (click)="$event.stopPropagation()">
                     <input
                       class="enabled-checkbox"
                       type="checkbox"
-                      title="Enable"
-                      aria-label="Enable"
-                      [checked]="itinerary.enabled"
-                      (change)="setItineraryEnabled(itinerary, $any($event.target).checked)"
+                      title="Draft"
+                      aria-label="Draft"
+                      [checked]="!itinerary.enabled"
+                      (change)="setItineraryEnabled(itinerary, !$any($event.target).checked)"
                     />
                   </td>
                 </tr>
@@ -412,8 +412,8 @@ declare const L: any;
               <textarea rows="4" [(ngModel)]="newItinerary.description" name="newItineraryDescription" placeholder="Optional description"></textarea>
             </label>
             <label class="checkbox-inline">
-              <input type="checkbox" [(ngModel)]="newItinerary.enabled" name="newItineraryEnabled" />
-              <span>Enabled</span>
+              <input type="checkbox" [ngModel]="!newItinerary.enabled" (ngModelChange)="newItinerary.enabled = !$event" name="newItineraryDraft" />
+              <span>Draft</span>
             </label>
             <label>
               <span>Route</span>
@@ -447,6 +447,43 @@ declare const L: any;
           <footer class="metadata-dialog-footer">
             <button type="button" class="secondary" (click)="closeDuplicateDialog()">Stay here</button>
             <button type="button" class="primary" (click)="goToDuplicatedItinerary()">Go to itineraries</button>
+          </footer>
+        </form>
+      </dialog>
+
+      <dialog class="metadata-dialog wide" #routeInclusionDialog>
+        <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveRouteInclusionDialog()">
+          <header class="metadata-dialog-header">
+            <h2>Manage route inclusions</h2>
+            <button type="button" class="icon-button" aria-label="Close route inclusions dialog" (click)="closeRouteInclusionDialog()">✖</button>
+          </header>
+          <div class="form-stack">
+            <p class="muted">
+              Managing {{ routeInclusionTargets().length }} {{ routeInclusionTargets().length === 1 ? 'itinerary' : 'itineraries' }}.
+            </p>
+
+            <section class="inclusion-list">
+              @for (route of availableRoutes; track route.id) {
+                <label class="inclusion-row">
+                  <input
+                    type="checkbox"
+                    [checked]="routeInclusionCheckboxState(route.id) === 'all'"
+                    [indeterminate]="routeInclusionCheckboxState(route.id) === 'some'"
+                    (change)="setRouteInclusionOverride(route.id, $any($event.target).checked)"
+                  />
+                  <span class="inclusion-row-text">
+                    <strong>{{ route.title || 'Route ' + route.id }}</strong>
+                    <span class="muted">{{ routeInclusionCount(route.id) }} of {{ routeInclusionTargets().length }} selected {{ routeInclusionTargets().length === 1 ? 'itinerary' : 'itineraries' }}</span>
+                  </span>
+                </label>
+              } @empty {
+                <p class="muted">No routes are available yet.</p>
+              }
+            </section>
+          </div>
+          <footer class="metadata-dialog-footer">
+            <button type="button" class="secondary" (click)="closeRouteInclusionDialog()">Cancel</button>
+            <button type="submit" class="primary" [disabled]="routeInclusionOverrides.size === 0 || assigningIds.size > 0">Save changes</button>
           </footer>
         </form>
       </dialog>
@@ -542,6 +579,7 @@ declare const L: any;
 export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('newItineraryDialog') private readonly newItineraryDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('duplicateDialog') private readonly duplicateDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('routeInclusionDialog') private readonly routeInclusionDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('translationDialog') private readonly translationDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
 
@@ -561,6 +599,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   statusIsError = false;
   availableRoutes: Route[] = [];
   newItinerary: NewItineraryDraft = { language_code: 'en', title: '', description: '', enabled: true, routeId: null, stageNumber: null };
+  readonly routeInclusionOverrides = new Map<number, boolean>();
   duplicatedItinerary: Itinerary | null = null;
   highlightedItineraryId: number | null = null;
   pendingHighlightItineraryId: number | null = null;
@@ -752,6 +791,13 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   openItineraryInEditor(itinerary: Itinerary): void {
     void this.router.navigate(['/itineraries', itinerary.id, 'edit'], {
       queryParams: this.backQueryParamsFor(itinerary)
+    });
+  }
+
+  openRouteMembership(membership: ItineraryRouteMembership, itinerary: Itinerary, event?: MouseEvent): void {
+    event?.stopPropagation();
+    void this.router.navigate(['/route', membership.route_slug || membership.route], {
+      queryParams: { highlight: itinerary.id }
     });
   }
 
@@ -1009,6 +1055,88 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  openRouteInclusionDialog(): void {
+    const targets = this.routeInclusionTargets();
+    if (targets.length === 0) return;
+    this.routeInclusionOverrides.clear();
+    this.routeInclusionDialog?.nativeElement.showModal();
+  }
+
+  closeRouteInclusionDialog(): void {
+    this.routeInclusionDialog?.nativeElement.close();
+    this.routeInclusionOverrides.clear();
+  }
+
+  routeInclusionTargets(): Itinerary[] {
+    const selected = this.selectedItineraries();
+    if (selected.length > 0) return selected;
+    return this.previewItinerary ? [this.previewItinerary] : [];
+  }
+
+  routeInclusionCount(routeId: number): number {
+    const targets = this.routeInclusionTargets();
+    return targets.filter(itinerary =>
+      this.routeMembershipsFor(itinerary).some(membership => membership.route === routeId)
+    ).length;
+  }
+
+  routeInclusionCheckboxState(routeId: number): 'all' | 'some' | 'none' {
+    const override = this.routeInclusionOverrides.get(routeId);
+    if (override !== undefined) return override ? 'all' : 'none';
+
+    const total = this.routeInclusionTargets().length;
+    const count = this.routeInclusionCount(routeId);
+    if (count === 0 || total === 0) return 'none';
+    if (count === total) return 'all';
+    return 'some';
+  }
+
+  setRouteInclusionOverride(routeId: number, included: boolean): void {
+    const total = this.routeInclusionTargets().length;
+    const currentCount = this.routeInclusionCount(routeId);
+    const matchesCurrentState = included ? currentCount === total : currentCount === 0;
+    if (matchesCurrentState) {
+      this.routeInclusionOverrides.delete(routeId);
+    } else {
+      this.routeInclusionOverrides.set(routeId, included);
+    }
+  }
+
+  async saveRouteInclusionDialog(): Promise<void> {
+    const targets = this.routeInclusionTargets();
+    const overrides = [...this.routeInclusionOverrides.entries()];
+    if (targets.length === 0 || overrides.length === 0) return;
+
+    targets.forEach(itinerary => this.assigningIds.add(itinerary.id));
+    this.clearStatus();
+    try {
+      const requests: Array<Promise<unknown>> = [];
+      for (const [routeId, shouldInclude] of overrides) {
+        if (shouldInclude) {
+          const itineraryIdsToAdd = targets
+            .filter(itinerary => !this.routeMembershipsFor(itinerary).some(membership => membership.route === routeId))
+            .map(itinerary => itinerary.id);
+          if (itineraryIdsToAdd.length > 0) {
+            requests.push(firstValueFrom(this.api.addItinerariesToRoute(routeId, itineraryIdsToAdd)));
+          }
+        } else {
+          for (const itinerary of targets) {
+            if (this.routeMembershipsFor(itinerary).some(membership => membership.route === routeId)) {
+              requests.push(firstValueFrom(this.api.removeItineraryFromRoute(routeId, itinerary.id)));
+            }
+          }
+        }
+      }
+      await Promise.all(requests);
+      this.closeRouteInclusionDialog();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not save route inclusions. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    } finally {
+      targets.forEach(itinerary => this.assigningIds.delete(itinerary.id));
+    }
+  }
+
   assignmentDraftFor(itinerary: Itinerary): AssignmentDraft {
     const existing = this.assignmentDrafts.get(itinerary.id);
     if (existing) return existing;
@@ -1204,11 +1332,9 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       return;
     }
     this.previewItinerary = selected.length === 1 ? selected[0] : null;
-    if (this.routeSlug) {
-      this.renderRouteItinerarySelectionPreview(shouldFit);
-      return;
-    }
-    this.renderPreviewItineraries(selected, shouldFit);
+    this.renderPreviewItineraries(selected, shouldFit, 'selected itineraries', undefined, {
+      showMarkers: Boolean(this.routeSlug)
+    });
   }
 
   private renderVisibleItinerariesPreview(itineraries: Itinerary[]): void {
@@ -1229,16 +1355,15 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       this.fitPreviewMapToWorld();
       return;
     }
-    const selected = this.selectedItineraries();
-    this.previewItinerary = selected.length === 1 ? selected[0] : null;
+    this.previewItinerary = null;
     this.renderPreviewItineraries(
       this.currentItineraries,
       shouldFit,
       'visible itineraries',
-      itinerary => this.selectedItineraryIds.has(itinerary.id)
-        ? { weight: 8, opacity: 0.95, dashArray: null }
-        : { weight: 4, opacity: 0.55, dashArray: '8 8' },
-      { showMarkers: true }
+      undefined,
+      {
+        showMarkers: true,
+      }
     );
   }
 
@@ -1255,6 +1380,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     this.previewLayer.clearLayers();
     this.drawMapBoundsFilter();
     const bounds = L.latLngBounds([]);
+    const fitBounds = L.latLngBounds([]);
     let routeGeometryCount = 0;
     let straightSegmentCount = 0;
     let hasPointCoordinates = false;
@@ -1267,13 +1393,16 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
         options.showMarkers ? index + 1 : null
       );
       if (result.bounds.isValid()) bounds.extend(result.bounds);
+      if (result.bounds.isValid() && (!options.fitItineraryIds || options.fitItineraryIds.has(itinerary.id))) {
+        fitBounds.extend(result.bounds);
+      }
       routeGeometryCount += result.routeGeometryCount;
       straightSegmentCount += result.straightSegmentCount;
       hasPointCoordinates ||= result.hasPointCoordinates;
     });
 
     if (shouldFit) {
-      this.fitPreviewMap(bounds);
+      this.fitPreviewMap(fitBounds.isValid() ? fitBounds : bounds);
     } else {
       this.previewMap.invalidateSize(false);
     }
@@ -1610,8 +1739,19 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     }, 0);
 
     if (totalMeters <= 0) return 'Not estimated';
-    if (totalMeters >= 1000) return `${(totalMeters / 1000).toFixed(1)} km`;
-    return `${Math.round(totalMeters)} m`;
+    if (totalMeters >= 1000) return `~${(totalMeters / 1000).toFixed(1)} km`;
+    return `~${Math.round(totalMeters)} m`;
+  }
+
+  routeMembershipsFor(itinerary: Itinerary): ItineraryRouteMembership[] {
+    if (itinerary.route_memberships?.length) return itinerary.route_memberships;
+    if (itinerary.route === null || itinerary.stage_number === null) return [];
+    return [{
+      route: itinerary.route,
+      route_title: itinerary.route_title,
+      route_slug: itinerary.route_slug,
+      stage_number: itinerary.stage_number
+    }];
   }
 
   itineraryRowId(itinerary: Itinerary): string {

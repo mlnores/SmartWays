@@ -111,7 +111,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                       </th>
                       <th>Title</th>
                       <th>Segments</th>
-                      <th class="enabled-column">Enabled</th>
+                      <th class="enabled-column">Draft</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -148,10 +148,10 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                           <input
                             class="enabled-checkbox"
                             type="checkbox"
-                            title="Enable"
-                            aria-label="Enable"
-                            [checked]="route.enabled"
-                            (change)="setRouteEnabled(route, $any($event.target).checked)"
+                            title="Draft"
+                            aria-label="Draft"
+                            [checked]="!route.enabled"
+                            (change)="setRouteEnabled(route, !$any($event.target).checked)"
                           />
                         </td>
                       </tr>
@@ -176,7 +176,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
               <div class="preview-actions" aria-label="Route preview actions">
                 <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentRoutes()">
                   <span class="preview-action-icon" aria-hidden="true">🎯</span>
-                  <span>Fit map</span>
+                  <span>Fit view to selection</span>
                 </button>
 
                 @if (selectedRouteIds.size > 1) {
@@ -228,8 +228,8 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
               <textarea rows="4" [(ngModel)]="newRoute.description" name="newRouteDescription" placeholder="Optional description"></textarea>
             </label>
             <label class="checkbox-inline">
-              <input type="checkbox" [(ngModel)]="newRoute.enabled" name="newRouteEnabled" />
-              <span>Enabled</span>
+              <input type="checkbox" [ngModel]="!newRoute.enabled" (ngModelChange)="newRoute.enabled = !$event" name="newRouteDraft" />
+              <span>Draft</span>
             </label>
           </div>
           <footer class="metadata-dialog-footer">

@@ -485,6 +485,17 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.data["route_title"], "Camino route")
         self.assertEqual(response.data["route_slug"], "camino-route")
         self.assertEqual(response.data["stage_number"], 1)
+        self.assertEqual(
+            response.data["route_memberships"],
+            [
+                {
+                    "route": route.id,
+                    "route_title": "Camino route",
+                    "route_slug": "camino-route",
+                    "stage_number": 1,
+                }
+            ],
+        )
 
         route_response = self.client.get(reverse("itinerary-list"), {"route": route.id})
         unassigned_response = self.client.get(reverse("itinerary-list"), {"route": "null"})
@@ -549,6 +560,33 @@ class POIAPITests(APITestCase):
         self.assertEqual(RouteStage.objects.get(route=route, itinerary=first).stage_number, 1)
         self.assertFalse(RouteStage.objects.filter(route=route, itinerary=second).exists())
         self.assertEqual(RouteStage.objects.get(route=route, itinerary=third).stage_number, 2)
+
+    def test_route_add_itineraries_appends_new_stages(self):
+        route = Route.objects.create(enabled=True)
+        route.translations.create(
+            language_code="en",
+            title="Camino route",
+            description="A multi-stage route.",
+            slug="camino-route",
+        )
+        existing = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        RouteStage.objects.create(route=route, itinerary=existing, stage_number=1)
+        existing.translations.create(language_code="en", title="Existing", slug="existing")
+        first = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        first.translations.create(language_code="en", title="First", slug="first")
+        second = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        second.translations.create(language_code="en", title="Second", slug="second")
+
+        response = self.client.post(
+            reverse("route-add-itineraries", args=[route.id]),
+            {"itineraries": [existing.id, first.id, second.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(RouteStage.objects.get(route=route, itinerary=existing).stage_number, 1)
+        self.assertEqual(RouteStage.objects.get(route=route, itinerary=first).stage_number, 2)
+        self.assertEqual(RouteStage.objects.get(route=route, itinerary=second).stage_number, 3)
 
     def test_itinerary_list_returns_localized_content_and_searches(self):
         itinerary = Itinerary.objects.create(

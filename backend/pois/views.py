@@ -513,6 +513,56 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
         serializer = ItinerarySerializer(itinerary, context=self.get_serializer_context())
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=["post"], url_path="add-itineraries")
+    def add_itineraries(self, request, pk=None):
+        route = self.get_object()
+        itinerary_ids = request.data.get("itineraries")
+        if not isinstance(itinerary_ids, list) or not itinerary_ids:
+            raise ValidationError({"itineraries": "Provide a non-empty list of itinerary ids."})
+        if any(not isinstance(itinerary_id, int) for itinerary_id in itinerary_ids):
+            raise ValidationError({"itineraries": "Itinerary ids must be integers."})
+
+        itinerary_ids = list(dict.fromkeys(itinerary_ids))
+        itineraries = {
+            itinerary.id: itinerary
+            for itinerary in Itinerary.objects.filter(id__in=itinerary_ids)
+        }
+        missing_ids = set(itinerary_ids) - set(itineraries)
+        if missing_ids:
+            raise ValidationError({"itineraries": "Every itinerary id must exist."})
+
+        with transaction.atomic():
+            existing_ids = set(
+                route.stages.select_for_update()
+                .filter(itinerary_id__in=itinerary_ids)
+                .values_list("itinerary_id", flat=True)
+            )
+            max_stage_number = (
+                route.stages.select_for_update()
+                .order_by("-stage_number")
+                .values_list("stage_number", flat=True)
+                .first()
+                or 0
+            )
+            next_stage_number = max_stage_number + 1
+            for itinerary_id in itinerary_ids:
+                if itinerary_id in existing_ids:
+                    continue
+                RouteStage.objects.create(
+                    route=route,
+                    itinerary=itineraries[itinerary_id],
+                    stage_number=next_stage_number,
+                )
+                next_stage_number += 1
+
+        queryset = (
+            Itinerary.objects.filter(id__in=itinerary_ids)
+            .prefetch_related("translations", "route_stages", "route_stages__route", "route_stages__route__translations")
+            .order_by("id")
+        )
+        serializer = ItinerarySerializer(queryset, many=True, context=self.get_serializer_context())
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class RouteTranslationViewSet(viewsets.ModelViewSet):
     serializer_class = RouteTranslationSerializer

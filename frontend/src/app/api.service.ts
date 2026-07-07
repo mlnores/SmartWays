@@ -33,6 +33,7 @@ export interface Itinerary {
   route_title: string | null;
   route_slug: string | null;
   stage_number: number | null;
+  route_memberships: ItineraryRouteMembership[];
   itinerary_json: unknown;
   created_at: string;
   updated_at: string;
@@ -40,6 +41,13 @@ export interface Itinerary {
   description: string | null;
   slug: string | null;
   translations: Translation[];
+}
+
+export interface ItineraryRouteMembership {
+  route: number;
+  route_title: string | null;
+  route_slug: string | null;
+  stage_number: number;
 }
 
 export interface ItineraryPayload {
@@ -215,6 +223,10 @@ export class ApiService {
 
   removeItineraryFromRoute(routeId: number, itineraryId: number): Observable<Itinerary> {
     return this.http.post<Itinerary>(`${API_BASE_URL}/routes/${routeId}/remove-itinerary/`, { itinerary: itineraryId });
+  }
+
+  addItinerariesToRoute(routeId: number, itineraryIds: number[]): Observable<Itinerary[]> {
+    return this.http.post<Itinerary[]>(`${API_BASE_URL}/routes/${routeId}/add-itineraries/`, { itineraries: itineraryIds });
   }
 
   listPois(

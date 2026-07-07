@@ -341,6 +341,7 @@ class ItinerarySerializer(serializers.ModelSerializer):
     route_title = serializers.SerializerMethodField()
     route_slug = serializers.SerializerMethodField()
     stage_number = serializers.SerializerMethodField()
+    route_memberships = serializers.SerializerMethodField()
     translations = NestedItineraryTranslationSerializer(many=True, required=False)
 
     class Meta:
@@ -352,6 +353,7 @@ class ItinerarySerializer(serializers.ModelSerializer):
             "route_title",
             "route_slug",
             "stage_number",
+            "route_memberships",
             "itinerary_json",
             "created_at",
             "updated_at",
@@ -392,6 +394,18 @@ class ItinerarySerializer(serializers.ModelSerializer):
         stage = self._stage_membership(obj)
         return stage.stage_number if stage else None
 
+    def get_route_memberships(self, obj):
+        memberships = []
+        for stage in self._stage_memberships(obj):
+            translation = select_translation(stage.route.translations.all(), self.context.get("language"))
+            memberships.append({
+                "route": stage.route_id,
+                "route_title": translation.title if translation else None,
+                "route_slug": translation.slug if translation else None,
+                "stage_number": stage.stage_number,
+            })
+        return memberships
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         stage = self._stage_membership(instance)
@@ -404,14 +418,23 @@ class ItinerarySerializer(serializers.ModelSerializer):
 
     def _stage_membership(self, obj):
         route_id = self.context.get("route_id")
-        stages = list(getattr(obj, "_prefetched_objects_cache", {}).get("route_stages", []))
-        if not stages:
-            stages = list(obj.route_stages.select_related("route").prefetch_related("route__translations").order_by("stage_number", "id"))
+        stages = self._stage_memberships(obj)
         if route_id:
             for stage in stages:
                 if stage.route_id == route_id:
                     return stage
         return stages[0] if stages else None
+
+    def _stage_memberships(self, obj):
+        stages = list(getattr(obj, "_prefetched_objects_cache", {}).get("route_stages", []))
+        if not stages:
+            stages = list(
+                obj.route_stages
+                .select_related("route")
+                .prefetch_related("route__translations")
+                .order_by("route_id", "stage_number", "id")
+            )
+        return sorted(stages, key=lambda stage: (stage.route_id, stage.stage_number, stage.id))
 
     def validate(self, attrs):
         if not isinstance(attrs.get("itinerary_json", self.instance.itinerary_json if self.instance else None), dict):
