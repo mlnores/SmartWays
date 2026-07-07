@@ -1,12 +1,15 @@
 .page {
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 24px;
   background: #f5f7fb;
 }
 
 .page-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -38,7 +41,13 @@ p {
   color: #667085;
 }
 
+.page > .status,
+.page > .error {
+  flex: 0 0 auto;
+}
+
 .toolbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -285,14 +294,39 @@ label span {
 }
 
 .preview-layout {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
   gap: 16px;
   align-items: start;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .preview-list {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.preview-list > .table-wrap,
+.preview-list > .route-group-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.load-more-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
 }
 
 .route-preview-layout {
@@ -354,7 +388,7 @@ label span {
 .itinerary-preview-layout .preview-panel,
 .poi-preview-layout .preview-panel {
   position: sticky;
-  top: 16px;
+  top: 0;
   max-height: calc(100vh - 48px);
   overflow: auto;
 }
@@ -386,7 +420,7 @@ label span {
 
 .preview-panel {
   position: sticky;
-  top: 16px;
+  top: 0;
   display: grid;
   gap: 10px;
   padding: 14px;

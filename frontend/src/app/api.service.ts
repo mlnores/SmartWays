@@ -245,7 +245,8 @@ export class ApiService {
     category?: number | string,
     country?: string,
     ids?: Array<number | string>,
-    bbox?: string
+    bbox?: string,
+    page?: number
   ): Observable<ApiPage<Poi>> {
     let params = new HttpParams();
     if (language) {
@@ -266,6 +267,9 @@ export class ApiService {
     }
     if (bbox) {
       params = params.set('bbox', bbox);
+    }
+    if (page && page > 1) {
+      params = params.set('page', String(page));
     }
     if (query.trim()) {
       params = params.set('q', query.trim());

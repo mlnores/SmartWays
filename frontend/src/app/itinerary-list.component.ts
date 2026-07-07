@@ -120,7 +120,7 @@ declare const L: any;
       <div class="toolbar">
         <input
           type="search"
-          placeholder="Search title, description, or slug"
+          placeholder="Search title or description"
           [ngModel]="query"
           (ngModelChange)="query = $event; query$.next($event)"
         />
@@ -1818,7 +1818,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
   private resolveRoute(routeSlug: string | null) {
     if (!routeSlug) return of(null);
-    return this.api.listAllRoutes(routeSlug).pipe(
+    return this.api.listAllRoutes('').pipe(
       map(routes => routes.find(route => route.slug === routeSlug || String(route.id) === routeSlug) || null)
     );
   }

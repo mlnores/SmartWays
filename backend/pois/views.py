@@ -388,7 +388,6 @@ class ItineraryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(
                 Q(translations__title__icontains=query)
                 | Q(translations__description__icontains=query)
-                | Q(translations__slug__icontains=query)
             )
 
         return queryset.distinct()
@@ -420,7 +419,6 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(
                 Q(translations__title__icontains=query)
                 | Q(translations__description__icontains=query)
-                | Q(translations__slug__icontains=query)
             )
 
         return queryset.distinct()

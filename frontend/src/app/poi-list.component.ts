@@ -2,9 +2,9 @@ import { AsyncPipe } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
-import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
+import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, Observable, of, startWith, switchMap } from 'rxjs';
 
-import { ApiService, Category, Poi, Translation } from './api.service';
+import { ApiPage, ApiService, Category, Poi, Translation } from './api.service';
 
 interface TranslationDraft {
   language_code: string;
@@ -215,11 +215,18 @@ declare const L: any;
                   </tbody>
                 </table>
               </div>
+              <div class="load-more-row">
+                @if (poiNextPage !== null) {
+                  <button type="button" class="secondary" [disabled]="loadingMorePois" (click)="loadMorePois()">
+                    {{ loadingMorePois ? 'Loading...' : 'Load more' }}
+                  </button>
+                }
+              </div>
             </div>
             <aside class="preview-panel" aria-label="POI map preview">
               <header>
                 <h2>Map preview</h2>
-                <p>{{ previewLabel() }}</p>
+                <p>{{ poiCountLabel(state.items.length) }}</p>
               </header>
               <div class="preview-map" #previewMap></div>
               @if (previewMessage) {
@@ -444,6 +451,9 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   mergeTargetCategoryId: number | null = null;
   readonly selectedPoiIds = new Set<number>();
   currentPois: Poi[] = [];
+  poiTotalCount = 0;
+  poiNextPage: number | null = null;
+  loadingMorePois = false;
   mapBoundsFilter: MapBoundsFilter | null = null;
   highlightedPoiId: number | null = null;
   previewPoi: Poi | null = null;
@@ -475,33 +485,37 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
           this.itineraryTitle = itinerary?.title || null;
           this.itineraryPoiIds = itinerary ? this.poiIdsForItinerary(itinerary.itinerary_json) : [];
           if (itineraryId && this.itineraryPoiIds.length === 0) {
-            return of({ items: [] as Poi[], error: '' });
+            this.currentPois = [];
+            this.poiTotalCount = 0;
+            this.poiNextPage = null;
+            this.renderVisiblePoisPreview([]);
+            return of({ items: [] as Poi[], count: 0, error: '' });
           }
-          return this.api.listPois(
-            query,
-            '',
-            undefined,
-            this.selectedCategory,
-            this.selectedCountry,
-            itineraryId ? this.itineraryPoiIds : undefined,
-            this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : undefined
-          ).pipe(
+          return this.fetchPoiPage(query, 1).pipe(
             map(page => {
               this.currentPois = page.results;
-              this.pruneSelectedPois(page.results);
+              this.poiTotalCount = page.count;
+              this.poiNextPage = page.next ? 2 : null;
+              this.pruneSelectedPois(this.currentPois);
               if (this.selectedPoiIds.size > 0) {
                 this.renderSelectedPoiPreviewIfNeeded(!this.selectedPreviewFitLocked);
               } else {
-                this.renderVisiblePoisPreview(page.results);
+                this.renderVisiblePoisPreview(this.currentPois);
               }
-              return { items: page.results, error: '' };
+              return { items: this.currentPois, count: page.count, error: '' };
             })
           );
         }),
-        catchError(error => of({ items: [] as Poi[], error: `Could not load POIs. ${error.message}` }))
+        catchError(error => {
+          this.currentPois = [];
+          this.poiTotalCount = 0;
+          this.poiNextPage = null;
+          this.loadingMorePois = false;
+          return of({ items: [] as Poi[], count: 0, error: `Could not load POIs. ${error.message}` });
+        })
       );
     }),
-    startWith({ items: [] as Poi[], error: '' })
+    startWith({ items: [] as Poi[], count: 0, error: '' })
   );
 
   ngAfterViewInit(): void {
@@ -583,19 +597,17 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     return pois.some(poi => this.selectedPoiIds.has(poi.id)) && !this.areAllPoisSelected(pois);
   }
 
-  previewLabel(): string {
-    const selected = this.selectedPois();
-    if (selected.length > 1) return `${selected.length} selected POIs`;
-    if (selected.length === 1) return selected[0].title || 'Untitled POI';
-    return 'All POIs';
-  }
-
   fitPreviewToCurrentPois(): void {
     if (this.selectedPoiIds.size > 0) {
       this.renderSelectedPoiPreviewIfNeeded(true);
     } else {
       this.renderVisiblePoisPreview(this.currentPois);
     }
+  }
+
+  poiCountLabel(visibleCount: number): string {
+    const suffix = this.hasActivePoiFilters() ? ' matching the filter(s)' : '';
+    return `Showing ${visibleCount} of ${this.poiTotalCount} POIs${suffix}`;
   }
 
   selectPoiFromPreviewMarker(poi: Poi): void {
@@ -637,6 +649,41 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.selectedPreviewFitLocked = false;
     this.previewPoi = null;
     this.mapFilter$.next(this.mapFilter$.value + 1);
+  }
+
+  async loadMorePois(): Promise<void> {
+    if (this.poiNextPage === null || this.loadingMorePois) return;
+    const pageToLoad = this.poiNextPage;
+    this.loadingMorePois = true;
+    try {
+      const page = await firstValueFrom(this.fetchPoiPage(this.query, pageToLoad));
+      const existingIds = new Set(this.currentPois.map(poi => poi.id));
+      const newPois = page.results.filter(poi => !existingIds.has(poi.id));
+      this.currentPois.push(...newPois);
+      this.poiTotalCount = page.count;
+      this.poiNextPage = page.next ? pageToLoad + 1 : null;
+      this.pruneSelectedPois(this.currentPois);
+      if (this.selectedPoiIds.size > 0) {
+        this.renderSelectedPoiPreviewIfNeeded(false);
+      } else {
+        this.renderVisiblePoisPreview(this.currentPois);
+      }
+      this.clearStatus();
+    } catch (error) {
+      this.showStatus(`Could not load more POIs. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    } finally {
+      this.loadingMorePois = false;
+    }
+  }
+
+  private hasActivePoiFilters(): boolean {
+    return Boolean(
+      this.query.trim()
+      || this.selectedCategory
+      || this.selectedCountry
+      || this.mapBoundsFilter
+      || this.itineraryId
+    );
   }
 
   async setPoiEnabled(poi: Poi, enabled: boolean): Promise<void> {
@@ -1188,6 +1235,19 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       ids.push(id);
     }
     return ids;
+  }
+
+  private fetchPoiPage(query: string, page: number): Observable<ApiPage<Poi>> {
+    return this.api.listPois(
+      query,
+      '',
+      undefined,
+      this.selectedCategory,
+      this.selectedCountry,
+      this.itineraryId ? this.itineraryPoiIds : undefined,
+      this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : undefined,
+      page
+    );
   }
 
   private selectedPois(): Poi[] {

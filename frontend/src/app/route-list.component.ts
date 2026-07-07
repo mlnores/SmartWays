@@ -79,7 +79,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
       <div class="toolbar">
         <input
           type="search"
-          placeholder="Search route title, description, or slug"
+          placeholder="Search route title or description"
           [ngModel]="query"
           (ngModelChange)="query = $event; query$.next($event)"
         />
