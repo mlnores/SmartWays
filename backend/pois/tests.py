@@ -256,6 +256,40 @@ class POIAPITests(APITestCase):
         self.assertEqual(poi.media.get().media_type, POIMedia.MediaType.IMAGE)
         self.assertTrue(poi.translations.get(language_code="en").is_reference)
 
+    def test_poi_update_accepts_existing_translation_slugs(self):
+        payload = {
+            "enabled": self.poi.enabled,
+            "country_code": self.poi.country_code,
+            "gps_latitude": self.poi.gps_latitude,
+            "gps_longitude": self.poi.gps_longitude,
+            "website": self.poi.website,
+            "category_ids": [self.category.id],
+            "translations": [
+                {
+                    "language_code": translation.language_code,
+                    "title": "Updated Castle" if translation.language_code == "en" else translation.title,
+                    "description": translation.description,
+                    "slug": translation.slug,
+                    "is_reference": translation.language_code == "en",
+                }
+                for translation in self.poi.translations.order_by("language_code")
+            ],
+            "media": [
+                {
+                    "media_type": media.media_type,
+                    "url": media.url,
+                    "position": media.position,
+                    "is_primary": media.is_primary,
+                }
+                for media in self.poi.media.all()
+            ],
+        }
+
+        response = self.client.patch(reverse("poi-detail", args=[self.poi.id]), payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.poi.translations.get(language_code="en").title, "Updated Castle")
+
     def test_poi_create_rejects_multiple_reference_translations(self):
         response = self.client.post(
             reverse("poi-list"),

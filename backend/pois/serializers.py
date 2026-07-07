@@ -108,6 +108,7 @@ class NestedPOITranslationSerializer(serializers.ModelSerializer):
         model = POITranslation
         fields = ["id", "language_code", "title", "description", "slug", "is_reference"]
         read_only_fields = ["id"]
+        validators = []
 
 
 class NestedPOIMediaSerializer(serializers.ModelSerializer):

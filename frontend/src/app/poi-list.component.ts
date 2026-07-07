@@ -155,7 +155,8 @@ declare const L: any;
                         [attr.id]="poiRowId(poi)"
                         [class.highlight-row]="highlightedPoiId === poi.id"
                         [class.preview-selected-row]="selectedPoiIds.has(poi.id)"
-                        (click)="setPoiSelected(poi, !selectedPoiIds.has(poi.id))"
+                        (click)="queuePoiRowSelection(poi)"
+                        (dblclick)="centerPreviewOnPoi(poi)"
                       >
                         <td class="selection-column" (click)="$event.stopPropagation()">
                           <input
@@ -463,6 +464,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private previewFilterLayer: any = null;
   private previewResizeObserver: ResizeObserver | null = null;
   private previewFitRequestId = 0;
+  private poiRowClickTimer: number | null = null;
   private selectedPreviewFitLocked = false;
 
   readonly state$ = combineLatest([
@@ -531,6 +533,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.poiRowClickTimer !== null) {
+      window.clearTimeout(this.poiRowClickTimer);
+      this.poiRowClickTimer = null;
+    }
     this.previewResizeObserver?.disconnect();
     this.previewResizeObserver = null;
     if (this.previewMap) {
@@ -546,6 +552,16 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.selectedPreviewFitLocked = false;
     }
     this.renderPreviewPoi(poi);
+  }
+
+  queuePoiRowSelection(poi: Poi): void {
+    if (this.poiRowClickTimer !== null) {
+      window.clearTimeout(this.poiRowClickTimer);
+    }
+    this.poiRowClickTimer = window.setTimeout(() => {
+      this.poiRowClickTimer = null;
+      this.setPoiSelected(poi, !this.selectedPoiIds.has(poi.id));
+    }, 180);
   }
 
   setPoiSelected(poi: Poi, selected: boolean): void {
@@ -623,6 +639,22 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         this.highlightedPoiId = null;
       }
     }, 2500);
+  }
+
+  centerPreviewOnPoi(poi: Poi): void {
+    if (this.poiRowClickTimer !== null) {
+      window.clearTimeout(this.poiRowClickTimer);
+      this.poiRowClickTimer = null;
+    }
+    if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) {
+      this.showStatus('This POI does not have valid coordinates.', true);
+      return;
+    }
+    this.initializePreviewMap();
+    this.previewMap?.invalidateSize(false);
+    this.previewMap?.setView([poi.gps_latitude, poi.gps_longitude], Math.max(this.previewMap.getZoom() || 0, 14), {
+      animate: false
+    });
   }
 
   filterToPreviewArea(): void {
