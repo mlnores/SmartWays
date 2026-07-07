@@ -165,8 +165,16 @@ body {
   height: 16px;
   border: 2px solid #ffffff;
   color: transparent;
+  background: #93c5fd;
+  box-shadow:
+    0 0 0 2px #60a5fa,
+    0 2px 7px rgb(15 23 42 / 0.32);
+  font-size: 0;
+}
+
+.poi-preview-marker.selected span {
+  background: #1f6feb;
   box-shadow:
     0 0 0 2px #174ea6,
     0 2px 7px rgb(15 23 42 / 0.32);
-  font-size: 0;
 }

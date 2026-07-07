@@ -215,18 +215,18 @@ declare const L: any;
                   </tbody>
                 </table>
               </div>
-              <div class="load-more-row">
-                @if (poiNextPage !== null) {
-                  <button type="button" class="secondary" [disabled]="loadingMorePois" (click)="loadMorePois()">
-                    {{ loadingMorePois ? 'Loading...' : 'Load more' }}
-                  </button>
-                }
-              </div>
             </div>
             <aside class="preview-panel" aria-label="POI map preview">
               <header>
                 <h2>Map preview</h2>
-                <p>{{ poiCountLabel(state.items.length) }}</p>
+                <div class="preview-count-row">
+                  <p>{{ poiCountLabel(state.items.length) }}</p>
+                  @if (poiNextPage !== null) {
+                    <button type="button" class="secondary load-more-badge" [disabled]="loadingMorePois" (click)="loadMorePois()">
+                      {{ loadingMorePois ? 'Loading...' : 'Load more' }}
+                    </button>
+                  }
+                </div>
               </header>
               <div class="preview-map" #previewMap></div>
               @if (previewMessage) {
@@ -556,11 +556,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     }
     this.previewPoi = this.selectedPoiIds.size === 1 ? this.selectedPois()[0] || null : null;
     if (this.selectedPoiIds.size > 0) {
-      const shouldFit = !this.selectedPreviewFitLocked;
       if (this.selectedPoiIds.size >= 2) {
         this.selectedPreviewFitLocked = true;
       }
-      this.renderSelectedPoiPreviewIfNeeded(shouldFit);
+      this.renderSelectedPoiPreviewIfNeeded(true);
     } else {
       this.selectedPreviewFitLocked = false;
       this.previewPoi = null;
@@ -999,7 +998,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       return;
     }
     this.previewPoi = selected.length === 1 ? selected[0] : null;
-    this.renderPreviewPois(selected, shouldFit, 'selected POIs');
+    this.renderPreviewPois(this.currentPois, shouldFit, 'visible POIs', new Set(selected.map(poi => poi.id)));
   }
 
   private renderVisiblePoisPreview(pois: Poi[]): void {
@@ -1014,13 +1013,19 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.renderPreviewPois(pois, true, 'visible POIs');
   }
 
-  private renderPreviewPois(pois: Poi[], shouldFit = true, scopeLabel = 'POIs'): void {
+  private renderPreviewPois(
+    pois: Poi[],
+    shouldFit = true,
+    scopeLabel = 'POIs',
+    fitPoiIds?: Set<number>
+  ): void {
     this.initializePreviewMap();
     if (!this.previewMap || !this.previewLayer) return;
 
     this.previewLayer.clearLayers();
     this.drawMapBoundsFilter();
     const bounds = L.latLngBounds([]);
+    const fitBounds = L.latLngBounds([]);
     let validCoordinateCount = 0;
 
     pois.forEach(poi => {
@@ -1028,15 +1033,18 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       const latLng = [poi.gps_latitude, poi.gps_longitude];
       validCoordinateCount += 1;
       bounds.extend(latLng);
+      if (!fitPoiIds || fitPoiIds.has(poi.id)) {
+        fitBounds.extend(latLng);
+      }
       L.marker(latLng, {
-        icon: this.previewMarkerIcon()
+        icon: this.previewMarkerIcon(this.selectedPoiIds.has(poi.id))
       })
         .on('click', () => this.selectPoiFromPreviewMarker(poi))
         .addTo(this.previewLayer);
     });
 
     if (shouldFit) {
-      this.fitPreviewBounds(bounds);
+      this.fitPreviewBounds(fitBounds.isValid() ? fitBounds : bounds);
     } else {
       this.previewMap.invalidateSize(false);
     }
@@ -1050,9 +1058,9 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private previewMarkerIcon(): any {
+  private previewMarkerIcon(selected = false): any {
     return L.divIcon({
-      className: 'preview-marker poi-preview-marker',
+      className: `preview-marker poi-preview-marker${selected ? ' selected' : ''}`,
       html: '<span></span>',
       iconSize: [16, 16],
       iconAnchor: [8, 8]

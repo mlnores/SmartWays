@@ -434,6 +434,22 @@ label span {
   gap: 3px;
 }
 
+.preview-count-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.load-more-badge {
+  min-height: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.86rem;
+  line-height: 1.2;
+}
+
 .preview-panel header p {
   color: #667085;
 }
