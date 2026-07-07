@@ -245,6 +245,32 @@ label span {
   background: #eef4ff;
 }
 
+.route-group-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.route-group-toggle span:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+  font-weight: 700;
+}
+
+.route-group-caret {
+  width: 1.1rem;
+  color: #475467;
+  font-size: 0.8rem;
+}
+
 .table-wrap {
   overflow: auto;
   border: 1px solid #d8dee8;

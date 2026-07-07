@@ -152,70 +152,81 @@ declare const L: any;
               @for (group of groupsFor(state.items); track groupKey(group)) {
                 <section class="route-group">
                   <header class="route-group-header">
-                    <h2>{{ group.title }}</h2>
+                    <button
+                      type="button"
+                      class="route-group-toggle"
+                      [attr.aria-expanded]="!isGroupCollapsed(group)"
+                      (click)="toggleGroup(group)"
+                    >
+                      <span class="route-group-caret" aria-hidden="true">{{ isGroupCollapsed(group) ? '▶' : '▼' }}</span>
+                      <span>{{ group.title }}</span>
+                      <span class="muted">{{ group.items.length }} {{ group.items.length === 1 ? 'itinerary' : 'itineraries' }}</span>
+                    </button>
                   </header>
-                  <div class="table-wrap">
-                    <table class="resource-table">
-                      <thead>
-                        <tr>
-                          <th class="selection-column" aria-label="Select">
-                            <input
-                              type="checkbox"
-                              title="Select all itineraries in this group"
-                              aria-label="Select all itineraries in this group"
-                              [checked]="areAllItinerariesSelected(group.items)"
-                              [indeterminate]="areSomeItinerariesSelected(group.items)"
-                              (change)="setItinerariesSelected(group.items, $any($event.target).checked)"
-                            />
-                          </th>
-                          <th>Stage</th>
-                          <th>Title</th>
-                          <th>First point</th>
-                          <th>Last point</th>
-                          <th>Estimated distance</th>
-                          <th class="enabled-column">Enabled</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        @for (itinerary of group.items; track itinerary.id) {
-                          <tr
-                            [attr.id]="itineraryRowId(itinerary)"
-                            [class.highlight-row]="highlightedItineraryId === itinerary.id"
-                            [class.preview-selected-row]="selectedItineraryIds.has(itinerary.id)"
-                            (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
-                          >
-                            <td class="selection-column" (click)="$event.stopPropagation()">
+                  @if (!isGroupCollapsed(group)) {
+                    <div class="table-wrap">
+                      <table class="resource-table">
+                        <thead>
+                          <tr>
+                            <th class="selection-column" aria-label="Select">
                               <input
                                 type="checkbox"
-                                title="Select itinerary for preview"
-                                aria-label="Select itinerary for preview"
-                                [checked]="selectedItineraryIds.has(itinerary.id)"
-                                (change)="setItinerarySelected(itinerary, $any($event.target).checked)"
+                                title="Select all itineraries in this group"
+                                aria-label="Select all itineraries in this group"
+                                [checked]="areAllItinerariesSelected(group.items)"
+                                [indeterminate]="areSomeItinerariesSelected(group.items)"
+                                (change)="setItinerariesSelected(group.items, $any($event.target).checked)"
                               />
-                            </td>
-                            <td>{{ itinerary.stage_number || '-' }}</td>
-                            <td>
-                              {{ itinerary.title || 'Untitled itinerary' }}
-                              <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
-                            </td>
-                            <td>{{ firstPointName(itinerary) }}</td>
-                            <td>{{ lastPointName(itinerary) }}</td>
-                            <td>{{ estimatedDistance(itinerary) }}</td>
-                            <td class="enabled-column" (click)="$event.stopPropagation()">
-                              <input
-                                class="enabled-checkbox"
-                                type="checkbox"
-                                title="Enable"
-                                aria-label="Enable"
-                                [checked]="itinerary.enabled"
-                                (change)="setItineraryEnabled(itinerary, $any($event.target).checked)"
-                              />
-                            </td>
+                            </th>
+                            <th>Stage</th>
+                            <th>Title</th>
+                            <th>First point</th>
+                            <th>Last point</th>
+                            <th>Estimated distance</th>
+                            <th class="enabled-column">Enabled</th>
                           </tr>
-                        }
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          @for (itinerary of group.items; track itinerary.id) {
+                            <tr
+                              [attr.id]="itineraryRowId(itinerary)"
+                              [class.highlight-row]="highlightedItineraryId === itinerary.id"
+                              [class.preview-selected-row]="selectedItineraryIds.has(itinerary.id)"
+                              (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
+                            >
+                              <td class="selection-column" (click)="$event.stopPropagation()">
+                                <input
+                                  type="checkbox"
+                                  title="Select itinerary for preview"
+                                  aria-label="Select itinerary for preview"
+                                  [checked]="selectedItineraryIds.has(itinerary.id)"
+                                  (change)="setItinerarySelected(itinerary, $any($event.target).checked)"
+                                />
+                              </td>
+                              <td>{{ itinerary.stage_number || '-' }}</td>
+                              <td>
+                                {{ itinerary.title || 'Untitled itinerary' }}
+                                <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
+                              </td>
+                              <td>{{ firstPointName(itinerary) }}</td>
+                              <td>{{ lastPointName(itinerary) }}</td>
+                              <td>{{ estimatedDistance(itinerary) }}</td>
+                              <td class="enabled-column" (click)="$event.stopPropagation()">
+                                <input
+                                  class="enabled-checkbox"
+                                  type="checkbox"
+                                  title="Enable"
+                                  aria-label="Enable"
+                                  [checked]="itinerary.enabled"
+                                  (change)="setItineraryEnabled(itinerary, $any($event.target).checked)"
+                                />
+                              </td>
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+                  }
                 </section>
               } @empty {
                 <p class="empty">No itineraries found.</p>
@@ -560,6 +571,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   readonly duplicatingIds = new Set<number>();
   readonly assigningIds = new Set<number>();
   readonly assignmentDrafts = new Map<number, AssignmentDraft>();
+  readonly collapsedGroupKeys = new Set<string>();
   draggedItineraryId: number | null = null;
   reorderingStages = false;
   readonly selectedItineraryIds = new Set<number>();
@@ -1535,6 +1547,19 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
   groupKey(group: ItineraryGroup): string {
     return group.routeId === null ? 'unassigned' : String(group.routeId);
+  }
+
+  isGroupCollapsed(group: ItineraryGroup): boolean {
+    return this.collapsedGroupKeys.has(this.groupKey(group));
+  }
+
+  toggleGroup(group: ItineraryGroup): void {
+    const key = this.groupKey(group);
+    if (this.collapsedGroupKeys.has(key)) {
+      this.collapsedGroupKeys.delete(key);
+    } else {
+      this.collapsedGroupKeys.add(key);
+    }
   }
 
   groupsFor(itineraries: Itinerary[]): ItineraryGroup[] {
