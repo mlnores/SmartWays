@@ -212,6 +212,21 @@ label span {
   color: #ffffff;
 }
 
+.filter-chip {
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-color: #93c5fd;
+  color: #174ea6;
+  background: #eff6ff;
+}
+
+.filter-chip span:last-child {
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .route-group-list {
   display: grid;
   gap: 16px;
@@ -253,34 +268,45 @@ label span {
   align-items: start;
 }
 
-.route-preview-layout .resource-table {
+.itinerary-preview-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.route-preview-layout .resource-table,
+.itinerary-preview-layout .resource-table {
   min-width: 0;
 }
 
-.route-preview-layout .description-preview {
+.route-preview-layout .description-preview,
+.itinerary-preview-layout .description-preview {
   max-width: none;
 }
 
-.route-preview-layout .preview-panel {
+.route-preview-layout .preview-panel,
+.itinerary-preview-layout .preview-panel {
   position: sticky;
   top: 16px;
   max-height: calc(100vh - 48px);
   overflow: auto;
 }
 
-.route-preview-layout .preview-map {
+.route-preview-layout .preview-map,
+.itinerary-preview-layout .preview-map {
   aspect-ratio: 16 / 9;
   min-height: 360px;
   max-height: calc(100vh - 230px);
 }
 
-.route-preview-layout .preview-actions {
+.route-preview-layout .preview-actions,
+.itinerary-preview-layout .preview-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
 }
 
-.route-preview-layout .preview-action {
+.route-preview-layout .preview-action,
+.itinerary-preview-layout .preview-action {
   display: inline-flex;
   width: auto;
   max-width: 100%;
@@ -367,6 +393,20 @@ label span {
   width: 42px;
   text-align: center;
   vertical-align: middle;
+}
+
+.resource-table .selection-column input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0;
+}
+
+.route-stage-controls {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
 }
 
 .resource-table th {

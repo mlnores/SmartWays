@@ -75,6 +75,23 @@ interface ItineraryJsonExport {
   segments?: SegmentExport[];
 }
 
+interface PreviewLineStyle {
+  weight: number;
+  opacity: number;
+  dashArray?: string | null;
+}
+
+interface PreviewRenderOptions {
+  showMarkers?: boolean;
+}
+
+interface MapBoundsFilter {
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+}
+
 declare const L: any;
 
 @Component({
@@ -86,7 +103,7 @@ declare const L: any;
       <header class="page-header">
         <div>
           <h1>{{ routeSlug ? routeTitle || 'Route itineraries' : 'Itineraries' }}</h1>
-          <p>{{ routeSlug ? 'Browse the constituent itineraries of this route.' : 'Browse saved itinerary definitions and open the editor.' }}</p>
+          <p>{{ routeSlug ? 'Browse the constituent itineraries of this route. Drag rows up or down to define their order.' : 'Browse saved itinerary definitions and open the editor.' }}</p>
         </div>
         @if (routeSlug) {
           <div class="list-actions">
@@ -110,6 +127,12 @@ declare const L: any;
             <button type="button" [class.active]="viewMode === 'flat'" (click)="viewMode = 'flat'">Plain list</button>
             <button type="button" [class.active]="viewMode === 'grouped'" (click)="viewMode = 'grouped'">Grouped by route</button>
           </div>
+          @if (mapBoundsFilter) {
+            <button type="button" class="secondary filter-chip" title="Remove map area filter" aria-label="Remove map area filter" (click)="clearMapAreaFilter()">
+              <span>Map area filter</span>
+              <span aria-hidden="true">×</span>
+            </button>
+          }
         }
       </div>
       @if (statusMessage) {
@@ -120,7 +143,7 @@ declare const L: any;
         @if (state.error) {
           <p class="status error">{{ state.error }}</p>
         } @else {
-          <div class="preview-layout">
+          <div class="preview-layout itinerary-preview-layout">
             <div class="preview-list">
               @if (routeSlug || viewMode === 'flat') {
                 <ng-container *ngTemplateOutlet="itineraryTable; context: { items: state.items, routes: state.routes }"></ng-container>
@@ -158,8 +181,8 @@ declare const L: any;
                           <tr
                             [attr.id]="itineraryRowId(itinerary)"
                             [class.highlight-row]="highlightedItineraryId === itinerary.id"
-                            [class.preview-selected-row]="previewItinerary?.id === itinerary.id || selectedItineraryIds.has(itinerary.id)"
-                            (click)="selectPreviewItinerary(itinerary)"
+                            [class.preview-selected-row]="selectedItineraryIds.has(itinerary.id)"
+                            (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
                           >
                             <td class="selection-column" (click)="$event.stopPropagation()">
                               <input
@@ -203,21 +226,30 @@ declare const L: any;
             <aside class="preview-panel" aria-label="Itinerary map preview">
               <header>
                 <h2>Map preview</h2>
-                <p>{{ selectedItineraryIds.size > 1 ? selectedItineraryIds.size + ' selected itineraries' : previewItinerary ? previewItinerary.title || 'Untitled itinerary' : 'Click an itinerary to preview it.' }}</p>
+                <p>{{ previewLabel() }}</p>
               </header>
               <div class="preview-map" #previewMap></div>
               @if (previewMessage) {
                 <p class="muted preview-message">{{ previewMessage }}</p>
               }
-              @if (selectedItineraryIds.size > 1) {
-                <div class="preview-actions" aria-label="Selected itinerary actions">
+              <div class="preview-actions" aria-label="Itinerary preview actions">
+                @if (!routeSlug) {
+                  <button type="button" class="secondary preview-action" (click)="filterToPreviewArea()">
+                    <span class="preview-action-icon" aria-hidden="true">▣</span>
+                    <span>Filter to map area</span>
+                  </button>
+                }
+                <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentItineraries()">
+                  <span class="preview-action-icon" aria-hidden="true">🎯</span>
+                  <span>Fit map</span>
+                </button>
+
+                @if (selectedItineraryIds.size > 1) {
                   <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedItineraries()">
                     <span class="preview-action-icon" aria-hidden="true">🗑️</span>
                     <span>Delete selected itineraries</span>
                   </button>
-                </div>
-              } @else if (previewItinerary) {
-                <div class="preview-actions" aria-label="Selected itinerary actions">
+                } @else if (previewItinerary) {
                   <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewItinerary)">
                     <span class="preview-action-icon" aria-hidden="true">📝</span>
                     <span>Edit metadata and translations</span>
@@ -244,8 +276,8 @@ declare const L: any;
                     <span class="preview-action-icon" aria-hidden="true">🗑️</span>
                     <span>Delete itinerary</span>
                   </button>
-                </div>
-              }
+                }
+              </div>
             </aside>
           </div>
         }
@@ -269,8 +301,6 @@ declare const L: any;
                 @if (!routeSlug) {
                   <th>Route</th>
                 } @else {
-                  <th class="drag-handle-column" aria-label="Reorder"></th>
-                  <th>Stage</th>
                 }
                 <th>Title</th>
                 <th>First point</th>
@@ -284,23 +314,25 @@ declare const L: any;
                 <tr
                   [attr.id]="itineraryRowId(itinerary)"
                   [class.highlight-row]="highlightedItineraryId === itinerary.id"
-                  [class.preview-selected-row]="previewItinerary?.id === itinerary.id || selectedItineraryIds.has(itinerary.id)"
+                  [class.preview-selected-row]="selectedItineraryIds.has(itinerary.id)"
                   [class.dragging-row]="draggedItineraryId === itinerary.id"
                   [attr.draggable]="routeSlug ? true : null"
-                  (click)="selectPreviewItinerary(itinerary)"
+                  (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
                   (dragstart)="startStageDrag(itinerary)"
                   (dragover)="allowStageDrop($event)"
                   (drop)="dropStage(itinerary, items)"
                   (dragend)="endStageDrag()"
                 >
                   <td class="selection-column" (click)="$event.stopPropagation()">
-                    <input
-                      type="checkbox"
-                      title="Select itinerary for preview"
-                      aria-label="Select itinerary for preview"
-                      [checked]="selectedItineraryIds.has(itinerary.id)"
-                      (change)="setItinerarySelected(itinerary, $any($event.target).checked)"
-                    />
+                    <div class="route-stage-controls">
+                      <input
+                        type="checkbox"
+                        title="Select itinerary for preview"
+                        aria-label="Select itinerary for preview"
+                        [checked]="selectedItineraryIds.has(itinerary.id)"
+                        (change)="setItinerarySelected(itinerary, $any($event.target).checked)"
+                      />
+                    </div>
                   </td>
                   @if (!routeSlug) {
                     <td (click)="$event.stopPropagation()">
@@ -316,11 +348,6 @@ declare const L: any;
                         </button>
                       </div>
                     </td>
-                  } @else {
-                    <td class="drag-handle-cell" aria-label="Drag to reorder stage">
-                      <span class="drag-handle" aria-hidden="true">☰</span>
-                    </td>
-                    <td>{{ itinerary.stage_number || '-' }}</td>
                   }
                   <td>
                     {{ itinerary.title || 'Untitled itinerary' }}
@@ -342,7 +369,7 @@ declare const L: any;
                 </tr>
               } @empty {
                 <tr>
-                  <td [attr.colspan]="routeSlug ? 8 : 7">No itineraries found.</td>
+                  <td [attr.colspan]="routeSlug ? 6 : 7">No itineraries found.</td>
                 </tr>
               }
             </tbody>
@@ -512,6 +539,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   private readonly router = inject(Router);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
+  readonly mapFilter$ = new BehaviorSubject(0);
   query = '';
   routeSlug: string | null = null;
   routeTitle: string | null = null;
@@ -537,8 +565,10 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   readonly selectedItineraryIds = new Set<number>();
   previewItinerary: Itinerary | null = null;
   previewMessage = 'Click an itinerary to preview it.';
+  mapBoundsFilter: MapBoundsFilter | null = null;
   private previewMap: any = null;
   private previewLayer: any = null;
+  private previewFilterLayer: any = null;
   private previewResizeObserver: ResizeObserver | null = null;
   private previewFitRequestId = 0;
   private selectedPreviewFitLocked = false;
@@ -546,10 +576,11 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
     this.refresh$,
+    this.mapFilter$,
     this.activatedRoute.paramMap.pipe(map(params => params.get('slug'))),
     this.activatedRoute.queryParamMap.pipe(map(params => Number(params.get('highlight')) || null))
   ]).pipe(
-    switchMap(([query, , routeSlug, highlightedItineraryId]) => {
+    switchMap(([query, , , routeSlug, highlightedItineraryId]) => {
       this.routeSlug = routeSlug;
       return combineLatest([
         this.api.listAllRoutes(''),
@@ -570,14 +601,21 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
           }
           return this.api.listAllItineraries(query, '', selectedRoute?.id).pipe(
             map(itineraries => {
-              const items = this.sortedItineraries(itineraries);
+              const sortedItems = this.sortedItineraries(itineraries);
+              const items = this.routeSlug ? sortedItems : this.applyMapBoundsFilter(sortedItems);
               this.currentItineraries = items;
               this.pruneSelectedItineraries(items);
-              this.renderSelectedItineraryPreviewIfNeeded(!this.selectedPreviewFitLocked);
+              if (this.selectedItineraryIds.size > 0) {
+                this.renderSelectedItineraryPreviewIfNeeded(!this.selectedPreviewFitLocked);
+              } else if (this.routeSlug) {
+                this.renderRouteItinerarySelectionPreview(true);
+              } else {
+                this.renderVisibleItinerariesPreview(items);
+              }
               return {
                 items,
                 routes,
-                groups: this.groupItineraries(itineraries),
+                groups: this.groupItineraries(items),
                 count: itineraries.length,
                 error: ''
               };
@@ -614,6 +652,15 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   selectPreviewItinerary(itinerary: Itinerary): void {
+    if (this.routeSlug) {
+      this.selectedItineraryIds.clear();
+      this.selectedItineraryIds.add(itinerary.id);
+      this.selectedPreviewFitLocked = false;
+      this.previewItinerary = itinerary;
+      this.renderRouteItinerarySelectionPreview(true);
+      return;
+    }
+
     this.previewItinerary = itinerary;
     if (this.selectedItineraryIds.size > 0) {
       this.selectedItineraryIds.clear();
@@ -625,10 +672,10 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   setItinerarySelected(itinerary: Itinerary, selected: boolean): void {
     if (selected) {
       this.selectedItineraryIds.add(itinerary.id);
-      this.previewItinerary = itinerary;
     } else {
       this.selectedItineraryIds.delete(itinerary.id);
     }
+    this.previewItinerary = this.selectedItineraryIds.size === 1 ? this.selectedItineraries()[0] || null : null;
     if (this.selectedItineraryIds.size > 0) {
       const shouldFit = !this.selectedPreviewFitLocked;
       if (this.selectedItineraryIds.size >= 2) {
@@ -637,8 +684,12 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       this.renderSelectedItineraryPreviewIfNeeded(shouldFit);
     } else {
       this.selectedPreviewFitLocked = false;
-      this.previewItinerary = itinerary;
-      this.renderPreviewItinerary();
+      this.previewItinerary = null;
+      if (this.routeSlug) {
+        this.renderRouteItinerarySelectionPreview(true);
+      } else {
+        this.renderVisibleItinerariesPreview(this.currentItineraries);
+      }
     }
   }
 
@@ -651,23 +702,64 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       }
     });
 
-    if (selected && itineraries.length > 0) {
-      this.previewItinerary = itineraries[itineraries.length - 1];
-    }
+    this.previewItinerary = this.selectedItineraryIds.size === 1 ? this.selectedItineraries()[0] || null : null;
 
     if (this.selectedItineraryIds.size > 0) {
-      const shouldFit = !this.selectedPreviewFitLocked;
       if (this.selectedItineraryIds.size >= 2) {
         this.selectedPreviewFitLocked = true;
       }
-      this.renderSelectedItineraryPreviewIfNeeded(shouldFit);
+      this.renderSelectedItineraryPreviewIfNeeded(true);
     } else {
       this.selectedPreviewFitLocked = false;
       this.previewItinerary = null;
-      this.previewLayer?.clearLayers();
-      this.previewMessage = 'Click an itinerary to preview it.';
-      this.fitPreviewMapToWorld();
+      if (this.routeSlug) {
+        this.renderRouteItinerarySelectionPreview(true);
+      } else {
+        this.renderVisibleItinerariesPreview(this.currentItineraries);
+      }
     }
+  }
+
+  previewLabel(): string {
+    const selected = this.selectedItineraries();
+    if (selected.length > 1) return `${selected.length} selected itineraries`;
+    if (selected.length === 1) return selected[0].title || 'Untitled itinerary';
+    return 'All itineraries';
+  }
+
+  fitPreviewToCurrentItineraries(): void {
+    if (this.selectedItineraryIds.size > 0) {
+      this.renderSelectedItineraryPreviewIfNeeded(true);
+    } else if (this.routeSlug) {
+      this.renderRouteItinerarySelectionPreview(true);
+    } else {
+      this.renderVisibleItinerariesPreview(this.currentItineraries);
+    }
+  }
+
+  filterToPreviewArea(): void {
+    if (!this.previewMap) return;
+    const bounds = this.previewMap.getBounds();
+    this.mapBoundsFilter = {
+      south: bounds.getSouth(),
+      west: bounds.getWest(),
+      north: bounds.getNorth(),
+      east: bounds.getEast()
+    };
+    this.selectedItineraryIds.clear();
+    this.selectedPreviewFitLocked = false;
+    this.previewItinerary = null;
+    this.mapFilter$.next(this.mapFilter$.value + 1);
+    this.drawMapBoundsFilter();
+  }
+
+  clearMapAreaFilter(): void {
+    this.mapBoundsFilter = null;
+    this.previewFilterLayer?.clearLayers();
+    this.selectedItineraryIds.clear();
+    this.selectedPreviewFitLocked = false;
+    this.previewItinerary = null;
+    this.mapFilter$.next(this.mapFilter$.value + 1);
   }
 
   areAllItinerariesSelected(itineraries: Itinerary[]): boolean {
@@ -1045,6 +1137,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       maxZoom: 19
     }).addTo(this.previewMap);
     this.previewLayer = L.layerGroup().addTo(this.previewMap);
+    this.previewFilterLayer = L.layerGroup().addTo(this.previewMap);
     this.previewResizeObserver = new ResizeObserver(() => {
       this.previewMap?.invalidateSize();
     });
@@ -1057,6 +1150,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     if (!this.previewMap || !this.previewLayer || !this.previewItinerary) return;
 
     this.previewLayer.clearLayers();
+    this.drawMapBoundsFilter();
     const result = this.drawItineraryPreview(this.previewItinerary, PREVIEW_COLORS[0]);
     this.fitPreviewMap(result.bounds);
 
@@ -1079,23 +1173,77 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     if (selected.length === 0) {
       this.selectedItineraryIds.clear();
       this.selectedPreviewFitLocked = false;
+      this.previewItinerary = null;
+      if (this.routeSlug) {
+        this.renderRouteItinerarySelectionPreview(true);
+      } else {
+        this.renderVisibleItinerariesPreview(this.currentItineraries);
+      }
+      return;
+    }
+    this.previewItinerary = selected.length === 1 ? selected[0] : null;
+    if (this.routeSlug) {
+      this.renderRouteItinerarySelectionPreview(shouldFit);
       return;
     }
     this.renderPreviewItineraries(selected, shouldFit);
   }
 
-  private renderPreviewItineraries(itineraries: Itinerary[], shouldFit = true): void {
+  private renderVisibleItinerariesPreview(itineraries: Itinerary[]): void {
+    this.previewItinerary = null;
+    if (itineraries.length === 0) {
+      this.previewLayer?.clearLayers();
+      this.previewMessage = 'No itineraries found.';
+      this.fitPreviewMapToWorld();
+      return;
+    }
+    this.renderPreviewItineraries(itineraries, true, 'visible itineraries');
+  }
+
+  private renderRouteItinerarySelectionPreview(shouldFit = true): void {
+    if (this.currentItineraries.length === 0) {
+      this.previewLayer?.clearLayers();
+      this.previewMessage = 'No itineraries found.';
+      this.fitPreviewMapToWorld();
+      return;
+    }
+    const selected = this.selectedItineraries();
+    this.previewItinerary = selected.length === 1 ? selected[0] : null;
+    this.renderPreviewItineraries(
+      this.currentItineraries,
+      shouldFit,
+      'visible itineraries',
+      itinerary => this.selectedItineraryIds.has(itinerary.id)
+        ? { weight: 8, opacity: 0.95, dashArray: null }
+        : { weight: 4, opacity: 0.55, dashArray: '8 8' },
+      { showMarkers: true }
+    );
+  }
+
+  private renderPreviewItineraries(
+    itineraries: Itinerary[],
+    shouldFit = true,
+    scopeLabel = 'selected itineraries',
+    lineStyleFor?: (itinerary: Itinerary, index: number) => PreviewLineStyle,
+    options: PreviewRenderOptions = {}
+  ): void {
     this.initializePreviewMap();
     if (!this.previewMap || !this.previewLayer) return;
 
     this.previewLayer.clearLayers();
+    this.drawMapBoundsFilter();
     const bounds = L.latLngBounds([]);
     let routeGeometryCount = 0;
     let straightSegmentCount = 0;
     let hasPointCoordinates = false;
 
     itineraries.forEach((itinerary, index) => {
-      const result = this.drawItineraryPreview(itinerary, PREVIEW_COLORS[index % PREVIEW_COLORS.length]);
+      const result = this.drawItineraryPreview(
+        itinerary,
+        PREVIEW_COLORS[index % PREVIEW_COLORS.length],
+        lineStyleFor?.(itinerary, index),
+        options.showMarkers ? index + 1 : null
+      );
       if (result.bounds.isValid()) bounds.extend(result.bounds);
       routeGeometryCount += result.routeGeometryCount;
       straightSegmentCount += result.straightSegmentCount;
@@ -1108,7 +1256,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       this.previewMap.invalidateSize(false);
     }
     if (!bounds.isValid() && routeGeometryCount === 0) {
-      this.previewMessage = 'The selected itineraries do not store coordinates yet.';
+      this.previewMessage = `The ${scopeLabel} do not store coordinates yet.`;
     } else if (!hasPointCoordinates) {
       this.previewMessage = 'Previewing saved route geometry. Point coordinates are not stored.';
     } else if (straightSegmentCount > 0 && routeGeometryCount > 0) {
@@ -1120,7 +1268,12 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private drawItineraryPreview(itinerary: Itinerary, color: string): { bounds: any; routeGeometryCount: number; straightSegmentCount: number; hasPointCoordinates: boolean } {
+  private drawItineraryPreview(
+    itinerary: Itinerary,
+    color: string,
+    lineStyle: PreviewLineStyle = { weight: 5, opacity: 0.8 },
+    markerNumber: number | null = null
+  ): { bounds: any; routeGeometryCount: number; straightSegmentCount: number; hasPointCoordinates: boolean } {
     const json = this.itineraryJson(itinerary);
     const pointCoordinates = this.previewPointCoordinatesByIndex(json.points || []);
     const segments = json.segments || [];
@@ -1130,14 +1283,22 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     const hasPointCoordinates = pointCoordinates.some(point => point !== null);
 
     const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
+    const markerCoordinate = markerNumber === null ? null : pointCoordinates.find(point => point !== null);
+    if (markerCoordinate && markerNumber !== null) {
+      L.marker([markerCoordinate.lat, markerCoordinate.lng], {
+        icon: this.previewMarkerIcon(markerNumber)
+      }).addTo(this.previewLayer);
+    }
+
     for (let index = 0; index < segmentCount; index += 1) {
       const geometry = segments[index]?.selectedWalkingRoute?.geometry;
       if (geometry) {
         const routeLayer = L.geoJSON(geometry, {
           style: {
             color,
-            weight: 5,
-            opacity: 0.8
+            weight: lineStyle.weight,
+            opacity: lineStyle.opacity,
+            dashArray: lineStyle.dashArray || undefined
           }
         }).addTo(this.previewLayer);
         const routeBounds = routeLayer.getBounds();
@@ -1153,8 +1314,9 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       if (start && end) {
         const line = L.polyline([[start.lat, start.lng], [end.lat, end.lng]], {
           color,
-          weight: 4,
-          opacity: 0.75
+          weight: lineStyle.weight,
+          opacity: lineStyle.opacity,
+          dashArray: lineStyle.dashArray || undefined
         }).addTo(this.previewLayer);
         bounds.extend(line.getBounds());
         straightSegmentCount += 1;
@@ -1164,8 +1326,114 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     return { bounds, routeGeometryCount, straightSegmentCount, hasPointCoordinates };
   }
 
+  private drawMapBoundsFilter(): void {
+    if (!this.previewFilterLayer) return;
+    this.previewFilterLayer.clearLayers();
+    if (!this.mapBoundsFilter) return;
+    L.rectangle(
+      [
+        [this.mapBoundsFilter.south, this.mapBoundsFilter.west],
+        [this.mapBoundsFilter.north, this.mapBoundsFilter.east]
+      ],
+      {
+        color: '#1f6feb',
+        weight: 2,
+        opacity: 0.9,
+        dashArray: '3 6',
+        fill: true,
+        fillColor: '#93c5fd',
+        fillOpacity: 0.22,
+        interactive: false
+      }
+    ).addTo(this.previewFilterLayer);
+  }
+
+  private previewMarkerIcon(markerNumber: number): any {
+    return L.divIcon({
+      className: 'preview-marker',
+      html: `<span>${markerNumber}</span>`,
+      iconSize: [34, 34],
+      iconAnchor: [17, 17]
+    });
+  }
+
   private selectedItineraries(): Itinerary[] {
     return this.currentItineraries.filter(itinerary => this.selectedItineraryIds.has(itinerary.id));
+  }
+
+  private applyMapBoundsFilter(itineraries: Itinerary[]): Itinerary[] {
+    const bounds = this.mapBoundsFilter;
+    if (!bounds) return itineraries;
+    return itineraries.filter(itinerary => this.itineraryIntersectsBounds(itinerary, bounds));
+  }
+
+  private itineraryIntersectsBounds(itinerary: Itinerary, bounds: MapBoundsFilter): boolean {
+    const coordinates = this.itineraryCoordinates(itinerary);
+    if (coordinates.length === 0) return false;
+    if (coordinates.some(coordinate => this.coordinateInsideBounds(coordinate, bounds))) return true;
+
+    for (let index = 0; index < coordinates.length - 1; index += 1) {
+      if (this.segmentBoundsOverlap(coordinates[index], coordinates[index + 1], bounds)) return true;
+    }
+    return false;
+  }
+
+  private itineraryCoordinates(itinerary: Itinerary): Array<{ lat: number; lng: number }> {
+    const json = this.itineraryJson(itinerary);
+    const coordinates: Array<{ lat: number; lng: number }> = [];
+    for (const point of json.points || []) {
+      const lat = point.coordinates?.lat ?? point.lat;
+      const lng = point.coordinates?.lng ?? point.lng;
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        coordinates.push({ lat: Number(lat), lng: Number(lng) });
+      }
+    }
+    for (const segment of json.segments || []) {
+      this.collectGeometryCoordinates(segment.selectedWalkingRoute?.geometry, coordinates);
+    }
+    return coordinates;
+  }
+
+  private collectGeometryCoordinates(geometry: unknown, coordinates: Array<{ lat: number; lng: number }>): void {
+    if (!geometry || typeof geometry !== 'object') return;
+    const candidate = geometry as { coordinates?: unknown };
+    this.collectCoordinatePairs(candidate.coordinates, coordinates);
+  }
+
+  private collectCoordinatePairs(value: unknown, coordinates: Array<{ lat: number; lng: number }>): void {
+    if (!Array.isArray(value)) return;
+    if (
+      value.length >= 2 &&
+      typeof value[0] === 'number' &&
+      typeof value[1] === 'number' &&
+      Number.isFinite(value[0]) &&
+      Number.isFinite(value[1])
+    ) {
+      coordinates.push({ lng: Number(value[0]), lat: Number(value[1]) });
+      return;
+    }
+    value.forEach(child => this.collectCoordinatePairs(child, coordinates));
+  }
+
+  private coordinateInsideBounds(coordinate: { lat: number; lng: number }, bounds: MapBoundsFilter): boolean {
+    return (
+      coordinate.lat >= bounds.south &&
+      coordinate.lat <= bounds.north &&
+      coordinate.lng >= bounds.west &&
+      coordinate.lng <= bounds.east
+    );
+  }
+
+  private segmentBoundsOverlap(
+    start: { lat: number; lng: number },
+    end: { lat: number; lng: number },
+    bounds: MapBoundsFilter
+  ): boolean {
+    const south = Math.min(start.lat, end.lat);
+    const north = Math.max(start.lat, end.lat);
+    const west = Math.min(start.lng, end.lng);
+    const east = Math.max(start.lng, end.lng);
+    return south <= bounds.north && north >= bounds.south && west <= bounds.east && east >= bounds.west;
   }
 
   private pruneSelectedItineraries(items: Itinerary[]): void {
@@ -1175,6 +1443,9 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     });
     if (this.selectedItineraryIds.size === 0) {
       this.selectedPreviewFitLocked = false;
+      this.previewItinerary = null;
+    } else {
+      this.previewItinerary = this.selectedItineraryIds.size === 1 ? this.selectedItineraries()[0] || null : null;
     }
   }
 
