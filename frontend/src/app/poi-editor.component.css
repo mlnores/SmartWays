@@ -1,11 +1,20 @@
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
 .poi-editor-page {
-  overflow: auto;
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .editor-shell {
   display: grid;
   gap: 0;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid #d7deea;
   border-radius: 10px;
   background: #ffffff;
@@ -63,8 +72,206 @@
   gap: 14px;
 }
 
+.basic-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.92fr) minmax(420px, 1.08fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.basic-form-panel {
+  padding: 14px;
+  border: 1px solid #d7deea;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.compact-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .metadata-full-row {
   grid-column: 1 / -1;
+}
+
+.country-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: #475467;
+  background: #f2f4f7;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.category-picker > span {
+  display: block;
+  margin-bottom: 5px;
+  color: #475467;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.category-picker-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.category-panel {
+  display: grid;
+  grid-template-rows: 34px 46px minmax(168px, 244px) 42px auto;
+  overflow: hidden;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.category-panel header {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-bottom: 1px solid #e4e9f2;
+  color: #344054;
+  background: #f8fafc;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.category-panel.chosen header {
+  color: #ffffff;
+  background: #3d7f9d;
+}
+
+.category-panel input {
+  width: auto;
+  height: 32px;
+  margin: 7px 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 0.92rem;
+}
+
+.category-options {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 4px 8px;
+  border-top: 1px solid #edf1f7;
+  border-bottom: 1px solid #edf1f7;
+}
+
+.category-options button {
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 4px;
+  color: #111827;
+  background: transparent;
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.category-options button:hover {
+  color: #1f6feb;
+  background: #eff6ff;
+}
+
+.category-wide-action {
+  height: 30px;
+  min-height: 28px;
+  margin: 7px 8px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 0.9rem;
+}
+
+.category-action-spacer {
+  min-height: 42px;
+}
+
+.category-bottom-action {
+  display: grid;
+  align-items: start;
+  padding: 0 8px 7px;
+}
+
+.category-bottom-action .category-wide-action {
+  margin: 0;
+}
+
+.category-transfer {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: #667085;
+  font-weight: 800;
+}
+
+.category-transfer span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  font-size: 0.86rem;
+  background: #eef2f7;
+}
+
+.new-category-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+  padding: 0 8px 7px;
+}
+
+.new-category-row input {
+  margin: 0;
+}
+
+.new-category-row button {
+  min-width: 34px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 7px;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.location-picker > span {
+  display: block;
+  margin-bottom: 5px;
+  color: #475467;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.location-map {
+  height: 100%;
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid #cfd6e3;
+  border-radius: 10px;
+  background: #dbeafe;
+}
+
+:host ::ng-deep .poi-location-marker {
+  display: grid;
+  place-items: center;
+}
+
+:host ::ng-deep .poi-location-marker span {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #ffffff;
+  border-radius: 999px;
+  background: #1f6feb;
+  box-shadow: 0 2px 6px rgb(16 24 40 / 0.35);
 }
 
 .checkbox-label {
@@ -207,6 +414,7 @@
 }
 
 @media (max-width: 900px) {
+  .basic-layout,
   .translation-tabs-panel,
   .translation-comparison,
   .media-row {
@@ -214,7 +422,16 @@
   }
 
   .form-grid,
-  .media-fields {
+  .media-fields,
+  .category-picker-grid {
     grid-template-columns: 1fr;
+  }
+
+  .category-transfer {
+    display: none;
+  }
+
+  .location-map {
+    min-height: 340px;
   }
 }

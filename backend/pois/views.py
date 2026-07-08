@@ -2,7 +2,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from django.contrib.gis.geos import GEOSGeometry, Polygon
+from django.contrib.gis.geos import GEOSGeometry, Point, Polygon
 from django.db import transaction
 from django.http import JsonResponse
 from django.db.models import Q
@@ -94,6 +94,42 @@ def country_bounds_by_code():
         bounds[country_code] = [[min_lat, min_lon], [max_lat, max_lon]]
     bounds.update(FULL_COUNTRY_BOUNDS_OVERRIDES)
     return bounds
+
+
+@lru_cache(maxsize=1)
+def country_boundaries_by_code():
+    if not COUNTRY_BOUNDARIES_PATH.exists():
+        return {}
+
+    with COUNTRY_BOUNDARIES_PATH.open(encoding="utf-8") as geojson_file:
+        payload = json.load(geojson_file)
+
+    raw_features = payload.get("features") if payload.get("type") == "FeatureCollection" else [payload]
+    boundaries = {}
+    for feature in raw_features or []:
+        properties = feature.get("properties") or {}
+        geometry = feature.get("geometry")
+        country_code = country_code_from_boundary_properties(properties)
+        if not country_code or not geometry:
+            continue
+
+        boundary = GEOSGeometry(json.dumps(geometry), srid=4326)
+        if boundary.empty:
+            continue
+        boundaries.setdefault(country_code, []).append((boundary.extent, boundary))
+    return boundaries
+
+
+def country_code_for_point(latitude, longitude):
+    point = Point(longitude, latitude, srid=4326)
+    for country_code, boundaries in country_boundaries_by_code().items():
+        for extent, boundary in boundaries:
+            min_lon, min_lat, max_lon, max_lat = extent
+            if not (min_lon <= longitude <= max_lon and min_lat <= latitude <= max_lat):
+                continue
+            if boundary.covers(point):
+                return country_code
+    return ""
 
 
 def point_inside_bounds(latitude, longitude, bounds):
@@ -336,6 +372,19 @@ class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
             raise ValidationError({"country": f"No country bounds are available for {country}."})
 
         return Response({"country": country, "bounds": bounds})
+
+    @action(detail=False, methods=["get"], url_path="country-at")
+    def country_at(self, request):
+        try:
+            latitude = float(request.query_params.get("lat"))
+            longitude = float(request.query_params.get("lng"))
+        except (TypeError, ValueError):
+            raise ValidationError({"coordinates": "Use numeric lat and lng query parameters."})
+
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            raise ValidationError({"coordinates": "Latitude must be between -90 and 90; longitude between -180 and 180."})
+
+        return Response({"country": country_code_for_point(latitude, longitude)})
 
 
 class POITranslationViewSet(viewsets.ModelViewSet):

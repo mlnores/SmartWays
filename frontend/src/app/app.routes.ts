@@ -15,6 +15,7 @@ export const routes: Routes = [
   { path: 'routes', component: RouteListComponent },
   { path: 'route/:slug', component: ItineraryListComponent },
   { path: 'pois', component: PoiListComponent },
+  { path: 'pois/new', component: PoiEditorComponent },
   { path: 'pois/:id/edit', component: PoiEditorComponent },
   { path: '**', redirectTo: 'itineraries' }
 ];

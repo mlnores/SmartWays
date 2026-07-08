@@ -332,6 +332,13 @@ export class ApiService {
     return request;
   }
 
+  getCountryAt(latitude: number, longitude: number): Observable<{ country: string }> {
+    const params = new HttpParams()
+      .set('lat', String(latitude))
+      .set('lng', String(longitude));
+    return this.http.get<{ country: string }>(`${API_BASE_URL}/pois/country-at/`, { params });
+  }
+
   listCategories(query = '', language = ''): Observable<ApiPage<Category>> {
     let params = new HttpParams();
     if (language) {

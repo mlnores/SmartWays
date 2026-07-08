@@ -72,7 +72,7 @@ declare const L: any;
         } @else {
           <div class="list-actions">
             <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
-            <button type="button" class="primary" title="New POI" aria-label="New POI" (click)="openNewPoiDialog()">New POI</button>
+            <a class="primary" title="New POI" aria-label="New POI" routerLink="/pois/new">New POI</a>
           </div>
         }
       </header>

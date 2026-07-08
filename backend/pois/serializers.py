@@ -104,6 +104,8 @@ class POIMediaSerializer(serializers.ModelSerializer):
 
 
 class NestedPOITranslationSerializer(serializers.ModelSerializer):
+    slug = serializers.SlugField(required=False, allow_blank=True)
+
     class Meta:
         model = POITranslation
         fields = ["id", "language_code", "title", "description", "slug", "is_reference"]

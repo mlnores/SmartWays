@@ -150,6 +150,12 @@ class POIAPITests(APITestCase):
         self.assertNotEqual(greenland_response.data["bounds"], focused_response.data["bounds"])
         self.assertLess(greenland_response.data["bounds"][0][1], -20)
 
+    def test_poi_country_at_returns_country_for_coordinates(self):
+        response = self.client.get(reverse("poi-country-at"), {"lat": 42.2406, "lng": -8.7207})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["country"], "ES")
+
     def test_poi_list_filters_by_ids(self):
         other_poi = POI.objects.create(
             enabled=True,
@@ -255,6 +261,32 @@ class POIAPITests(APITestCase):
         self.assertEqual(poi.media.count(), 1)
         self.assertEqual(poi.media.get().media_type, POIMedia.MediaType.IMAGE)
         self.assertTrue(poi.translations.get(language_code="en").is_reference)
+
+    def test_poi_create_generates_slug_when_nested_slug_is_blank(self):
+        payload = {
+            "enabled": True,
+            "country_code": "ES",
+            "gps_latitude": 42.7147322,
+            "gps_longitude": -7.9151333,
+            "website": "",
+            "category_ids": [],
+            "media": [],
+            "translations": [
+                {
+                    "language_code": "en",
+                    "title": "Sample title 2",
+                    "description": "",
+                    "slug": "",
+                    "is_reference": True,
+                }
+            ],
+        }
+
+        response = self.client.post(reverse("poi-list"), payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        poi = POI.objects.get(id=response.data["id"])
+        self.assertEqual(poi.translations.get(language_code="en").slug, "sample-title-2")
 
     def test_poi_update_accepts_existing_translation_slugs(self):
         payload = {

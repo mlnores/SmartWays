@@ -1,4 +1,4 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
@@ -22,6 +22,8 @@ interface MediaDraft {
 
 type EditorTab = 'basic' | 'translations' | 'media';
 
+declare const L: any;
+
 @Component({
   selector: 'app-poi-editor',
   standalone: true,
@@ -30,13 +32,16 @@ type EditorTab = 'basic' | 'translations' | 'media';
     <section class="page poi-editor-page">
       <header class="page-header">
         <div>
-          <h1>{{ poi?.title || 'POI editor' }}</h1>
-          <p>Edit metadata, translations, and linked media.</p>
+          <h1>{{ isNewPoi ? 'New POI' : (poi?.title || 'POI editor') }}</h1>
+          <p>{{ isNewPoi ? 'Create a draft point of interest.' : 'Edit metadata, translations, and linked media.' }}</p>
         </div>
         <div class="list-actions">
           <a class="secondary" [routerLink]="backLink">{{ backLabel }}</a>
-          <button type="button" class="primary" [disabled]="saving || loading" (click)="savePoi()">
-            {{ saving ? 'Saving...' : 'Save POI' }}
+          <button type="button" class="secondary" [disabled]="saving || loading" (click)="savePoi(false)">
+            {{ saving ? 'Saving...' : 'Save draft' }}
+          </button>
+          <button type="button" class="primary" [disabled]="saving || loading" (click)="savePoi(true)">
+            {{ saving ? 'Saving...' : 'Save and make public' }}
           </button>
         </div>
       </header>
@@ -47,76 +52,127 @@ type EditorTab = 'basic' | 'translations' | 'media';
 
       @if (loading) {
         <p class="status">Loading POI...</p>
-      } @else if (poi) {
+      } @else if (editorReady) {
         <div class="editor-shell">
           <nav class="editor-tabs" aria-label="POI editor sections">
-            <button type="button" [class.active]="activeTab === 'basic'" (click)="activeTab = 'basic'">Basic info</button>
-            <button type="button" [class.active]="activeTab === 'translations'" (click)="activeTab = 'translations'">Translations</button>
-            <button type="button" [class.active]="activeTab === 'media'" (click)="activeTab = 'media'">Media</button>
+            <button type="button" [class.active]="activeTab === 'basic'" (click)="setActiveTab('basic')">Basic info</button>
+            <button type="button" [class.active]="activeTab === 'translations'" (click)="setActiveTab('translations')">Translations</button>
+            <button type="button" [class.active]="activeTab === 'media'" (click)="setActiveTab('media')">Media</button>
           </nav>
 
           @if (activeTab === 'basic') {
             <section class="editor-panel">
-              <div class="section-heading">
-                <h2>Reference language</h2>
-                @if (referenceTranslation(); as reference) {
-                  <span class="reference-pill"><span aria-hidden="true">★</span> {{ reference.language_code || 'Reference' }}</span>
-                }
-              </div>
-
-              @if (referenceTranslation(); as reference) {
-                <div class="form-grid">
-                  <label>
-                    <span>Language</span>
-                    <input type="text" [(ngModel)]="reference.language_code" name="referenceLanguage" />
-                  </label>
-                  <label>
-                    <span>Title</span>
-                    <input type="text" [(ngModel)]="reference.title" name="referenceTitle" />
-                  </label>
-                  <label class="metadata-full-row">
-                    <span>Slug</span>
-                    <input type="text" [(ngModel)]="reference.slug" name="referenceSlug" />
-                  </label>
-                  <label class="metadata-full-row">
-                    <span>Description</span>
-                    <textarea rows="6" [(ngModel)]="reference.description" name="referenceDescription"></textarea>
-                  </label>
-                </div>
-              }
-
-              <div class="section-heading">
-                <h2>POI metadata</h2>
-              </div>
-              <div class="form-grid">
-                <label class="checkbox-label">
-                  <input type="checkbox" [(ngModel)]="enabled" name="enabled" />
-                  <span>Visible to the public</span>
-                </label>
-                <label>
-                  <span>Country code</span>
-                  <input type="text" maxlength="2" [(ngModel)]="countryCode" name="countryCode" />
-                </label>
-                <label>
-                  <span>Latitude</span>
-                  <input type="number" step="any" [(ngModel)]="latitude" name="latitude" />
-                </label>
-                <label>
-                  <span>Longitude</span>
-                  <input type="number" step="any" [(ngModel)]="longitude" name="longitude" />
-                </label>
-                <label class="metadata-full-row">
-                  <span>Website</span>
-                  <input type="url" [(ngModel)]="website" name="website" />
-                </label>
-                <label class="metadata-full-row">
-                  <span>Categories</span>
-                  <select multiple size="8" [(ngModel)]="categoryIds" name="categoryIds">
-                    @for (category of categories; track category.id) {
-                      <option [ngValue]="category.id">{{ category.name || category.slug }}</option>
+              <div class="basic-layout">
+                <div class="basic-form-panel">
+                  <div class="section-heading">
+                    <h2>Reference language</h2>
+                    @if (referenceTranslation(); as reference) {
+                      <span class="reference-pill"><span aria-hidden="true">★</span> {{ reference.language_code || 'Reference' }}</span>
                     }
-                  </select>
-                </label>
+                  </div>
+
+                  @if (referenceTranslation(); as reference) {
+                    <div class="form-grid compact-form-grid">
+                      <label>
+                        <span>Language</span>
+                        <input type="text" [(ngModel)]="reference.language_code" name="referenceLanguage" />
+                      </label>
+                      <label>
+                        <span>Title</span>
+                        <input type="text" [(ngModel)]="reference.title" name="referenceTitle" />
+                      </label>
+                      <label class="metadata-full-row">
+                        <span>Description</span>
+                        <textarea rows="6" [(ngModel)]="reference.description" name="referenceDescription"></textarea>
+                      </label>
+                    </div>
+                  }
+
+                  <div class="section-heading">
+                    <h2>Location</h2>
+                    <span class="country-label">{{ countryCode ? 'Country: ' + countryCode : 'Country pending location' }}</span>
+                  </div>
+                  <div class="form-grid compact-form-grid">
+                    <label>
+                      <span>Latitude</span>
+                      <input type="number" step="any" [(ngModel)]="latitude" (ngModelChange)="coordinatesChanged()" name="latitude" />
+                    </label>
+                    <label>
+                      <span>Longitude</span>
+                      <input type="number" step="any" [(ngModel)]="longitude" (ngModelChange)="coordinatesChanged()" name="longitude" />
+                    </label>
+                    <label class="metadata-full-row">
+                      <span>Website</span>
+                      <input type="url" [(ngModel)]="website" name="website" />
+                    </label>
+                    <div class="metadata-full-row category-picker">
+                      <span>Categories</span>
+                      <div class="category-picker-grid">
+                        <section class="category-panel">
+                          <header>Available categories</header>
+                          <input
+                            type="search"
+                            placeholder="Filter"
+                            [(ngModel)]="categoryAvailableFilter"
+                            name="categoryAvailableFilter"
+                          />
+                          <div class="category-options" aria-label="Available categories">
+                            @for (category of availableCategoryOptions(); track category.id) {
+                              <button type="button" (click)="addCategory(category.id)">
+                                {{ categoryDisplayName(category) }}
+                              </button>
+                            } @empty {
+                              <p class="muted">No available categories.</p>
+                            }
+                          </div>
+                          <button type="button" class="secondary category-wide-action" (click)="chooseAllFilteredCategories()">Choose all</button>
+                          <div class="new-category-row">
+                            <input
+                              type="text"
+                              placeholder="New category"
+                              [(ngModel)]="newCategoryName"
+                              name="newCategoryName"
+                            />
+                            <button type="button" class="primary" title="Create category" aria-label="Create category" (click)="createCategoryFromEditor()">+</button>
+                          </div>
+                        </section>
+
+                        <div class="category-transfer" aria-hidden="true">
+                          <span>→</span>
+                          <span>←</span>
+                        </div>
+
+                        <section class="category-panel chosen">
+                          <header>Chosen categories</header>
+                          <input
+                            type="search"
+                            placeholder="Filter"
+                            [(ngModel)]="categoryChosenFilter"
+                            name="categoryChosenFilter"
+                          />
+                          <div class="category-options" aria-label="Chosen categories">
+                            @for (category of chosenCategoryOptions(); track category.id) {
+                              <button type="button" (click)="removeCategory(category.id)">
+                                {{ categoryDisplayName(category) }}
+                              </button>
+                            } @empty {
+                              <p class="muted">No chosen categories.</p>
+                            }
+                          </div>
+                          <div class="category-action-spacer"></div>
+                          <div class="category-bottom-action">
+                            <button type="button" class="secondary category-wide-action" (click)="removeAllFilteredCategories()">Remove all</button>
+                          </div>
+                        </section>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="location-picker">
+                  <span>Pick location on map</span>
+                  <div class="location-map" #locationMap></div>
+                </div>
               </div>
             </section>
           }
@@ -165,10 +221,6 @@ type EditorTab = 'basic' | 'translations' | 'media';
                           <span>Description</span>
                           <textarea rows="8" [(ngModel)]="translation.description" [name]="'description' + activeTranslationIndex"></textarea>
                         </label>
-                        <label>
-                          <span>Slug</span>
-                          <input type="text" [(ngModel)]="translation.slug" [name]="'slug' + activeTranslationIndex" />
-                        </label>
                       </div>
                     } @else {
                       <div class="translation-comparison">
@@ -182,10 +234,6 @@ type EditorTab = 'basic' | 'translations' | 'media';
                             <span>Description</span>
                             <textarea rows="8" [value]="referenceTranslation()?.description || ''" readonly></textarea>
                           </label>
-                          <label>
-                            <span>Slug</span>
-                            <input type="text" [value]="referenceTranslation()?.slug || ''" readonly />
-                          </label>
                         </section>
                         <section>
                           <h3>{{ translation.language_code || 'Translation' }}</h3>
@@ -196,10 +244,6 @@ type EditorTab = 'basic' | 'translations' | 'media';
                           <label>
                             <span>Description</span>
                             <textarea rows="8" [(ngModel)]="translation.description" [name]="'description' + activeTranslationIndex"></textarea>
-                          </label>
-                          <label>
-                            <span>Slug</span>
-                            <input type="text" [(ngModel)]="translation.slug" [name]="'slug' + activeTranslationIndex" />
                           </label>
                         </section>
                       </div>
@@ -268,12 +312,20 @@ type EditorTab = 'basic' | 'translations' | 'media';
   `,
   styleUrls: ['./resource-list.css', './poi-editor.component.css']
 })
-export class PoiEditorComponent implements OnInit {
+export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
+  @ViewChild('locationMap') private readonly locationMapElement?: ElementRef<HTMLDivElement>;
+
   private readonly api = inject(ApiService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private locationMap: any = null;
+  private locationMarker: any = null;
+  private locationResizeObserver: ResizeObserver | null = null;
+  private countryRequestId = 0;
 
   poi: Poi | null = null;
+  isNewPoi = false;
+  editorReady = false;
   categories: Category[] = [];
   loading = true;
   saving = false;
@@ -284,12 +336,15 @@ export class PoiEditorComponent implements OnInit {
   backLink = '/pois';
   backLabel = 'Back to POIs';
 
-  enabled = true;
+  enabled = false;
   countryCode = '';
   latitude: number | null = null;
   longitude: number | null = null;
   website = '';
   categoryIds: number[] = [];
+  categoryAvailableFilter = '';
+  categoryChosenFilter = '';
+  newCategoryName = '';
   translations: TranslationDraft[] = [];
   media: MediaDraft[] = [];
 
@@ -306,24 +361,51 @@ export class PoiEditorComponent implements OnInit {
     }
 
     const id = this.route.snapshot.paramMap.get('id');
-    if (!id) {
-      this.showStatus('Missing POI id.', true);
-      this.loading = false;
-      return;
-    }
+    this.isNewPoi = !id || id === 'new';
 
     try {
-      const [poi, categories] = await Promise.all([
-        firstValueFrom(this.api.getPoi(id)),
-        firstValueFrom(this.api.listAllCategories())
-      ]);
+      const categories = await firstValueFrom(this.api.listAllCategories());
       this.categories = categories;
-      this.loadPoi(poi);
+      if (this.isNewPoi) {
+        this.loadBlankPoi();
+      } else if (id) {
+        const poi = await firstValueFrom(this.api.getPoi(id));
+        this.loadPoi(poi);
+      }
     } catch (error) {
       this.showStatus(`Could not load POI #${id}. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     } finally {
       this.loading = false;
+      window.setTimeout(() => this.initializeLocationMap(), 0);
     }
+  }
+
+  ngAfterViewInit(): void {
+    window.setTimeout(() => this.initializeLocationMap(), 0);
+  }
+
+  ngOnDestroy(): void {
+    this.destroyLocationMap();
+  }
+
+  setActiveTab(tab: EditorTab): void {
+    if (this.activeTab === 'basic' && tab !== 'basic') {
+      this.destroyLocationMap();
+    }
+    this.activeTab = tab;
+    if (tab === 'basic') {
+      window.setTimeout(() => this.initializeLocationMap(), 0);
+    }
+  }
+
+  private destroyLocationMap(): void {
+    this.locationResizeObserver?.disconnect();
+    this.locationResizeObserver = null;
+    if (this.locationMap) {
+      this.locationMap.remove();
+      this.locationMap = null;
+    }
+    this.locationMarker = null;
   }
 
   referenceTranslation(): TranslationDraft | null {
@@ -403,8 +485,67 @@ export class PoiEditorComponent implements OnInit {
     return type.charAt(0).toUpperCase() + type.slice(1);
   }
 
-  async savePoi(): Promise<void> {
-    if (!this.poi) return;
+  categoryDisplayName(category: Category): string {
+    return category.name || category.slug;
+  }
+
+  availableCategoryOptions(): Category[] {
+    const chosen = new Set(this.categoryIds);
+    return this.filterCategories(this.categories.filter(category => !chosen.has(category.id)), this.categoryAvailableFilter);
+  }
+
+  chosenCategoryOptions(): Category[] {
+    const chosen = new Set(this.categoryIds);
+    return this.filterCategories(this.categories.filter(category => chosen.has(category.id)), this.categoryChosenFilter);
+  }
+
+  addCategory(categoryId: number): void {
+    if (!this.categoryIds.includes(categoryId)) {
+      this.categoryIds = [...this.categoryIds, categoryId];
+    }
+  }
+
+  removeCategory(categoryId: number): void {
+    this.categoryIds = this.categoryIds.filter(id => id !== categoryId);
+  }
+
+  chooseAllFilteredCategories(): void {
+    const ids = new Set(this.categoryIds);
+    this.availableCategoryOptions().forEach(category => ids.add(category.id));
+    this.categoryIds = [...ids];
+  }
+
+  removeAllFilteredCategories(): void {
+    const filteredIds = new Set(this.chosenCategoryOptions().map(category => category.id));
+    this.categoryIds = this.categoryIds.filter(id => !filteredIds.has(id));
+  }
+
+  async createCategoryFromEditor(): Promise<void> {
+    const name = this.newCategoryName.trim();
+    if (!name) {
+      this.showStatus('Enter a category name before creating it.', true);
+      return;
+    }
+    try {
+      const category = await firstValueFrom(this.api.createCategory({
+        slug: this.slugFromText(name),
+        translations: [{
+          language_code: this.referenceTranslation()?.language_code || 'en',
+          name
+        }]
+      }));
+      this.categories = [...this.categories, category].sort((left, right) =>
+        this.categoryDisplayName(left).localeCompare(this.categoryDisplayName(right))
+      );
+      this.addCategory(category.id);
+      this.newCategoryName = '';
+      this.clearStatus();
+    } catch (error) {
+      this.showStatus(`Could not create category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async savePoi(makePublic: boolean): Promise<void> {
     const translations = this.normalizedTranslations();
     if (translations.length === 0 || translations.some(translation => !translation.language_code || !translation.title)) {
       this.showStatus('Every POI translation needs a language and title.', true);
@@ -423,8 +564,8 @@ export class PoiEditorComponent implements OnInit {
 
     this.saving = true;
     try {
-      const updated = await firstValueFrom(this.api.updatePoi(this.poi.id, {
-        enabled: this.enabled,
+      const payload = {
+        enabled: makePublic,
         country_code: this.countryCode.trim().toUpperCase(),
         gps_latitude: Number(this.latitude),
         gps_longitude: Number(this.longitude),
@@ -432,9 +573,16 @@ export class PoiEditorComponent implements OnInit {
         category_ids: this.categoryIds,
         translations,
         media
-      }));
+      };
+      const updated = this.poi
+        ? await firstValueFrom(this.api.updatePoi(this.poi.id, payload))
+        : await firstValueFrom(this.api.createPoi(payload));
       this.loadPoi(updated);
-      this.showStatus('POI saved.', false);
+      if (this.isNewPoi) {
+        this.isNewPoi = false;
+        void this.router.navigate(['/pois', updated.id, 'edit'], { replaceUrl: true });
+      }
+      this.showStatus(makePublic ? 'POI saved and made public.' : 'Draft saved.', false);
     } catch (error) {
       this.showStatus(`Could not save POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     } finally {
@@ -453,6 +601,111 @@ export class PoiEditorComponent implements OnInit {
     this.translations = this.translationDraftsFrom(poi.translations, poi.title, poi.description, poi.slug);
     this.activeTranslationIndex = Math.max(0, this.translations.findIndex(translation => translation.is_reference));
     this.media = this.mediaDraftsFrom(poi.media || [], poi.images || []);
+    this.editorReady = true;
+    window.setTimeout(() => this.updateLocationMarker(true), 0);
+  }
+
+  private loadBlankPoi(): void {
+    this.poi = null;
+    this.enabled = false;
+    this.countryCode = '';
+    this.latitude = null;
+    this.longitude = null;
+    this.website = '';
+    this.categoryIds = [];
+    this.translations = [{
+      language_code: 'en',
+      title: '',
+      description: '',
+      slug: '',
+      is_reference: true
+    }];
+    this.activeTranslationIndex = 0;
+    this.media = [];
+    this.editorReady = true;
+  }
+
+  coordinatesChanged(): void {
+    this.updateLocationMarker(false);
+    void this.updateCountryFromCoordinates();
+  }
+
+  private initializeLocationMap(): void {
+    if (this.activeTab !== 'basic' || !this.locationMapElement || this.locationMap) {
+      this.locationMap?.invalidateSize(false);
+      this.updateLocationMarker(false);
+      return;
+    }
+
+    this.locationMap = L.map(this.locationMapElement.nativeElement, {
+      zoomControl: true
+    }).setView([42.5, -8.5], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(this.locationMap);
+    this.locationMap.on('click', (event: any) => {
+      this.latitude = Number(event.latlng.lat.toFixed(7));
+      this.longitude = Number(event.latlng.lng.toFixed(7));
+      this.updateLocationMarker(false);
+      void this.updateCountryFromCoordinates();
+    });
+    this.locationResizeObserver = new ResizeObserver(() => this.locationMap?.invalidateSize(false));
+    this.locationResizeObserver.observe(this.locationMapElement.nativeElement);
+    window.requestAnimationFrame(() => {
+      this.locationMap?.invalidateSize(false);
+      this.updateLocationMarker(true);
+    });
+  }
+
+  private updateLocationMarker(shouldFit: boolean): void {
+    if (!this.locationMap) return;
+    if (!Number.isFinite(this.latitude) || !Number.isFinite(this.longitude)) {
+      if (this.locationMarker) {
+        this.locationMarker.remove();
+        this.locationMarker = null;
+      }
+      return;
+    }
+
+    const latLng = [Number(this.latitude), Number(this.longitude)];
+    if (this.locationMarker) {
+      this.locationMarker.setLatLng(latLng);
+    } else {
+      this.locationMarker = L.marker(latLng, {
+        icon: this.locationMarkerIcon()
+      }).addTo(this.locationMap);
+    }
+    if (shouldFit) {
+      this.locationMap.setView(latLng, 14, { animate: false });
+    }
+  }
+
+  private locationMarkerIcon(): any {
+    return L.divIcon({
+      className: 'poi-location-marker',
+      html: '<span></span>',
+      iconSize: [22, 22],
+      iconAnchor: [11, 11]
+    });
+  }
+
+  private async updateCountryFromCoordinates(): Promise<void> {
+    if (!Number.isFinite(this.latitude) || !Number.isFinite(this.longitude)) {
+      this.countryCode = '';
+      return;
+    }
+    const requestId = ++this.countryRequestId;
+    try {
+      const response = await firstValueFrom(this.api.getCountryAt(Number(this.latitude), Number(this.longitude)));
+      if (requestId === this.countryRequestId) {
+        this.countryCode = response.country || '';
+      }
+    } catch {
+      if (requestId === this.countryRequestId) {
+        this.countryCode = '';
+      }
+    }
   }
 
   private translationDraftsFrom(
@@ -523,6 +776,30 @@ export class PoiEditorComponent implements OnInit {
       media[0].is_primary = true;
     }
     return media;
+  }
+
+  private filterCategories(categories: Category[], filter: string): Category[] {
+    const normalizedFilter = filter.trim().toLowerCase();
+    if (!normalizedFilter) return categories;
+    return categories.filter(category =>
+      this.categoryDisplayName(category).toLowerCase().includes(normalizedFilter)
+      || category.slug.toLowerCase().includes(normalizedFilter)
+    );
+  }
+
+  private slugFromText(value: string): string {
+    return value
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      || 'category';
+  }
+
+  private clearStatus(): void {
+    this.statusMessage = '';
+    this.statusIsError = false;
   }
 
   private showStatus(message: string, isError: boolean): void {
