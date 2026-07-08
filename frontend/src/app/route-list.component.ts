@@ -10,7 +10,6 @@ interface RouteDraft {
   language_code: string;
   title: string;
   description: string;
-  enabled: boolean;
 }
 
 interface TranslationDraft {
@@ -144,15 +143,8 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                             aria-hidden="true"
                           ></span>
                         </td>
-                        <td class="enabled-column" (click)="$event.stopPropagation()">
-                          <input
-                            class="enabled-checkbox"
-                            type="checkbox"
-                            title="Draft"
-                            aria-label="Draft"
-                            [checked]="!route.enabled"
-                            (change)="setRouteEnabled(route, !$any($event.target).checked)"
-                          />
+                        <td class="enabled-column">
+                          {{ route.enabled ? '' : 'Yes' }}
                         </td>
                       </tr>
                     } @empty {
@@ -179,7 +171,19 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                   <span>Fit view to selection</span>
                 </button>
 
-                @if (selectedRouteIds.size > 1) {
+                @if (selectedRouteIds.size > 0 && selectedRoutesAreDraft()) {
+                  <button type="button" class="secondary preview-action" (click)="setSelectedRoutesEnabled(true)">
+                    <span class="preview-action-icon" aria-hidden="true">🌐</span>
+                    <span>Make public</span>
+                  </button>
+                }
+                @if (selectedRouteIds.size > 0 && selectedRoutesArePublic()) {
+                  <button type="button" class="secondary preview-action" (click)="setSelectedRoutesEnabled(false)">
+                    <span class="preview-action-icon" aria-hidden="true">✎</span>
+                    <span>Turn to draft</span>
+                  </button>
+                }
+                @if (selectedRouteIds.size > 1 && selectedRoutesAreDraft()) {
                   <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedRoutes()">
                     <span class="preview-action-icon" aria-hidden="true">🗑️</span>
                     <span>Delete selected routes</span>
@@ -189,14 +193,16 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                     <span class="preview-action-icon" aria-hidden="true">📋</span>
                     <span>View itineraries</span>
                   </a>
-                  <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewRoute)">
-                    <span class="preview-action-icon" aria-hidden="true">📝</span>
-                    <span>Edit metadata and translations</span>
-                  </button>
-                  <button type="button" class="secondary preview-action danger-action" (click)="deleteRoute(previewRoute)">
-                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                    <span>Delete route</span>
-                  </button>
+                  @if (!previewRoute.enabled) {
+                    <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewRoute)">
+                      <span class="preview-action-icon" aria-hidden="true">📝</span>
+                      <span>Edit metadata and translations</span>
+                    </button>
+                    <button type="button" class="secondary preview-action danger-action" (click)="deleteRoute(previewRoute)">
+                      <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                      <span>Delete route</span>
+                    </button>
+                  }
                 }
               </div>
             </aside>
@@ -226,10 +232,6 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
             <label>
               <span>Description</span>
               <textarea rows="4" [(ngModel)]="newRoute.description" name="newRouteDescription" placeholder="Optional description"></textarea>
-            </label>
-            <label class="checkbox-inline">
-              <input type="checkbox" [ngModel]="!newRoute.enabled" (ngModelChange)="newRoute.enabled = !$event" name="newRouteDraft" />
-              <span>Draft</span>
             </label>
           </div>
           <footer class="metadata-dialog-footer">
@@ -339,7 +341,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   readonly refresh$ = new BehaviorSubject(0);
   readonly languageOptions = LANGUAGE_OPTIONS;
   query = '';
-  newRoute: RouteDraft = { language_code: 'en', title: '', description: '', enabled: true };
+  newRoute: RouteDraft = { language_code: 'en', title: '', description: '' };
   statusMessage = '';
   statusIsError = false;
   editingRoute: Route | null = null;
@@ -474,6 +476,16 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     return routes.some(route => this.selectedRouteIds.has(route.id)) && !this.areAllRoutesSelected(routes);
   }
 
+  selectedRoutesAreDraft(): boolean {
+    const selected = this.selectedRoutes();
+    return selected.length > 0 && selected.every(route => !route.enabled);
+  }
+
+  selectedRoutesArePublic(): boolean {
+    const selected = this.selectedRoutes();
+    return selected.length > 0 && selected.every(route => route.enabled);
+  }
+
   previewLabel(): string {
     const selected = this.selectedRoutes();
     if (selected.length > 1) return `${selected.length} selected routes`;
@@ -518,7 +530,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
     try {
       await firstValueFrom(this.api.createRoute({
-        enabled: this.newRoute.enabled,
+        enabled: false,
         translations: [{
           language_code: languageCode,
           title,
@@ -526,7 +538,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
           is_reference: true
         }]
       }));
-      this.newRoute = { language_code: 'en', title: '', description: '', enabled: true };
+      this.newRoute = { language_code: 'en', title: '', description: '' };
       this.closeNewRouteDialog();
       this.showStatus('Route created.', false);
       this.refresh$.next(this.refresh$.value + 1);
@@ -549,7 +561,27 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  async setSelectedRoutesEnabled(enabled: boolean): Promise<void> {
+    const selected = this.selectedRoutes();
+    if (selected.length === 0) return;
+    const action = enabled ? 'make public' : 'turn to draft';
+    const confirmed = window.confirm(`Really ${action} ${selected.length} selected ${selected.length === 1 ? 'route' : 'routes'}?`);
+    if (!confirmed) return;
+
+    try {
+      await Promise.all(selected.map(route => firstValueFrom(this.api.updateRoute(route.id, { enabled }))));
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not update selected routes. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
   async deleteRoute(route: Route): Promise<void> {
+    if (route.enabled) {
+      this.showStatus('Public routes cannot be deleted.', true);
+      return;
+    }
     const confirmed = window.confirm(
       `Delete route "${route.title || 'Untitled route'}"? Its constituent itineraries will not be deleted.`
     );
@@ -567,6 +599,10 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   async deleteSelectedRoutes(): Promise<void> {
     const selected = this.selectedRoutes();
     if (selected.length < 2) return;
+    if (selected.some(route => route.enabled)) {
+      this.showStatus('Only draft routes can be deleted.', true);
+      return;
+    }
     const confirmed = window.confirm(
       `Delete ${selected.length} selected routes? Their constituent itineraries will not be deleted.`
     );
@@ -593,6 +629,10 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   }
 
   openTranslationDialog(route: Route): void {
+    if (route.enabled) {
+      this.showStatus('Public routes cannot be edited.', true);
+      return;
+    }
     this.editingRoute = route;
     this.translationDrafts = this.translationDraftsFrom(route.translations, route.title, route.description);
     this.activeTranslationIndex = Math.max(0, this.translationDrafts.findIndex(translation => translation.is_reference));

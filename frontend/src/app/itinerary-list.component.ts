@@ -29,7 +29,6 @@ interface NewItineraryDraft {
   language_code: string;
   title: string;
   description: string;
-  enabled: boolean;
   routeId: number | null;
   stageNumber: number | null;
 }
@@ -105,12 +104,14 @@ declare const L: any;
       <header class="page-header">
         <div>
           <h1>{{ routeSlug ? routeTitle || 'Route itineraries' : 'Itineraries' }}</h1>
-          <p>{{ routeSlug ? 'Browse the constituent itineraries of this route. Drag rows up or down to define their order.' : 'Browse saved itinerary definitions and open the editor.' }}</p>
+          <p>{{ routeSlug ? (currentRouteIsDraft ? 'Browse the constituent itineraries of this route. Drag rows up or down to define their order.' : 'Browse the constituent itineraries of this public route.') : 'Browse saved itinerary definitions and open the editor.' }}</p>
         </div>
         @if (routeSlug) {
           <div class="list-actions">
             <a class="secondary" [routerLink]="['/routes']" [queryParams]="currentRouteId ? { highlight: currentRouteId } : null">Back to routes</a>
-            <button type="button" class="primary" title="New itinerary for this route" aria-label="New itinerary for this route" (click)="openNewItineraryForCurrentRoute()">New itinerary</button>
+            @if (currentRouteIsDraft) {
+              <button type="button" class="primary" title="New itinerary for this route" aria-label="New itinerary for this route" (click)="openNewItineraryForCurrentRoute()">New itinerary</button>
+            }
           </div>
         } @else {
           <button type="button" class="primary" title="New itinerary" aria-label="New itinerary" (click)="openNewItineraryDialog()">New itinerary</button>
@@ -213,15 +214,8 @@ declare const L: any;
                               <p class="point-preview">{{ firstPointName(itinerary) }} → {{ lastPointName(itinerary) }}</p>
                               </td>
                               <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
-                              <td class="enabled-column" (click)="$event.stopPropagation()">
-                                <input
-                                  class="enabled-checkbox"
-                                  type="checkbox"
-                                  title="Draft"
-                                  aria-label="Draft"
-                                  [checked]="!itinerary.enabled"
-                                  (change)="setItineraryEnabled(itinerary, !$any($event.target).checked)"
-                                />
+                              <td class="enabled-column">
+                                {{ itinerary.enabled ? '' : 'Yes' }}
                               </td>
                             </tr>
                           }
@@ -251,7 +245,19 @@ declare const L: any;
                   <span>Fit view to selection</span>
                 </button>
 
-                @if (selectedItineraryIds.size > 1) {
+                @if (selectedItineraryIds.size > 0 && selectedItinerariesAreDraft()) {
+                  <button type="button" class="secondary preview-action" (click)="setSelectedItinerariesEnabled(true)">
+                    <span class="preview-action-icon" aria-hidden="true">🌐</span>
+                    <span>Make public</span>
+                  </button>
+                }
+                @if (selectedItineraryIds.size > 0 && selectedItinerariesArePublic()) {
+                  <button type="button" class="secondary preview-action" (click)="setSelectedItinerariesEnabled(false)">
+                    <span class="preview-action-icon" aria-hidden="true">✎</span>
+                    <span>Turn to draft</span>
+                  </button>
+                }
+                @if (selectedItineraryIds.size > 1 && selectedItinerariesAreDraft()) {
                   <button type="button" class="secondary preview-action" (click)="openRouteInclusionDialog()">
                     <span class="preview-action-icon" aria-hidden="true">🔗</span>
                     <span>Manage route inclusions</span>
@@ -261,14 +267,16 @@ declare const L: any;
                     <span>Delete selected itineraries</span>
                   </button>
                 } @else if (previewItinerary) {
-                  <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewItinerary)">
-                    <span class="preview-action-icon" aria-hidden="true">📝</span>
-                    <span>Edit metadata and translations</span>
-                  </button>
-                  <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'edit']" [queryParams]="backQueryParamsFor(previewItinerary)">
-                    <span class="preview-action-icon" aria-hidden="true">🗺️</span>
-                    <span>Open in editor</span>
-                  </a>
+                  @if (!previewItinerary.enabled) {
+                    <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewItinerary)">
+                      <span class="preview-action-icon" aria-hidden="true">📝</span>
+                      <span>Edit metadata and translations</span>
+                    </button>
+                    <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'edit']" [queryParams]="backQueryParamsFor(previewItinerary)">
+                      <span class="preview-action-icon" aria-hidden="true">🗺️</span>
+                      <span>Open in editor</span>
+                    </a>
+                  }
                   <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'pois']" [queryParams]="backQueryParams()">
                     <span class="preview-action-icon" aria-hidden="true">📍</span>
                     <span>View POIs</span>
@@ -277,14 +285,16 @@ declare const L: any;
                     <span class="preview-action-icon" aria-hidden="true">📄</span>
                     <span>{{ duplicatingIds.has(previewItinerary.id) ? 'Duplicating...' : 'Duplicate' }}</span>
                   </button>
-                  <button type="button" class="secondary preview-action" (click)="openRouteInclusionDialog()">
-                    <span class="preview-action-icon" aria-hidden="true">🔗</span>
-                    <span>Manage route inclusions</span>
-                  </button>
-                  <button type="button" class="secondary preview-action danger-action" (click)="deleteItinerary(previewItinerary)">
-                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                    <span>Delete itinerary</span>
-                  </button>
+                  @if (!previewItinerary.enabled) {
+                    <button type="button" class="secondary preview-action" (click)="openRouteInclusionDialog()">
+                      <span class="preview-action-icon" aria-hidden="true">🔗</span>
+                      <span>Manage route inclusions</span>
+                    </button>
+                    <button type="button" class="secondary preview-action danger-action" (click)="deleteItinerary(previewItinerary)">
+                      <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                      <span>Delete itinerary</span>
+                    </button>
+                  }
                 }
               </div>
             </aside>
@@ -322,7 +332,7 @@ declare const L: any;
                   [class.highlight-row]="highlightedItineraryId === itinerary.id"
                   [class.preview-selected-row]="selectedItineraryIds.has(itinerary.id)"
                   [class.dragging-row]="draggedItineraryId === itinerary.id"
-                  [attr.draggable]="routeSlug ? true : null"
+                  [attr.draggable]="routeSlug && currentRouteIsDraft ? true : null"
                   (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
                   (dblclick)="openItineraryInEditor(itinerary)"
                   (dragstart)="startStageDrag(itinerary)"
@@ -368,15 +378,8 @@ declare const L: any;
                     </td>
                   }
                   <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
-                  <td class="enabled-column" (click)="$event.stopPropagation()">
-                    <input
-                      class="enabled-checkbox"
-                      type="checkbox"
-                      title="Draft"
-                      aria-label="Draft"
-                      [checked]="!itinerary.enabled"
-                      (change)="setItineraryEnabled(itinerary, !$any($event.target).checked)"
-                    />
+                  <td class="enabled-column">
+                    {{ itinerary.enabled ? '' : 'Yes' }}
                   </td>
                 </tr>
               } @empty {
@@ -412,16 +415,12 @@ declare const L: any;
               <span>Description</span>
               <textarea rows="4" [(ngModel)]="newItinerary.description" name="newItineraryDescription" placeholder="Optional description"></textarea>
             </label>
-            <label class="checkbox-inline">
-              <input type="checkbox" [ngModel]="!newItinerary.enabled" (ngModelChange)="newItinerary.enabled = !$event" name="newItineraryDraft" />
-              <span>Draft</span>
-            </label>
             <label>
               <span>Route</span>
               <select [ngModel]="newItinerary.routeId" (ngModelChange)="setNewItineraryRoute($event)" name="newItineraryRoute">
                 <option [ngValue]="null">No route</option>
                 @for (route of availableRoutes; track route.id) {
-                  <option [ngValue]="route.id">{{ route.title || 'Route ' + route.id }}</option>
+                  <option [ngValue]="route.id" [disabled]="route.enabled">{{ route.title || 'Route ' + route.id }}{{ route.enabled ? ' (public)' : '' }}</option>
                 }
               </select>
             </label>
@@ -470,11 +469,14 @@ declare const L: any;
                     type="checkbox"
                     [checked]="routeInclusionCheckboxState(route.id) === 'all'"
                     [indeterminate]="routeInclusionCheckboxState(route.id) === 'some'"
+                    [disabled]="route.enabled"
                     (change)="setRouteInclusionOverride(route.id, $any($event.target).checked)"
                   />
                   <span class="inclusion-row-text">
                     <strong>{{ route.title || 'Route ' + route.id }}</strong>
-                    <span class="muted">{{ routeInclusionCount(route.id) }} of {{ routeInclusionTargets().length }} selected {{ routeInclusionTargets().length === 1 ? 'itinerary' : 'itineraries' }}</span>
+                    <span class="muted">
+                      {{ route.enabled ? 'Public route' : routeInclusionCount(route.id) + ' of ' + routeInclusionTargets().length + ' selected ' + (routeInclusionTargets().length === 1 ? 'itinerary' : 'itineraries') }}
+                    </span>
                   </span>
                 </label>
               } @empty {
@@ -594,12 +596,13 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   routeSlug: string | null = null;
   routeTitle: string | null = null;
   currentRouteId: number | null = null;
+  currentRouteIsDraft = false;
   viewMode: 'flat' | 'grouped' = 'flat';
   readonly languageOptions = LANGUAGE_OPTIONS;
   statusMessage = '';
   statusIsError = false;
   availableRoutes: Route[] = [];
-  newItinerary: NewItineraryDraft = { language_code: 'en', title: '', description: '', enabled: true, routeId: null, stageNumber: null };
+  newItinerary: NewItineraryDraft = { language_code: 'en', title: '', description: '', routeId: null, stageNumber: null };
   readonly routeInclusionOverrides = new Map<number, boolean>();
   duplicatedItinerary: Itinerary | null = null;
   highlightedItineraryId: number | null = null;
@@ -642,6 +645,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
           this.availableRoutes = routes;
           this.currentRouteId = selectedRoute?.id || null;
           this.routeTitle = selectedRoute?.title || null;
+          this.currentRouteIsDraft = selectedRoute ? !selectedRoute.enabled : false;
           if (routeSlug && !selectedRoute) {
             return of({
               items: [] as Itinerary[],
@@ -806,6 +810,10 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   openItineraryInEditor(itinerary: Itinerary): void {
+    if (itinerary.enabled) {
+      this.showStatus('Public itineraries cannot be edited.', true);
+      return;
+    }
     void this.router.navigate(['/itineraries', itinerary.id, 'edit'], {
       queryParams: this.backQueryParamsFor(itinerary)
     });
@@ -851,12 +859,26 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     return itineraries.some(itinerary => this.selectedItineraryIds.has(itinerary.id)) && !this.areAllItinerariesSelected(itineraries);
   }
 
+  selectedItinerariesAreDraft(): boolean {
+    const selected = this.selectedItineraries();
+    return selected.length > 0 && selected.every(itinerary => !itinerary.enabled);
+  }
+
+  selectedItinerariesArePublic(): boolean {
+    const selected = this.selectedItineraries();
+    return selected.length > 0 && selected.every(itinerary => itinerary.enabled);
+  }
+
   openNewItineraryDialog(): void {
     this.newItineraryDialog?.nativeElement.showModal();
   }
 
   openNewItineraryForCurrentRoute(): void {
     if (this.currentRouteId === null) return;
+    if (!this.currentRouteIsDraft) {
+      this.showStatus('New stages can only be added to draft routes.', true);
+      return;
+    }
     this.newItinerary.routeId = this.currentRouteId;
     this.newItinerary.stageNumber = null;
     this.newItineraryDialog?.nativeElement.showModal();
@@ -894,9 +916,13 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
     try {
       const routeId = this.newItinerary.routeId;
+      if (routeId !== null && this.routeForId(routeId)?.enabled) {
+        this.showStatus('New itineraries can only be assigned to draft routes.', true);
+        return;
+      }
       const stageNumber = routeId === null ? null : await this.nextStageNumberForRoute(routeId);
       const itinerary = await firstValueFrom(this.api.createItinerary({
-        enabled: this.newItinerary.enabled,
+        enabled: false,
         route: routeId,
         stage_number: stageNumber,
         itinerary_json: { points: [], segments: [] },
@@ -907,7 +933,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
           is_reference: true
         }]
       }));
-      this.newItinerary = { language_code: 'en', title: '', description: '', enabled: true, routeId: null, stageNumber: null };
+      this.newItinerary = { language_code: 'en', title: '', description: '', routeId: null, stageNumber: null };
       this.closeNewItineraryDialog();
       this.showStatus(`Created itinerary "${itinerary.title || title}".`, false);
       this.pendingHighlightItineraryId = itinerary.id;
@@ -927,7 +953,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
     try {
       const duplicate = await firstValueFrom(this.api.createItinerary({
-        enabled: itinerary.enabled,
+        enabled: false,
         route: null,
         stage_number: null,
         itinerary_json: this.cloneItineraryJson(itinerary.itinerary_json),
@@ -939,6 +965,10 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       } else {
         this.showStatus(`Duplicated itinerary as "${duplicate.title || title}".`, false);
       }
+      this.selectedItineraryIds.clear();
+      this.selectedItineraryIds.add(duplicate.id);
+      this.previewItinerary = duplicate;
+      this.pendingHighlightItineraryId = duplicate.id;
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not duplicate itinerary. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
@@ -952,6 +982,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   async setItineraryEnabled(itinerary: Itinerary, enabled: boolean): Promise<void> {
+    if (!this.confirmItineraryDraftChange([itinerary], enabled)) return;
     try {
       await firstValueFrom(this.api.updateItinerary(itinerary.id, { enabled }));
       this.clearStatus();
@@ -961,7 +992,25 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  async setSelectedItinerariesEnabled(enabled: boolean): Promise<void> {
+    const selected = this.selectedItineraries();
+    if (selected.length === 0) return;
+    if (!this.confirmItineraryDraftChange(selected, enabled)) return;
+
+    try {
+      await Promise.all(selected.map(itinerary => firstValueFrom(this.api.updateItinerary(itinerary.id, { enabled }))));
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not update selected itineraries. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
   async deleteItinerary(itinerary: Itinerary): Promise<void> {
+    if (itinerary.enabled) {
+      this.showStatus('Public itineraries cannot be deleted.', true);
+      return;
+    }
     const confirmed = window.confirm(
       `Delete itinerary "${itinerary.title || 'Untitled itinerary'}"? POIs referenced by this itinerary will not be deleted.`
     );
@@ -979,6 +1028,10 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   async deleteSelectedItineraries(): Promise<void> {
     const selected = this.selectedItineraries();
     if (selected.length < 2) return;
+    if (selected.some(itinerary => itinerary.enabled)) {
+      this.showStatus('Only draft itineraries can be deleted.', true);
+      return;
+    }
     const confirmed = window.confirm(
       `Delete ${selected.length} selected itineraries? POIs referenced by these itineraries will not be deleted.`
     );
@@ -997,6 +1050,10 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   openTranslationDialog(itinerary: Itinerary): void {
+    if (itinerary.enabled) {
+      this.showStatus('Public itineraries cannot be edited.', true);
+      return;
+    }
     this.editingItinerary = itinerary;
     this.translationDrafts = this.translationDraftsFrom(itinerary.translations, itinerary.title, itinerary.description);
     this.activeTranslationIndex = Math.max(0, this.translationDrafts.findIndex(translation => translation.is_reference));
@@ -1075,6 +1132,10 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   openRouteInclusionDialog(): void {
     const targets = this.routeInclusionTargets();
     if (targets.length === 0) return;
+    if (targets.some(itinerary => itinerary.enabled)) {
+      this.showStatus('Route inclusions can only be managed for draft itineraries.', true);
+      return;
+    }
     this.routeInclusionOverrides.clear();
     this.routeInclusionDialog?.nativeElement.showModal();
   }
@@ -1123,6 +1184,10 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     const targets = this.routeInclusionTargets();
     const overrides = [...this.routeInclusionOverrides.entries()];
     if (targets.length === 0 || overrides.length === 0) return;
+    if (overrides.some(([routeId]) => this.routeForId(routeId)?.enabled)) {
+      this.showStatus('Public route memberships cannot be edited.', true);
+      return;
+    }
 
     targets.forEach(itinerary => this.assigningIds.add(itinerary.id));
     this.clearStatus();
@@ -1167,12 +1232,20 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   setAssignmentRoute(itinerary: Itinerary, routeId: number | null): void {
+    if (routeId !== null && this.routeForId(routeId)?.enabled) {
+      this.showStatus('Itineraries can only be assigned to draft routes.', true);
+      return;
+    }
     const draft = this.assignmentDraftFor(itinerary);
     draft.routeId = routeId;
     draft.stageNumber = null;
   }
 
   async unassignItinerary(itinerary: Itinerary): Promise<void> {
+    if (itinerary.enabled) {
+      this.showStatus('Public itineraries cannot be edited.', true);
+      return;
+    }
     const draft = this.assignmentDraftFor(itinerary);
     draft.routeId = null;
     draft.stageNumber = null;
@@ -1180,8 +1253,24 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   async saveAssignment(itinerary: Itinerary): Promise<void> {
+    if (itinerary.enabled) {
+      this.showStatus('Public itineraries cannot be edited.', true);
+      return;
+    }
     const draft = this.assignmentDraftFor(itinerary);
     if (draft.routeId === itinerary.route) return;
+    if (draft.routeId !== null && this.routeForId(draft.routeId)?.enabled) {
+      this.showStatus('Itineraries can only be assigned to draft routes.', true);
+      draft.routeId = itinerary.route;
+      draft.stageNumber = itinerary.stage_number;
+      return;
+    }
+    if (itinerary.route !== null && this.routeForId(itinerary.route)?.enabled) {
+      this.showStatus('Public route memberships cannot be edited.', true);
+      draft.routeId = itinerary.route;
+      draft.stageNumber = itinerary.stage_number;
+      return;
+    }
 
     const currentRouteName = itinerary.route_title || 'No route';
     const targetRouteName = this.routeNameForId(draft.routeId);
@@ -1222,17 +1311,17 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   startStageDrag(itinerary: Itinerary): void {
-    if (!this.routeSlug || this.currentRouteId === null) return;
+    if (!this.routeSlug || this.currentRouteId === null || !this.currentRouteIsDraft) return;
     this.draggedItineraryId = itinerary.id;
   }
 
   allowStageDrop(event: DragEvent): void {
-    if (this.draggedItineraryId === null || this.reorderingStages) return;
+    if (this.draggedItineraryId === null || this.reorderingStages || !this.currentRouteIsDraft) return;
     event.preventDefault();
   }
 
   async dropStage(targetItinerary: Itinerary, visibleItineraries: Itinerary[]): Promise<void> {
-    if (this.draggedItineraryId === null || this.currentRouteId === null || this.reorderingStages) return;
+    if (this.draggedItineraryId === null || this.currentRouteId === null || this.reorderingStages || !this.currentRouteIsDraft) return;
     if (this.draggedItineraryId === targetItinerary.id) {
       this.endStageDrag();
       return;
@@ -1825,8 +1914,39 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
   private routeNameForId(routeId: number | null): string {
     if (routeId === null) return 'No route';
-    const route = this.availableRoutes.find(candidate => candidate.id === routeId);
+    const route = this.routeForId(routeId);
     return route?.title || `Route ${routeId}`;
+  }
+
+  private routeForId(routeId: number): Route | undefined {
+    return this.availableRoutes.find(candidate => candidate.id === routeId);
+  }
+
+  private confirmItineraryDraftChange(itineraries: Itinerary[], enabled: boolean): boolean {
+    const action = enabled ? 'make public' : 'turn to draft';
+    const itemLabel = itineraries.length === 1 ? 'itinerary' : 'itineraries';
+    let message = `Really ${action} ${itineraries.length} selected ${itemLabel}?`;
+    if (!enabled) {
+      const affectedRoutes = this.affectedPublicRouteNamesForItineraries(itineraries);
+      if (affectedRoutes.length > 0) {
+        message += `\n\nThe following routes are affected and will also be turned to draft:\n- ${affectedRoutes.join('\n- ')}`;
+      }
+    }
+    return window.confirm(message);
+  }
+
+  private affectedPublicRouteNamesForItineraries(itineraries: Itinerary[]): string[] {
+    const names = new Map<number, string>();
+    for (const itinerary of itineraries) {
+      for (const membership of this.routeMembershipsFor(itinerary)) {
+        const route = this.routeForId(membership.route);
+        if (route && !route.enabled) continue;
+        names.set(membership.route, membership.route_title || route?.title || `Route ${membership.route}`);
+      }
+    }
+    return [...names.entries()]
+      .sort(([leftId], [rightId]) => leftId - rightId)
+      .map(([, name]) => name);
   }
 
   private scheduleHighlight(itineraryId: number | null, itineraries: Itinerary[]): void {
@@ -1870,33 +1990,31 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     const translations = itinerary.translations.length > 0
       ? itinerary.translations
       : [{ language_code: 'en', title: itinerary.title || '', description: itinerary.description || '', is_reference: true }];
-    let hasEnglishTranslation = false;
 
     const duplicatedTranslations = translations
       .filter(translation => translation.language_code)
-      .map(translation => {
-        const languageCode = translation.language_code;
-        const isEnglish = languageCode.toLowerCase() === 'en';
-        hasEnglishTranslation = hasEnglishTranslation || isEnglish;
-        return {
-          language_code: languageCode,
-          title: isEnglish ? title : this.translationTitle(translation, itinerary),
-          description: translation.description || '',
-          is_reference: Boolean(translation.is_reference)
-        };
-      });
+      .map(translation => ({
+        language_code: translation.language_code,
+        title: this.translationTitle(translation, itinerary),
+        description: translation.description || '',
+        is_reference: Boolean(translation.is_reference)
+      }));
 
-    if (!hasEnglishTranslation) {
+    if (duplicatedTranslations.length === 0) {
       duplicatedTranslations.unshift({
         language_code: 'en',
         title,
         description: itinerary.description || '',
-        is_reference: !duplicatedTranslations.some(translation => translation.is_reference)
+        is_reference: true
       });
     }
-    if (!duplicatedTranslations.some(translation => translation.is_reference) && duplicatedTranslations.length > 0) {
-      duplicatedTranslations[0].is_reference = true;
-    }
+    const referenceIndex = Math.max(0, duplicatedTranslations.findIndex(translation => translation.is_reference));
+    duplicatedTranslations.forEach((translation, index) => {
+      translation.is_reference = index === referenceIndex;
+      if (index === referenceIndex) {
+        translation.title = title;
+      }
+    });
 
     return duplicatedTranslations;
   }

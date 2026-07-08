@@ -37,12 +37,14 @@ declare const L: any;
         </div>
         <div class="list-actions">
           <a class="secondary" [routerLink]="backLink">{{ backLabel }}</a>
-          <button type="button" class="secondary" [disabled]="saving || loading" (click)="savePoi(false)">
-            {{ saving ? 'Saving...' : 'Save draft' }}
-          </button>
-          <button type="button" class="primary" [disabled]="saving || loading" (click)="savePoi(true)">
-            {{ saving ? 'Saving...' : 'Save and make public' }}
-          </button>
+          @if (isEditableDraft()) {
+            <button type="button" class="secondary" [disabled]="saving || loading" (click)="savePoi(false)">
+              {{ saving ? 'Saving...' : 'Save draft' }}
+            </button>
+            <button type="button" class="primary" [disabled]="saving || loading" (click)="savePoi(true)">
+              {{ saving ? 'Saving...' : 'Save and make public' }}
+            </button>
+          }
         </div>
       </header>
 
@@ -546,6 +548,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async savePoi(makePublic: boolean): Promise<void> {
+    if (!this.isEditableDraft()) {
+      this.showStatus('Public POIs cannot be edited.', true);
+      return;
+    }
     const translations = this.normalizedTranslations();
     if (translations.length === 0 || translations.some(translation => !translation.language_code || !translation.title)) {
       this.showStatus('Every POI translation needs a language and title.', true);
@@ -588,6 +594,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     } finally {
       this.saving = false;
     }
+  }
+
+  isEditableDraft(): boolean {
+    return this.isNewPoi || !this.poi || !this.poi.enabled;
   }
 
   private loadPoi(poi: Poi): void {

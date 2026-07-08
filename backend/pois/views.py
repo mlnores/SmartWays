@@ -277,7 +277,59 @@ class LanguageContextMixin:
         return response
 
 
-class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
+def ensure_draft(instance, label):
+    if getattr(instance, "enabled", False):
+        raise ValidationError({"detail": f"Public {label} cannot be edited or deleted. Marked draft content only is editable."})
+
+
+def is_turn_to_draft_request(data):
+    if set(data.keys()) != {"enabled"}:
+        return False
+    value = data.get("enabled")
+    if isinstance(value, bool):
+        return value is False
+    if isinstance(value, str):
+        return value.lower() in {"false", "0", "no"}
+    return False
+
+
+class DraftOnlyMutationMixin:
+    draft_label = "item"
+
+    def ensure_instance_is_draft(self, instance):
+        ensure_draft(instance, self.draft_label)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if getattr(instance, "enabled", False) and not is_turn_to_draft_request(request.data):
+            self.ensure_instance_is_draft(instance)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self.ensure_instance_is_draft(self.get_object())
+        return super().destroy(request, *args, **kwargs)
+
+
+class DraftParentOnlyMutationMixin(DraftOnlyMutationMixin):
+    parent_attribute = ""
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        parent = serializer.validated_data.get(self.parent_attribute)
+        if parent is not None:
+            ensure_draft(parent, self.draft_label)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    def ensure_instance_is_draft(self, instance):
+        parent = getattr(instance, self.parent_attribute)
+        ensure_draft(parent, self.draft_label)
+
+
+class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
+    draft_label = "POI"
     serializer_class = POISerializer
 
     def get_queryset(self):
@@ -387,7 +439,9 @@ class POIViewSet(LanguageContextMixin, viewsets.ModelViewSet):
         return Response({"country": country_code_for_point(latitude, longitude)})
 
 
-class POITranslationViewSet(viewsets.ModelViewSet):
+class POITranslationViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+    draft_label = "POI"
+    parent_attribute = "poi"
     serializer_class = POITranslationSerializer
     queryset = POITranslation.objects.select_related("poi").all()
 
@@ -404,8 +458,17 @@ class POITranslationViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class ItineraryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
+class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
+    draft_label = "itinerary"
     serializer_class = ItinerarySerializer
+
+    def update(self, request, *args, **kwargs):
+        if is_turn_to_draft_request(request.data):
+            with transaction.atomic():
+                itinerary = self.get_object()
+                Route.objects.filter(stages__itinerary=itinerary, enabled=True).distinct().update(enabled=False)
+                return super().update(request, *args, **kwargs)
+        return super().update(request, *args, **kwargs)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -451,7 +514,8 @@ class ItineraryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
         return queryset.distinct()
 
 
-class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
+class RouteViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
+    draft_label = "route"
     serializer_class = RouteSerializer
 
     def get_queryset(self):
@@ -484,6 +548,7 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="reorder-itineraries")
     def reorder_itineraries(self, request, pk=None):
         route = self.get_object()
+        ensure_draft(route, "route")
         raw_items = request.data.get("itineraries")
         if not isinstance(raw_items, list) or not raw_items:
             raise ValidationError({"itineraries": "Provide a non-empty list of itinerary stage assignments."})
@@ -541,6 +606,7 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="remove-itinerary")
     def remove_itinerary(self, request, pk=None):
         route = self.get_object()
+        ensure_draft(route, "route")
         itinerary_id = request.data.get("itinerary")
         if not isinstance(itinerary_id, int):
             raise ValidationError({"itinerary": "Provide an itinerary id."})
@@ -572,6 +638,7 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="add-itineraries")
     def add_itineraries(self, request, pk=None):
         route = self.get_object()
+        ensure_draft(route, "route")
         itinerary_ids = request.data.get("itineraries")
         if not isinstance(itinerary_ids, list) or not itinerary_ids:
             raise ValidationError({"itineraries": "Provide a non-empty list of itinerary ids."})
@@ -620,7 +687,9 @@ class RouteViewSet(LanguageContextMixin, viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-class RouteTranslationViewSet(viewsets.ModelViewSet):
+class RouteTranslationViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+    draft_label = "route"
+    parent_attribute = "route"
     serializer_class = RouteTranslationSerializer
     queryset = RouteTranslation.objects.select_related("route").all()
 
@@ -637,7 +706,9 @@ class RouteTranslationViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class ItineraryTranslationViewSet(viewsets.ModelViewSet):
+class ItineraryTranslationViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+    draft_label = "itinerary"
+    parent_attribute = "itinerary"
     serializer_class = ItineraryTranslationSerializer
     queryset = ItineraryTranslation.objects.select_related("itinerary").all()
 
@@ -708,7 +779,9 @@ class CategoryTranslationViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class POIMediaViewSet(viewsets.ModelViewSet):
+class POIMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+    draft_label = "POI"
+    parent_attribute = "poi"
     serializer_class = POIMediaSerializer
     queryset = POIMedia.objects.select_related("poi").all()
 

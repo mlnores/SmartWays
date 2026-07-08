@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, Observable, of, startWith, switchMap } from 'rxjs';
 
-import { ApiPage, ApiService, Category, Poi, Translation } from './api.service';
+import { ApiPage, ApiService, Category, Poi, PoiMedia, Translation } from './api.service';
 
 interface TranslationDraft {
   language_code: string;
@@ -197,15 +197,8 @@ declare const L: any;
                           }
                         </td>
                         <td>{{ countryName(poi.country_code) }}</td>
-                        <td class="enabled-column" (click)="$event.stopPropagation()">
-                          <input
-                            class="enabled-checkbox"
-                            type="checkbox"
-                            title="Draft"
-                            aria-label="Draft"
-                            [checked]="!poi.enabled"
-                            (change)="setPoiEnabled(poi, !$any($event.target).checked)"
-                          />
+                        <td class="enabled-column">
+                          {{ poi.enabled ? '' : 'Yes' }}
                         </td>
                       </tr>
                     } @empty {
@@ -239,20 +232,40 @@ declare const L: any;
                   <span>Fit view to selection</span>
                 </button>
 
-                @if (selectedPoiIds.size > 1) {
+                @if (selectedPoiIds.size > 0 && selectedPoisAreDraft()) {
+                  <button type="button" class="secondary preview-action" (click)="setSelectedPoisEnabled(true)">
+                    <span class="preview-action-icon" aria-hidden="true">🌐</span>
+                    <span>Make public</span>
+                  </button>
+                }
+                @if (selectedPoiIds.size > 0 && selectedPoisArePublic()) {
+                  <button type="button" class="secondary preview-action" (click)="setSelectedPoisEnabled(false)">
+                    <span class="preview-action-icon" aria-hidden="true">✎</span>
+                    <span>Turn to draft</span>
+                  </button>
+                }
+                @if (selectedPoiIds.size > 1 && selectedPoisAreDraft()) {
                   <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedPois()">
                     <span class="preview-action-icon" aria-hidden="true">🗑️</span>
                     <span>Delete selected POIs</span>
                   </button>
                 } @else if (previewPoi) {
-                  <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']">
-                    <span class="preview-action-icon" aria-hidden="true">🗺️</span>
-                    <span>Open in editor</span>
-                  </a>
-                  <button type="button" class="secondary preview-action danger-action" (click)="deletePoi(previewPoi)">
-                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                    <span>Delete POI</span>
+                  @if (!previewPoi.enabled) {
+                    <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']">
+                      <span class="preview-action-icon" aria-hidden="true">🗺️</span>
+                      <span>Open in editor</span>
+                    </a>
+                  }
+                  <button type="button" class="secondary preview-action" [disabled]="duplicatingPoiIds.has(previewPoi.id)" (click)="duplicatePoi(previewPoi)">
+                    <span class="preview-action-icon" aria-hidden="true">📄</span>
+                    <span>{{ duplicatingPoiIds.has(previewPoi.id) ? 'Duplicating...' : 'Duplicate' }}</span>
                   </button>
+                  @if (!previewPoi.enabled) {
+                    <button type="button" class="secondary preview-action danger-action" (click)="deletePoi(previewPoi)">
+                      <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                      <span>Delete POI</span>
+                    </button>
+                  }
                 }
               </div>
             </aside>
@@ -451,12 +464,14 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   categoryTranslationDrafts: CategoryTranslationDraft[] = [];
   mergeTargetCategoryId: number | null = null;
   readonly selectedPoiIds = new Set<number>();
+  readonly duplicatingPoiIds = new Set<number>();
   currentPois: Poi[] = [];
   poiTotalCount = 0;
   poiNextPage: number | null = null;
   loadingMorePois = false;
   mapBoundsFilter: MapBoundsFilter | null = null;
   highlightedPoiId: number | null = null;
+  pendingHighlightPoiId: number | null = null;
   previewPoi: Poi | null = null;
   previewMessage = 'Click a POI to preview it.';
   private previewMap: any = null;
@@ -499,6 +514,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
               this.poiTotalCount = page.count;
               this.poiNextPage = page.next ? 2 : null;
               this.pruneSelectedPois(this.currentPois);
+              this.schedulePoiHighlight(this.pendingHighlightPoiId, this.currentPois);
               if (this.selectedPoiIds.size > 0) {
                 this.renderSelectedPoiPreviewIfNeeded(!this.selectedPreviewFitLocked);
               } else {
@@ -612,6 +628,16 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     return pois.some(poi => this.selectedPoiIds.has(poi.id)) && !this.areAllPoisSelected(pois);
   }
 
+  selectedPoisAreDraft(): boolean {
+    const selected = this.selectedPois();
+    return selected.length > 0 && selected.every(poi => !poi.enabled);
+  }
+
+  selectedPoisArePublic(): boolean {
+    const selected = this.selectedPois();
+    return selected.length > 0 && selected.every(poi => poi.enabled);
+  }
+
   fitPreviewToCurrentPois(): void {
     if (this.selectedPoiIds.size > 0) {
       this.renderSelectedPoiPreviewIfNeeded(true);
@@ -639,6 +665,28 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         this.highlightedPoiId = null;
       }
     }, 2500);
+  }
+
+  private schedulePoiHighlight(poiId: number | null, pois: Poi[]): void {
+    const poi = pois.find(candidate => candidate.id === poiId);
+    if (!poiId || !poi) return;
+
+    this.pendingHighlightPoiId = null;
+    this.highlightedPoiId = poiId;
+    this.selectedPoiIds.clear();
+    this.selectedPoiIds.add(poiId);
+    this.previewPoi = poi;
+    window.setTimeout(() => {
+      document.getElementById(this.poiRowId(poi))?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    }, 80);
+    window.setTimeout(() => {
+      if (this.highlightedPoiId === poiId) {
+        this.highlightedPoiId = null;
+      }
+    }, 3000);
   }
 
   centerPreviewOnPoi(poi: Poi): void {
@@ -724,6 +772,53 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not update POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async setSelectedPoisEnabled(enabled: boolean): Promise<void> {
+    const selected = this.selectedPois();
+    if (selected.length === 0) return;
+    const action = enabled ? 'make public' : 'turn to draft';
+    const confirmed = window.confirm(`Really ${action} ${selected.length} selected ${selected.length === 1 ? 'POI' : 'POIs'}?`);
+    if (!confirmed) return;
+
+    try {
+      await Promise.all(selected.map(poi => firstValueFrom(this.api.updatePoi(poi.id, { enabled }))));
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not update selected POIs. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async duplicatePoi(poi: Poi): Promise<void> {
+    const currentTitle = poi.title || 'Untitled POI';
+    const title = window.prompt('New title for duplicated POI:', `Copy of ${currentTitle}`)?.trim();
+    if (!title) return;
+
+    this.duplicatingPoiIds.add(poi.id);
+    this.clearStatus();
+    try {
+      const duplicate = await firstValueFrom(this.api.createPoi({
+        enabled: false,
+        country_code: poi.country_code || '',
+        gps_latitude: poi.gps_latitude,
+        gps_longitude: poi.gps_longitude,
+        website: poi.website || '',
+        category_ids: poi.categories.map(category => category.id),
+        translations: this.duplicatePoiTranslations(poi, title),
+        media: this.duplicatePoiMedia(poi.media || [], poi.images || [])
+      }));
+      this.selectedPoiIds.clear();
+      this.selectedPoiIds.add(duplicate.id);
+      this.previewPoi = duplicate;
+      this.pendingHighlightPoiId = duplicate.id;
+      this.showStatus(`Duplicated POI as "${duplicate.title || title}".`, false);
+      this.refresh$.next(this.refresh$.value + 1);
+    } catch (error) {
+      this.showStatus(`Could not duplicate POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    } finally {
+      this.duplicatingPoiIds.delete(poi.id);
     }
   }
 
@@ -941,6 +1036,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   async deletePoi(poi: Poi): Promise<void> {
+    if (poi.enabled) {
+      this.showStatus('Public POIs cannot be deleted.', true);
+      return;
+    }
     const confirmed = window.confirm(`Delete POI "${poi.title || 'Untitled POI'}"?`);
     if (!confirmed) return;
 
@@ -960,6 +1059,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   async deleteSelectedPois(): Promise<void> {
     const selected = this.selectedPois();
     if (selected.length < 2) return;
+    if (selected.some(poi => poi.enabled)) {
+      this.showStatus('Only draft POIs can be deleted.', true);
+      return;
+    }
     const confirmed = window.confirm(`Delete ${selected.length} selected POIs? Itineraries that reference them will not be deleted.`);
     if (!confirmed) return;
 
@@ -1222,6 +1325,66 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       translations[0].is_reference = true;
     }
     return translations;
+  }
+
+  private duplicatePoiTranslations(poi: Poi, title: string): Array<{
+    language_code: string;
+    title: string;
+    description?: string;
+    is_reference?: boolean;
+  }> {
+    const translations = poi.translations.length > 0
+      ? poi.translations
+      : [{ language_code: 'en', title: poi.title || '', description: poi.description || '', is_reference: true }];
+    const duplicatedTranslations = translations
+      .filter(translation => translation.language_code)
+      .map(translation => ({
+        language_code: translation.language_code,
+        title: translation.title || poi.title || 'Untitled POI',
+        description: translation.description || '',
+        is_reference: Boolean(translation.is_reference)
+      }));
+
+    if (duplicatedTranslations.length === 0) {
+      duplicatedTranslations.unshift({
+        language_code: 'en',
+        title,
+        description: poi.description || '',
+        is_reference: true
+      });
+    }
+    const referenceIndex = Math.max(0, duplicatedTranslations.findIndex(translation => translation.is_reference));
+    duplicatedTranslations.forEach((translation, index) => {
+      translation.is_reference = index === referenceIndex;
+      if (index === referenceIndex) {
+        translation.title = title;
+      }
+    });
+    return duplicatedTranslations;
+  }
+
+  private duplicatePoiMedia(media: PoiMedia[], images: Array<{ image_url: string; position: number; is_primary: boolean }>): PoiMedia[] {
+    const source: PoiMedia[] = media.length > 0
+      ? media.map(item => ({
+        media_type: item.media_type || 'image',
+        url: item.url || item.image_url || '',
+        position: item.position,
+        is_primary: item.is_primary
+      }))
+      : images.map(image => ({
+        media_type: 'image' as const,
+        url: image.image_url,
+        position: image.position,
+        is_primary: image.is_primary
+      }));
+    return source
+      .filter(item => item.url || item.image_url)
+      .map((item, index) => ({
+        media_type: item.media_type || 'image',
+        url: item.url || item.image_url || '',
+        position: Number.isFinite(item.position) ? item.position : index,
+        is_primary: Boolean(item.is_primary)
+      }));
   }
 
   private normalizedCategoryTranslations() {

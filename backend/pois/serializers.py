@@ -516,8 +516,11 @@ class ItinerarySerializer(serializers.ModelSerializer):
         if route_id is not serializers.empty and route_id is not None:
             if not isinstance(route_id, int):
                 raise serializers.ValidationError({"route": "Route must be an integer id or null."})
-            if not Route.objects.filter(id=route_id).exists():
+            route = Route.objects.filter(id=route_id).first()
+            if route is None:
                 raise serializers.ValidationError({"route": "Route does not exist."})
+            if route.enabled:
+                raise serializers.ValidationError({"route": "Public routes cannot be edited. Add or remove itineraries only while a route is a draft."})
             if not isinstance(stage_number, int) or stage_number < 1:
                 raise serializers.ValidationError({"stage_number": "Stage number must be a positive integer."})
 
@@ -551,6 +554,16 @@ class ItinerarySerializer(serializers.ModelSerializer):
         translations = validated_data.pop("translations", None)
         route_id = validated_data.pop("route", serializers.empty)
         stage_number = self.initial_data.get("stage_number", serializers.empty)
+
+        if route_id is not serializers.empty:
+            existing_stages = list(instance.route_stages.select_related("route"))
+            public_routes = [stage.route for stage in existing_stages if stage.route.enabled]
+            if public_routes:
+                raise serializers.ValidationError({"route": "Public route memberships cannot be edited."})
+            if route_id is not None:
+                route = Route.objects.filter(id=route_id).first()
+                if route and route.enabled:
+                    raise serializers.ValidationError({"route": "Public routes cannot be edited. Add or remove itineraries only while a route is a draft."})
 
         for field, value in validated_data.items():
             setattr(instance, field, value)

@@ -289,6 +289,8 @@ class POIAPITests(APITestCase):
         self.assertEqual(poi.translations.get(language_code="en").slug, "sample-title-2")
 
     def test_poi_update_accepts_existing_translation_slugs(self):
+        self.poi.enabled = False
+        self.poi.save(update_fields=["enabled"])
         payload = {
             "enabled": self.poi.enabled,
             "country_code": self.poi.country_code,
@@ -321,6 +323,26 @@ class POIAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(self.poi.translations.get(language_code="en").title, "Updated Castle")
+
+    def test_public_poi_cannot_be_updated_or_deleted(self):
+        patch_response = self.client.patch(
+            reverse("poi-detail", args=[self.poi.id]),
+            {"website": "https://example.com/updated"},
+            format="json",
+        )
+        delete_response = self.client.delete(reverse("poi-detail", args=[self.poi.id]))
+
+        self.assertEqual(patch_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(delete_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.poi.refresh_from_db()
+        self.assertEqual(self.poi.website, "https://example.com/poi")
+
+    def test_public_poi_can_be_turned_to_draft(self):
+        response = self.client.patch(reverse("poi-detail", args=[self.poi.id]), {"enabled": False}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.poi.refresh_from_db()
+        self.assertFalse(self.poi.enabled)
 
     def test_poi_create_rejects_multiple_reference_translations(self):
         response = self.client.post(
@@ -498,7 +520,7 @@ class POIAPITests(APITestCase):
         self.assertTrue(route.translations.get(language_code="en").is_reference)
 
     def test_route_list_uses_reference_translation_without_language_filter(self):
-        route = Route.objects.create(enabled=True)
+        route = Route.objects.create(enabled=False)
         route.translations.create(
             language_code="en",
             title="English route",
@@ -520,7 +542,7 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.data["results"][0]["description"], "Descripción española.")
 
     def test_itinerary_can_be_route_stage(self):
-        route = Route.objects.create(enabled=True)
+        route = Route.objects.create(enabled=False)
         route.translations.create(
             language_code="en",
             title="Camino route",
@@ -573,7 +595,7 @@ class POIAPITests(APITestCase):
         self.assertEqual(unassigned_response.data["count"], 0)
 
     def test_route_reorders_itinerary_stages(self):
-        route = Route.objects.create(enabled=True)
+        route = Route.objects.create(enabled=False)
         route.translations.create(
             language_code="en",
             title="Camino route",
@@ -603,7 +625,7 @@ class POIAPITests(APITestCase):
         self.assertEqual(RouteStage.objects.get(route=route, itinerary=second).stage_number, 1)
 
     def test_route_remove_itinerary_compacts_stages(self):
-        route = Route.objects.create(enabled=True)
+        route = Route.objects.create(enabled=False)
         route.translations.create(
             language_code="en",
             title="Camino route",
@@ -632,7 +654,7 @@ class POIAPITests(APITestCase):
         self.assertEqual(RouteStage.objects.get(route=route, itinerary=third).stage_number, 2)
 
     def test_route_add_itineraries_appends_new_stages(self):
-        route = Route.objects.create(enabled=True)
+        route = Route.objects.create(enabled=False)
         route.translations.create(
             language_code="en",
             title="Camino route",
@@ -657,6 +679,109 @@ class POIAPITests(APITestCase):
         self.assertEqual(RouteStage.objects.get(route=route, itinerary=existing).stage_number, 1)
         self.assertEqual(RouteStage.objects.get(route=route, itinerary=first).stage_number, 2)
         self.assertEqual(RouteStage.objects.get(route=route, itinerary=second).stage_number, 3)
+
+    def test_public_route_cannot_be_updated_deleted_or_reordered(self):
+        route = Route.objects.create(enabled=True)
+        route.translations.create(language_code="en", title="Public route", slug="public-route")
+        first = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        second = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        RouteStage.objects.create(route=route, itinerary=first, stage_number=1)
+        RouteStage.objects.create(route=route, itinerary=second, stage_number=2)
+
+        patch_response = self.client.patch(
+            reverse("route-detail", args=[route.id]),
+            {"translations": [{"language_code": "en", "title": "Changed", "is_reference": True}]},
+            format="json",
+        )
+        delete_response = self.client.delete(reverse("route-detail", args=[route.id]))
+        reorder_response = self.client.post(
+            reverse("route-reorder-itineraries", args=[route.id]),
+            {"itineraries": [{"id": second.id, "stage_number": 1}, {"id": first.id, "stage_number": 2}]},
+            format="json",
+        )
+
+        self.assertEqual(patch_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(delete_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(reorder_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(RouteStage.objects.get(route=route, itinerary=first).stage_number, 1)
+
+    def test_public_route_can_be_turned_to_draft(self):
+        route = Route.objects.create(enabled=True)
+        route.translations.create(language_code="en", title="Public route", slug="public-route")
+
+        response = self.client.patch(reverse("route-detail", args=[route.id]), {"enabled": False}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        route.refresh_from_db()
+        self.assertFalse(route.enabled)
+
+    def test_public_route_cannot_add_or_remove_itineraries(self):
+        route = Route.objects.create(enabled=True)
+        route.translations.create(language_code="en", title="Public route", slug="public-route")
+        existing = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+        RouteStage.objects.create(route=route, itinerary=existing, stage_number=1)
+        new_itinerary = Itinerary.objects.create(itinerary_json={"points": [], "segments": []})
+
+        add_response = self.client.post(
+            reverse("route-add-itineraries", args=[route.id]),
+            {"itineraries": [new_itinerary.id]},
+            format="json",
+        )
+        remove_response = self.client.post(
+            reverse("route-remove-itinerary", args=[route.id]),
+            {"itinerary": existing.id},
+            format="json",
+        )
+
+        self.assertEqual(add_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(remove_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(RouteStage.objects.filter(route=route, itinerary=existing).exists())
+        self.assertFalse(RouteStage.objects.filter(route=route, itinerary=new_itinerary).exists())
+
+    def test_itinerary_cannot_be_created_in_public_route(self):
+        route = Route.objects.create(enabled=True)
+        route.translations.create(language_code="en", title="Public route", slug="public-route")
+
+        response = self.client.post(
+            reverse("itinerary-list"),
+            {
+                "enabled": False,
+                "route": route.id,
+                "stage_number": 1,
+                "itinerary_json": {"points": [], "segments": []},
+                "translations": [{"language_code": "en", "title": "Draft itinerary", "is_reference": True}],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(RouteStage.objects.filter(route=route).exists())
+
+    def test_public_itinerary_cannot_be_updated_or_deleted(self):
+        itinerary = Itinerary.objects.create(enabled=True, itinerary_json={"points": [], "segments": []})
+        itinerary.translations.create(language_code="en", title="Public itinerary", slug="public-itinerary")
+
+        patch_response = self.client.patch(reverse("itinerary-detail", args=[itinerary.id]), {"itinerary_json": {"points": [{"id": 1}], "segments": []}}, format="json")
+        delete_response = self.client.delete(reverse("itinerary-detail", args=[itinerary.id]))
+
+        self.assertEqual(patch_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(delete_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(Itinerary.objects.filter(id=itinerary.id).exists())
+
+    def test_public_itinerary_can_be_turned_to_draft(self):
+        itinerary = Itinerary.objects.create(enabled=True, itinerary_json={"points": [], "segments": []})
+        itinerary.translations.create(language_code="en", title="Public itinerary", slug="public-itinerary")
+        route = Route.objects.create(enabled=True)
+        route.translations.create(language_code="en", title="Public route", slug="public-route")
+        RouteStage.objects.create(route=route, itinerary=itinerary, stage_number=1)
+
+        response = self.client.patch(reverse("itinerary-detail", args=[itinerary.id]), {"enabled": False}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        itinerary.refresh_from_db()
+        route.refresh_from_db()
+        self.assertFalse(itinerary.enabled)
+        self.assertFalse(route.enabled)
 
     def test_itinerary_list_returns_localized_content_and_searches(self):
         itinerary = Itinerary.objects.create(
