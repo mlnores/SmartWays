@@ -1,30 +1,84 @@
-# SmartWays POI Backend
+# SmartWays
 
-This repository contains a static itinerary editor and a Django-based backend foundation for managing points of interest (POIs).
+SmartWays is a Django + Angular application for managing routes, itineraries, and points of interest (POIs). The backend stores geospatial data and exposes a REST API. The frontend provides the operational UI for browsing, editing, importing, previewing, and publishing content.
 
-The backend is under `backend/` and uses Django, Django REST Framework, and GeoDjango with an SRID 4326 `PointField`. It defaults to SQLite with SpatiaLite for local development and can switch to PostGIS for production.
+## Main Features
 
-## Features
+### Frontend
 
-- POI CRUD API.
-- GeoDjango coordinates stored as `location` with SRID 4326.
-- API read/write coordinates as `gps_latitude` and `gps_longitude`.
-- POI country code annotation with ISO 3166-1 alpha-2 codes.
-- Multilingual POI titles, descriptions, and slugs.
-- Multilingual category names.
-- Link-based POI images.
-- Many-to-many POI/category relationship.
-- Filters for language, category, country, enabled state, and bounding box.
-- One-shot RurAllure SQL dump import command.
-- Server-rendered POI browser with selected POI details, map, and image carousel.
-- Itinerary editor buffer lookups with clustered POI markers.
-- Basic Django admin registration.
+- Angular application under `frontend/`.
+- Route browser at `/routes`, with map previews and route-level actions.
+- Route itinerary browser at `/route/:slug`, with stage ordering for draft routes.
+- Itinerary browser at `/itineraries`, including route memberships, map previews, selection, sorting, and filtering to the visible map area.
+- Itinerary editor at `/itineraries/:id/edit`, with Leaflet map editing, waypoint and POI workflows, route/path lookup, buffer POI lookup, undo/redo, and direct save.
+- POI browser at `/pois`, with category/country/map filters, map preview, sorting, pagination via `Load more`, category management, and viewer/editor navigation.
+- POI viewer/editor at `/pois/:id/edit` and `/pois/new`, with basic info, translations, media, category selection, publication state, geocoding-assisted titles, and map-based location picking.
+- Draft/public publication workflow:
+  - Public content is read-only.
+  - Draft content can be edited or deleted.
+  - Publishing routes cascades to their draft itineraries and draft POIs.
+  - Turning POIs or itineraries to draft cascades to affected parent content.
 
-## Setup
+### Backend
+
+- Django REST API under `backend/`.
+- GeoDjango storage for POI coordinates using SRID 4326.
+- Spatial queries for POIs inside route-buffer polygons.
+- POI categories, translations, country codes, and linked media.
+- Routes composed of ordered itinerary stages. The same itinerary can belong to multiple routes.
+- Itineraries stored as editor export JSON, including waypoint and POI coordinates.
+- Draft/public mutation rules enforced at the API layer.
+- Django admin for direct inspection and maintenance.
+- Import commands for RurAllure POIs and route/GPX datasets.
+- Default local database: SQLite + SpatiaLite.
+- Optional production-style database: PostgreSQL + PostGIS.
+
+## Repository Layout
+
+```text
+backend/                    Django backend and API
+frontend/                   Angular frontend
+POI_data/                   Local RurAllure SQL dump input, not required for normal runtime
+routes_data/                Local route/GPX import inputs, ignored by git
+interactive_itinerary_map.* Legacy static editor fallback
+docker-compose.yml          Optional local PostGIS database
+requirements.txt            Minimal pip requirements for Django/DRF
+```
+
+## Requirements
+
+### Backend
+
+- Python 3.12 recommended.
+- Django 5 and Django REST Framework.
+- GeoDjango native dependencies:
+  - GDAL
+  - GEOS
+  - PROJ
+  - SQLite with SpatiaLite for local development, or PostgreSQL with PostGIS.
+- For RurAllure country annotation, a geoBoundaries ADM0 GeoJSON file:
+
+```text
+backend/pois/data/geoboundaries_adm0.geojson
+```
+
+### Frontend
+
+- Node.js compatible with Angular 18, preferably Node 20+.
+- npm.
+- The frontend expects the backend API at:
+
+```text
+http://127.0.0.1:8000/api/
+```
+
+The Angular app also loads Leaflet, Leaflet MarkerCluster, and Turf from CDN links in `frontend/src/index.html`.
+
+## Backend Setup
 
 ### Recommended Conda Setup On Apple Silicon
 
-On Apple Silicon, use a dedicated Conda environment so Python, GDAL, SQLite, and SpatiaLite all come from the same architecture. If your base Conda environment has plugin errors, create the environment with plugins disabled:
+Use one Conda environment so Python, GDAL, SQLite, and SpatiaLite use the same architecture:
 
 ```bash
 unset DYLD_LIBRARY_PATH
@@ -40,14 +94,14 @@ export GDAL_LIBRARY_PATH="$CONDA_PREFIX/lib/libgdal.dylib"
 export SPATIALITE_LIBRARY_PATH="$CONDA_PREFIX/lib/mod_spatialite.dylib"
 ```
 
-By default, the backend uses SQLite with SpatiaLite:
+Then configure Django for local development:
 
 ```bash
 export DJANGO_SECRET_KEY="change-me"
 export DJANGO_DEBUG=1
 ```
 
-Run migrations and start the API:
+Run migrations and start the backend:
 
 ```bash
 cd backend
@@ -56,44 +110,36 @@ python manage.py createsuperuser
 python manage.py runserver
 ```
 
-Open the Django admin panel at:
+Useful URLs:
 
 ```text
-http://127.0.0.1:8000/admin/
+http://127.0.0.1:8000/        Backend API index
+http://127.0.0.1:8000/admin/  Django admin
+http://127.0.0.1:8000/api/    REST API
 ```
 
-For local development, keep `DJANGO_DEBUG=1` when starting the server. Without it, Django will not serve admin static assets and the admin panel may appear unstyled.
-
-The root backend page is available at:
-
-```text
-http://127.0.0.1:8000/
-```
-
-The POI browser page is available at:
-
-```text
-http://127.0.0.1:8000/pois/
-```
+Keep `DJANGO_DEBUG=1` during local development so Django serves admin static files.
 
 ### Alternative Virtualenv Setup
 
-If you are not using Conda, create and activate a virtual environment:
+If GDAL and SpatiaLite are installed outside Python:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
 
-GeoDjango needs GDAL and the SpatiaLite shared library installed on your machine. If Django cannot find them automatically, set:
-
-```bash
+export DJANGO_SECRET_KEY="change-me"
+export DJANGO_DEBUG=1
 export GDAL_LIBRARY_PATH=/path/to/libgdal
 export SPATIALITE_LIBRARY_PATH=/path/to/mod_spatialite
+
+cd backend
+python manage.py migrate
+python manage.py runserver
 ```
 
-On macOS with Homebrew, this is often:
+On macOS with Homebrew this is often:
 
 ```bash
 brew install gdal libspatialite
@@ -101,38 +147,17 @@ export GDAL_LIBRARY_PATH="$(brew --prefix gdal)/lib/libgdal.dylib"
 export SPATIALITE_LIBRARY_PATH="$(brew --prefix libspatialite)/lib/mod_spatialite.dylib"
 ```
 
-On Apple Silicon, make sure Python and GDAL use the same architecture. If you use ARM Python from Miniconda, prefer Conda packages:
+On Apple Silicon, avoid mixing ARM Python with Intel Homebrew libraries.
 
-```bash
-conda install -c conda-forge gdal libspatialite geos proj
-export GDAL_LIBRARY_PATH="$CONDA_PREFIX/lib/libgdal.dylib"
-export SPATIALITE_LIBRARY_PATH="$CONDA_PREFIX/lib/mod_spatialite.dylib"
-```
+### Optional PostGIS Setup
 
-If Django reports an incompatible architecture for `/usr/local/opt/gdal/...`, unset old Intel Homebrew paths before retrying:
-
-```bash
-unset GDAL_LIBRARY_PATH
-unset SPATIALITE_LIBRARY_PATH
-```
-
-## Optional PostGIS Setup
-
-For production, use PostgreSQL with PostGIS. Example local database:
+Start the bundled database:
 
 ```bash
 docker compose up -d db
 ```
 
-Or create one manually:
-
-```sql
-CREATE DATABASE smartways;
-\c smartways
-CREATE EXTENSION postgis;
-```
-
-Configure the database with environment variables:
+Configure Django:
 
 ```bash
 export DJANGO_SECRET_KEY="change-me"
@@ -143,68 +168,15 @@ export POSTGRES_USER=smartways
 export POSTGRES_PASSWORD=smartways
 export POSTGRES_HOST=localhost
 export POSTGRES_PORT=5432
-```
 
-Then run:
-
-```bash
 cd backend
 python manage.py migrate
 python manage.py runserver
 ```
 
-## API Endpoints
+## Frontend Setup
 
-Base URL:
-
-```text
-http://127.0.0.1:8000/api/
-```
-
-Endpoints:
-
-- `GET|POST /api/pois/`
-- `GET|PUT|PATCH|DELETE /api/pois/{id}/`
-- `GET|POST /api/poi-translations/`
-- `GET|POST /api/categories/`
-- `GET|POST /api/category-translations/`
-- `GET|POST /api/poi-images/`
-- `GET|POST /api/itineraries/`
-- `GET|PUT|PATCH|DELETE /api/itineraries/{id}/`
-- `GET|POST /api/itinerary-translations/`
-- `POST /api/buffer-pois/`
-
-Server-rendered pages:
-
-- `GET /`
-- `GET /pois/`
-
-The POI browser supports `q`, `language`, `page`, and `poi` query parameters. Example:
-
-```text
-http://127.0.0.1:8000/pois/?language=en&q=castle
-```
-
-## Itinerary Editor POI Lookup
-
-The static itinerary editor in `interactive_itinerary_map.html` calls `POST /api/buffer-pois/` when a segment buffer is displayed or refreshed. Returned POIs are shown on the map and in the POI browser panel.
-
-When a buffer contains many POIs, the editor clusters markers with `leaflet.markercluster`, loaded from the unpkg CDN alongside Leaflet and Turf.js. If the clustering plugin is unavailable, the editor falls back to plain Leaflet markers.
-
-The editor's Save button opens a dialog with the current itinerary JSON, plus language, title, and description fields. Use `Save to server` to create an itinerary through `POST /api/itineraries/`; the JSON remains available for download from the same dialog.
-
-## Angular Frontend
-
-The repository includes an incremental Angular frontend under `frontend/`. It keeps Django as the API/backend and currently provides:
-
-- `/itineraries` to browse saved itineraries from `GET /api/itineraries/`
-- `/itineraries/new` to open the Angular itinerary editor for a new itinerary
-- `/itineraries/:id/edit` to open the Angular itinerary editor and load a saved itinerary by id
-- `/pois` to browse enabled POIs from `GET /api/pois/`
-
-The Angular itinerary editor currently keeps the former editor behavior in one large component and a generated runtime initializer. The root `interactive_itinerary_map.html`, `.css`, and `.js` files remain as a static fallback while the editor is incrementally refactored into smaller Angular pieces.
-
-Run the Angular app with:
+Install dependencies and start the Angular development server:
 
 ```bash
 cd frontend
@@ -212,186 +184,130 @@ npm install
 npm start
 ```
 
-Then open:
+Open:
 
 ```text
-http://127.0.0.1:4200/
+http://localhost:4200/
 ```
 
-## Create A POI
+Build the frontend:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/pois/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "enabled": true,
-    "gps_latitude": 42.2406,
-    "gps_longitude": -8.7207,
-    "website": "https://example.com",
-    "translations": [
-      {
-        "language_code": "en",
-        "title": "Castle",
-        "description": "A fortified place.",
-        "slug": "castle"
-      },
-      {
-        "language_code": "es",
-        "title": "Castillo",
-        "description": "Un lugar fortificado.",
-        "slug": "castillo"
-      }
-    ],
-    "images": [
-      {
-        "image_url": "https://example.com/castle.jpg",
-        "position": 1,
-        "is_primary": true
-      }
-    ]
-  }'
+cd frontend
+npm run build
 ```
 
-## Filtering
-
-Localized response:
+Run the Angular type check used during development:
 
 ```bash
-curl "http://127.0.0.1:8000/api/pois/?language=es"
+cd frontend
+npm exec tsc -- --noEmit --project tsconfig.app.json
 ```
 
-Filter by category slug or id:
-
-```bash
-curl "http://127.0.0.1:8000/api/pois/?category=heritage"
-```
-
-Filter by physical country code:
-
-```bash
-curl "http://127.0.0.1:8000/api/pois/?country=ES"
-```
-
-Filter by bounding box:
-
-```bash
-curl "http://127.0.0.1:8000/api/pois/?bbox=-9,42,-8,43"
-```
-
-The `bbox` parameter uses:
+## Main Frontend Routes
 
 ```text
-min_lon,min_lat,max_lon,max_lat
+/routes                    Browse routes
+/route/:slug               Browse the itineraries/stages of a route
+/itineraries               Browse itineraries
+/itineraries/new           New itinerary editor
+/itineraries/:id/edit      Edit a draft itinerary
+/itineraries/:id/pois      Browse POIs included in an itinerary
+/pois                      Browse POIs
+/pois/new                  Create a draft POI
+/pois/:id/edit             View/edit POI metadata, translations, and media
 ```
 
-Filter enabled POIs:
+## API Overview
 
-```bash
-curl "http://127.0.0.1:8000/api/pois/?enabled=true"
+Base URL:
+
+```text
+http://127.0.0.1:8000/api/
 ```
 
-Find POIs inside a GeoJSON buffer region:
+Core endpoints:
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/buffer-pois/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "language": "en",
-    "limit": 100,
-    "buffer": {
-      "type": "Polygon",
-      "coordinates": [[[-9,42],[-8,42],[-8,43],[-9,43],[-9,42]]]
-    }
-  }'
+```text
+GET|POST              /api/pois/
+GET|PUT|PATCH|DELETE  /api/pois/{id}/
+GET|POST              /api/poi-translations/
+GET|POST              /api/poi-media/
+GET|POST              /api/categories/
+GET|POST              /api/category-translations/
+
+GET|POST              /api/routes/
+GET|PUT|PATCH|DELETE  /api/routes/{id}/
+POST                  /api/routes/{id}/add-itineraries/
+POST                  /api/routes/{id}/remove-itinerary/
+POST                  /api/routes/{id}/reorder-itineraries/
+GET|POST              /api/route-translations/
+
+GET|POST              /api/itineraries/
+GET|PUT|PATCH|DELETE  /api/itineraries/{id}/
+GET|POST              /api/itinerary-translations/
+
+POST                  /api/buffer-pois/
 ```
 
-## Create An Itinerary
+Common POI filters:
 
-Itineraries store the editor export JSON as `itinerary_json`, with localized title and description rows in `translations`:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/itineraries/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "enabled": true,
-    "itinerary_json": {
-      "savedAt": "2026-07-02T09:00:00Z",
-      "points": [
-        {"type": "waypoint", "label": "Start", "coordinates": {"lat": 42.24, "lng": -8.72}},
-        {"type": "poi", "id": "1"}
-      ],
-      "segments": []
-    },
-    "translations": [
-      {
-        "language_code": "en",
-        "title": "Castle walk",
-        "description": "A short itinerary around the castle."
-      }
-    ]
-  }'
+```text
+?language=en
+?q=castle
+?category=heritage
+?country=ES
+?enabled=true
+?bbox=min_lon,min_lat,max_lon,max_lat
 ```
 
-## Import RurAllure POIs
+The `POST /api/buffer-pois/` endpoint accepts a GeoJSON Polygon or MultiPolygon and returns POIs inside that buffer.
 
-The repository includes a RurAllure PostgreSQL dump under `POI_data/`. Import it into the current Django schema with:
+## Importing POIs
 
-```bash
-cd backend
-python manage.py import_rurallure_dump
-```
+The RurAllure POI importer reads the SQL dump under `POI_data/` and creates categories, POIs, translations, category assignments, media links, and country codes.
 
-The importer reads only the relevant `COPY` sections from `POI_data/dump-rurallure_db.sql` and creates:
-
-- categories and category translations
-- POIs with SRID 4326 point locations and `country_code`
-- POI translations
-- POI/category relations
-- linked POI images
-
-Disabled source POIs are skipped. Imported `created_at` and `updated_at` values use the current import time, not the original dump timestamps.
-
-Country codes are derived from the POI coordinates using a geoBoundaries ADM0 GeoJSON file. Download an ADM0 GeoJSON from geoBoundaries and place it at:
+Place the country boundary file at:
 
 ```text
 backend/pois/data/geoboundaries_adm0.geojson
 ```
 
-geoBoundaries data is licensed under CC BY 4.0 and requires attribution. See:
-
-```text
-https://www.geoboundaries.org/
-```
-
-Dry-run the parser without writing rows:
+Dry run:
 
 ```bash
+cd backend
 python manage.py import_rurallure_dump --dry-run
 ```
 
-Clear existing POI data and import again:
+Import:
+
+```bash
+python manage.py import_rurallure_dump
+```
+
+Clear existing imported content first:
 
 ```bash
 python manage.py import_rurallure_dump --clear
 ```
 
-Use a custom dump path or image base URL:
+Useful options:
 
 ```bash
 python manage.py import_rurallure_dump /path/to/dump-rurallure_db.sql
+python manage.py import_rurallure_dump --country-boundaries /path/to/geoboundaries_adm0.geojson
+python manage.py import_rurallure_dump --skip-country-annotation
 python manage.py import_rurallure_dump --image-base-url "https://example.com/images/"
 ```
 
-Use a custom country-boundaries file, or skip country annotation for debugging:
+Disabled source POIs are skipped. Imported timestamps use the import time.
 
-```bash
-python manage.py import_rurallure_dump --country-boundaries /path/to/geoboundaries_adm0.geojson
-python manage.py import_rurallure_dump --skip-country-annotation
-```
+## Importing Routes
 
-## Import Route GeoJSON Data
+The route import commands read local route data and create routes, itineraries, and route-stage memberships.
 
-Import bundled route GeoJSON files as one route with one continuous itinerary:
+GeoJSON route commands:
 
 ```bash
 cd backend
@@ -401,84 +317,68 @@ python manage.py rurallure_import_via_francigena_per_alps
 python manage.py rurallure_import_via_romea_del_santo
 ```
 
-The commands read:
-
-```text
-routes_data/wp5_routes/wp5_routes/italy/via romea strata/
-routes_data/wp5_routes/wp5_routes/italy/via francigena/
-routes_data/wp5_routes/wp5_routes/italy/via francigena per alps/
-routes_data/wp5_routes/wp5_routes/italy/via romea del santo/
-```
-
-Each command creates or reuses its route, then stitches the ordered GeoJSON `LineString` files into a single itinerary whose selected walking route geometry is the continuous merged line. If the route already has itineraries, the command aborts unless you pass `--replace`:
+Official Romea Strata GPX command:
 
 ```bash
-python manage.py rurallure_import_romea_strata --replace
-```
-
-Preview without writing rows, or use a custom source directory/title:
-
-```bash
-python manage.py rurallure_import_romea_strata --dry-run
-python manage.py rurallure_import_romea_strata --source-dir /path/to/geojsons --route-title "Romea Strata"
-```
-
-## Import Official Romea Strata GPX Data
-
-Import the GPX files downloaded from the official Romea Strata site as routes with numbered itinerary stages:
-
-```bash
-cd backend
 python manage.py rurallure_import_romea_strata_official --dry-run
 python manage.py rurallure_import_romea_strata_official
 ```
 
-The command reads:
-
-```text
-routes_data/romea_strata_official/
-```
-
-It creates the main `Romea Strata Official` route from the country folders plus Italy's main Tarvisio-Roma path and the Vatican extra mile. The Italian branch and Romee folders are imported as separate routes. Each GPX file becomes one itinerary stage using the GPX track as the selected walking route geometry.
-
-Variant, detour, and outside-route GPX files are skipped by default. Include them as disabled itineraries with:
+Include variants:
 
 ```bash
 python manage.py rurallure_import_romea_strata_official --include-variants
 ```
 
-If a route already has itineraries, the command aborts unless you pass `--replace`:
+Replace existing imported route content:
 
 ```bash
 python manage.py rurallure_import_romea_strata_official --replace
 ```
 
-## Clear Content Data
+## Clearing Content
 
-Delete POIs, itineraries, routes, and their dependent translations/images:
+Preview what would be deleted:
 
 ```bash
 cd backend
-python manage.py clear_content_data --yes
-```
-
-Preview counts without deleting:
-
-```bash
 python manage.py clear_content_data --dry-run
 ```
 
-Keep categories while deleting POIs, itineraries, and routes:
+Delete POIs, itineraries, routes, and dependent translations/media:
+
+```bash
+python manage.py clear_content_data --yes
+```
+
+Keep categories:
 
 ```bash
 python manage.py clear_content_data --yes --keep-categories
 ```
 
-## Tests
+## Verification
 
-Tests require a configured spatial database, either the default SQLite/SpatiaLite setup or PostGIS:
+Backend checks:
 
 ```bash
 cd backend
-python manage.py test
+python manage.py check
+python manage.py test pois
 ```
+
+Frontend checks:
+
+```bash
+cd frontend
+npm exec tsc -- --noEmit --project tsconfig.app.json
+npm run build
+```
+
+## Development Notes
+
+- The backend defaults to `DATABASE_ENGINE=spatialite`; set `DATABASE_ENGINE=postgis` for PostGIS.
+- Draft/public state is enforced by the backend, not only by the UI.
+- The Angular app uses the local backend URL in `frontend/src/app/api.service.ts`.
+- The root `interactive_itinerary_map.html`, `.css`, and `.js` files are legacy fallback assets. The active editor is the Angular route.
+- Large local route/POI datasets are development inputs and should stay out of git.
