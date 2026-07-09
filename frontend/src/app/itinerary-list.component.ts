@@ -93,6 +93,9 @@ interface MapBoundsFilter {
   east: number;
 }
 
+type ItinerarySortKey = 'stage' | 'title' | 'length' | 'draft';
+type SortDirection = 'asc' | 'desc';
+
 declare const L: any;
 
 @Component({
@@ -185,9 +188,24 @@ declare const L: any;
                                 (change)="setItinerariesSelected(group.items, $any($event.target).checked)"
                             />
                           </th>
-                          <th>Itinerary</th>
-                            <th class="length-column">Length</th>
-                            <th class="enabled-column">Draft</th>
+                          <th>
+                            <button type="button" class="sortable-header" (click)="toggleItinerarySort('title')">
+                              <span>Itinerary</span>
+                              <span aria-hidden="true">{{ itinerarySortIndicator('title') }}</span>
+                            </button>
+                          </th>
+                            <th class="length-column">
+                              <button type="button" class="sortable-header" (click)="toggleItinerarySort('length')">
+                                <span>Length</span>
+                                <span aria-hidden="true">{{ itinerarySortIndicator('length') }}</span>
+                              </button>
+                            </th>
+                            <th class="enabled-column">
+                              <button type="button" class="sortable-header" (click)="toggleItinerarySort('draft')">
+                                <span>Draft</span>
+                                <span aria-hidden="true">{{ itinerarySortIndicator('draft') }}</span>
+                              </button>
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
@@ -215,7 +233,7 @@ declare const L: any;
                               </td>
                               <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
                               <td class="enabled-column">
-                                {{ itinerary.enabled ? '' : 'Yes' }}
+                                {{ itinerary.enabled ? 'Public' : 'Draft' }}
                               </td>
                             </tr>
                           }
@@ -317,12 +335,27 @@ declare const L: any;
                     (change)="setItinerariesSelected(items, $any($event.target).checked)"
                   />
                 </th>
-                <th>Itinerary</th>
+                <th>
+                  <button type="button" class="sortable-header" (click)="toggleItinerarySort('title')">
+                    <span>Itinerary</span>
+                    <span aria-hidden="true">{{ itinerarySortIndicator('title') }}</span>
+                  </button>
+                </th>
                 @if (!routeSlug) {
                   <th>Included in</th>
                 }
-                <th class="length-column">Length</th>
-                <th class="enabled-column">Draft</th>
+                <th class="length-column">
+                  <button type="button" class="sortable-header" (click)="toggleItinerarySort('length')">
+                    <span>Length</span>
+                    <span aria-hidden="true">{{ itinerarySortIndicator('length') }}</span>
+                  </button>
+                </th>
+                <th class="enabled-column">
+                  <button type="button" class="sortable-header" (click)="toggleItinerarySort('draft')">
+                    <span>Draft</span>
+                    <span aria-hidden="true">{{ itinerarySortIndicator('draft') }}</span>
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -379,7 +412,7 @@ declare const L: any;
                   }
                   <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
                   <td class="enabled-column">
-                    {{ itinerary.enabled ? '' : 'Yes' }}
+                    {{ itinerary.enabled ? 'Public' : 'Draft' }}
                   </td>
                 </tr>
               } @empty {
@@ -618,6 +651,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   draggedItineraryId: number | null = null;
   reorderingStages = false;
   readonly selectedItineraryIds = new Set<number>();
+  itinerarySortKey: ItinerarySortKey = 'stage';
+  itinerarySortDirection: SortDirection = 'asc';
   previewItinerary: Itinerary | null = null;
   previewMessage = 'Click an itinerary to preview it.';
   mapBoundsFilter: MapBoundsFilter | null = null;
@@ -791,6 +826,21 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     } else {
       this.renderVisibleItinerariesPreview(this.currentItineraries);
     }
+  }
+
+  toggleItinerarySort(key: Exclude<ItinerarySortKey, 'stage'>): void {
+    if (this.itinerarySortKey === key) {
+      this.itinerarySortDirection = this.itinerarySortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      this.itinerarySortKey = key;
+      this.itinerarySortDirection = 'asc';
+    }
+    this.refresh$.next(this.refresh$.value + 1);
+  }
+
+  itinerarySortIndicator(key: Exclude<ItinerarySortKey, 'stage'>): string {
+    if (this.itinerarySortKey !== key) return '';
+    return this.itinerarySortDirection === 'asc' ? '▲' : '▼';
   }
 
   selectItineraryFromPreviewMarker(itinerary: Itinerary): void {
@@ -1855,15 +1905,19 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   estimatedDistance(itinerary: Itinerary): string {
-    const segments = this.itineraryJson(itinerary).segments || [];
-    const totalMeters = segments.reduce((total, segment) => {
-      const distance = segment.selectedWalkingRoute?.distanceMeters;
-      return Number.isFinite(distance) ? total + Number(distance) : total;
-    }, 0);
+    const totalMeters = this.itineraryLengthMeters(itinerary);
 
     if (totalMeters <= 0) return 'Not estimated';
     if (totalMeters >= 1000) return `~${(totalMeters / 1000).toFixed(1)} km`;
     return `~${Math.round(totalMeters)} m`;
+  }
+
+  private itineraryLengthMeters(itinerary: Itinerary): number {
+    const segments = this.itineraryJson(itinerary).segments || [];
+    return segments.reduce((total, segment) => {
+      const distance = segment.selectedWalkingRoute?.distanceMeters;
+      return Number.isFinite(distance) ? total + Number(distance) : total;
+    }, 0);
   }
 
   routeMembershipsFor(itinerary: Itinerary): ItineraryRouteMembership[] {
@@ -2077,10 +2131,21 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   private sortedItineraries(itineraries: Itinerary[]): Itinerary[] {
+    const direction = this.itinerarySortDirection === 'asc' ? 1 : -1;
     return [...itineraries].sort((left, right) => {
-      const leftStage = left.stage_number ?? Number.MAX_SAFE_INTEGER;
-      const rightStage = right.stage_number ?? Number.MAX_SAFE_INTEGER;
-      return leftStage - rightStage || left.id - right.id;
+      let comparison = 0;
+      if (this.itinerarySortKey === 'title') {
+        comparison = (left.title || '').localeCompare(right.title || '');
+      } else if (this.itinerarySortKey === 'length') {
+        comparison = this.itineraryLengthMeters(left) - this.itineraryLengthMeters(right);
+      } else if (this.itinerarySortKey === 'draft') {
+        comparison = Number(left.enabled) - Number(right.enabled);
+      } else {
+        const leftStage = left.stage_number ?? Number.MAX_SAFE_INTEGER;
+        const rightStage = right.stage_number ?? Number.MAX_SAFE_INTEGER;
+        comparison = leftStage - rightStage;
+      }
+      return comparison * direction || left.id - right.id;
     });
   }
 

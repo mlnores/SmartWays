@@ -552,6 +552,27 @@ label span {
   font-weight: 700;
 }
 
+.sortable-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sortable-header:hover,
+.sortable-header:focus-visible {
+  color: #1f6feb;
+}
+
 .resource-table tr:last-child td {
   border-bottom: 0;
 }

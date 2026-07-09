@@ -44,6 +44,9 @@ interface ItineraryJsonExport {
   segments?: SegmentExport[];
 }
 
+type RouteSortKey = 'title' | 'stages' | 'draft';
+type SortDirection = 'asc' | 'desc';
+
 declare const L: any;
 
 const LANGUAGE_OPTIONS = [
@@ -108,9 +111,24 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                           (change)="setRoutesSelected(state.routes, $any($event.target).checked)"
                         />
                       </th>
-                      <th>Title</th>
-                      <th>Segments</th>
-                      <th class="enabled-column">Draft</th>
+                      <th>
+                        <button type="button" class="sortable-header" (click)="toggleRouteSort('title')">
+                          <span>Title</span>
+                          <span aria-hidden="true">{{ routeSortIndicator('title') }}</span>
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" class="sortable-header" (click)="toggleRouteSort('stages')">
+                          <span>Stages</span>
+                          <span aria-hidden="true">{{ routeSortIndicator('stages') }}</span>
+                        </button>
+                      </th>
+                      <th class="enabled-column">
+                        <button type="button" class="sortable-header" (click)="toggleRouteSort('draft')">
+                          <span>Draft</span>
+                          <span aria-hidden="true">{{ routeSortIndicator('draft') }}</span>
+                        </button>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -144,7 +162,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                           ></span>
                         </td>
                         <td class="enabled-column">
-                          {{ route.enabled ? '' : 'Yes' }}
+                          {{ route.enabled ? 'Public' : 'Draft' }}
                         </td>
                       </tr>
                     } @empty {
@@ -349,6 +367,8 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   activeTranslationIndex = 0;
   highlightedRouteId: number | null = null;
   currentRoutes: Route[] = [];
+  routeSortKey: RouteSortKey = 'title';
+  routeSortDirection: SortDirection = 'asc';
   readonly selectedRouteIds = new Set<number>();
   previewRoute: Route | null = null;
   previewMessage = 'Click a route to preview it.';
@@ -366,16 +386,17 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   ]).pipe(
     switchMap(([query, , highlightedRouteId]) => this.api.listRoutes(query).pipe(
       map(routePage => {
-        this.currentRoutes = routePage.results;
-        this.pruneSelectedRoutes(routePage.results);
+        const routes = this.sortedRoutes(routePage.results);
+        this.currentRoutes = routes;
+        this.pruneSelectedRoutes(routes);
         if (this.selectedRouteIds.size > 0) {
           this.renderSelectedRoutePreviewIfNeeded(!this.selectedPreviewFitLocked);
         } else {
-          void this.renderVisibleRoutesPreview(routePage.results);
+          void this.renderVisibleRoutesPreview(routes);
         }
-        this.scheduleHighlight(highlightedRouteId, routePage.results);
+        this.scheduleHighlight(highlightedRouteId, routes);
         return {
-          routes: routePage.results,
+          routes,
           error: ''
         };
       }),
@@ -549,6 +570,21 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   async toggleRoute(route: Route): Promise<void> {
     await this.setRouteEnabled(route, !route.enabled);
+  }
+
+  toggleRouteSort(key: RouteSortKey): void {
+    if (this.routeSortKey === key) {
+      this.routeSortDirection = this.routeSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      this.routeSortKey = key;
+      this.routeSortDirection = 'asc';
+    }
+    this.refresh$.next(this.refresh$.value + 1);
+  }
+
+  routeSortIndicator(key: RouteSortKey): string {
+    if (this.routeSortKey !== key) return '';
+    return this.routeSortDirection === 'asc' ? '▲' : '▼';
   }
 
   async setRouteEnabled(route: Route, enabled: boolean): Promise<void> {
@@ -927,6 +963,21 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     } else {
       this.previewRoute = this.selectedRouteIds.size === 1 ? this.selectedRoutes()[0] || null : null;
     }
+  }
+
+  private sortedRoutes(routes: Route[]): Route[] {
+    const direction = this.routeSortDirection === 'asc' ? 1 : -1;
+    return [...routes].sort((left, right) => {
+      let comparison = 0;
+      if (this.routeSortKey === 'title') {
+        comparison = (left.title || '').localeCompare(right.title || '');
+      } else if (this.routeSortKey === 'stages') {
+        comparison = (left.itinerary_count || 0) - (right.itinerary_count || 0);
+      } else {
+        comparison = Number(left.enabled) - Number(right.enabled);
+      }
+      return comparison * direction || left.id - right.id;
+    });
   }
 
   private previewPointCoordinatesByIndex(points: PointExport[]): Array<{ lat: number; lng: number; label: string } | null> {

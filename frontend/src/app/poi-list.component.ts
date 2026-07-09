@@ -46,6 +46,9 @@ interface MapBoundsFilter {
   east: number;
 }
 
+type PoiSortKey = 'title' | 'country' | 'draft';
+type SortDirection = 'asc' | 'desc';
+
 declare const L: any;
 
 @Component({
@@ -140,11 +143,26 @@ declare const L: any;
                           (change)="setPoisSelected(state.items, $any($event.target).checked)"
                         />
                       </th>
-                      <th class="poi-name-column">POI</th>
+                      <th class="poi-name-column">
+                        <button type="button" class="sortable-header" (click)="togglePoiSort('title')">
+                          <span>POI</span>
+                          <span aria-hidden="true">{{ poiSortIndicator('title') }}</span>
+                        </button>
+                      </th>
                       <th>Included in</th>
                       <th>Categories</th>
-                      <th>Country</th>
-                      <th class="enabled-column">Draft</th>
+                      <th>
+                        <button type="button" class="sortable-header" (click)="togglePoiSort('country')">
+                          <span>Country</span>
+                          <span aria-hidden="true">{{ poiSortIndicator('country') }}</span>
+                        </button>
+                      </th>
+                      <th class="enabled-column">
+                        <button type="button" class="sortable-header" (click)="togglePoiSort('draft')">
+                          <span>Draft</span>
+                          <span aria-hidden="true">{{ poiSortIndicator('draft') }}</span>
+                        </button>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -196,7 +214,7 @@ declare const L: any;
                         </td>
                         <td>{{ countryName(poi.country_code) }}</td>
                         <td class="enabled-column">
-                          {{ poi.enabled ? '' : 'Yes' }}
+                          {{ poi.enabled ? 'Public' : 'Draft' }}
                         </td>
                       </tr>
                     } @empty {
@@ -447,6 +465,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   itineraryPoiIds: string[] = [];
   selectedCategory = '';
   selectedCountry = '';
+  poiSortKey: PoiSortKey = 'title';
+  poiSortDirection: SortDirection = 'asc';
   statusMessage = '';
   statusIsError = false;
   availableCategories: Category[] = [];
@@ -513,7 +533,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
           }
           return this.fetchPoiPage(query, 1).pipe(
             map(page => {
-              this.currentPois = page.results;
+              this.currentPois = this.sortedPois(page.results);
               this.poiTotalCount = page.count;
               this.poiNextPage = page.next ? 2 : null;
               this.pruneSelectedPois(this.currentPois);
@@ -713,6 +733,26 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     });
   }
 
+  togglePoiSort(key: PoiSortKey): void {
+    if (this.poiSortKey === key) {
+      this.poiSortDirection = this.poiSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      this.poiSortKey = key;
+      this.poiSortDirection = 'asc';
+    }
+    this.currentPois.splice(0, this.currentPois.length, ...this.sortedPois(this.currentPois));
+    if (this.selectedPoiIds.size > 0) {
+      this.renderSelectedPoiPreviewIfNeeded(false);
+    } else {
+      this.renderVisiblePoisPreview(this.currentPois);
+    }
+  }
+
+  poiSortIndicator(key: PoiSortKey): string {
+    if (this.poiSortKey !== key) return '';
+    return this.poiSortDirection === 'asc' ? '▲' : '▼';
+  }
+
   openPoiInfoAndMedia(poi: Poi): void {
     if (this.poiRowClickTimer !== null) {
       window.clearTimeout(this.poiRowClickTimer);
@@ -777,6 +817,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       const existingIds = new Set(this.currentPois.map(poi => poi.id));
       const newPois = page.results.filter(poi => !existingIds.has(poi.id));
       this.currentPois.push(...newPois);
+      this.currentPois.splice(0, this.currentPois.length, ...this.sortedPois(this.currentPois));
       this.poiTotalCount = page.count;
       this.poiNextPage = page.next ? pageToLoad + 1 : null;
       this.pruneSelectedPois(this.currentPois);
@@ -1574,6 +1615,21 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
 
   private selectedPois(): Poi[] {
     return this.currentPois.filter(poi => this.selectedPoiIds.has(poi.id));
+  }
+
+  private sortedPois(pois: Poi[]): Poi[] {
+    const direction = this.poiSortDirection === 'asc' ? 1 : -1;
+    return [...pois].sort((left, right) => {
+      let comparison = 0;
+      if (this.poiSortKey === 'title') {
+        comparison = (left.title || '').localeCompare(right.title || '');
+      } else if (this.poiSortKey === 'country') {
+        comparison = this.countryName(left.country_code).localeCompare(this.countryName(right.country_code));
+      } else {
+        comparison = Number(left.enabled) - Number(right.enabled);
+      }
+      return comparison * direction || left.id - right.id;
+    });
   }
 
   poiRowId(poi: Poi): string {
