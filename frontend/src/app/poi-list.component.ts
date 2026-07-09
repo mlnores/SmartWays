@@ -156,7 +156,7 @@ declare const L: any;
                         [class.highlight-row]="highlightedPoiId === poi.id"
                         [class.preview-selected-row]="selectedPoiIds.has(poi.id)"
                         (click)="queuePoiRowSelection(poi)"
-                        (dblclick)="centerPreviewOnPoi(poi)"
+                        (dblclick)="openPoiInfoAndMedia(poi)"
                       >
                         <td class="selection-column" (click)="$event.stopPropagation()">
                           <input
@@ -249,22 +249,22 @@ declare const L: any;
                     <span class="preview-action-icon" aria-hidden="true">🗑️</span>
                     <span>Delete selected POIs</span>
                   </button>
-                } @else if (previewPoi) {
-                  @if (!previewPoi.enabled) {
-                    <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']" [queryParams]="poiEditorReturnQueryParams(previewPoi)">
+                } @else {
+                  @if (singleSelectedPoi(); as selectedPoi) {
+                    <a class="secondary preview-action" [routerLink]="['/pois', selectedPoi.id, 'edit']" [queryParams]="poiEditorReturnQueryParams(selectedPoi)">
                       <span class="preview-action-icon" aria-hidden="true">🗺️</span>
-                      <span>Open in editor</span>
+                      <span>{{ selectedPoi.enabled ? 'View info and media' : 'View/edit info and media' }}</span>
                     </a>
-                  }
-                  <button type="button" class="secondary preview-action" [disabled]="duplicatingPoiIds.has(previewPoi.id)" (click)="duplicatePoi(previewPoi)">
-                    <span class="preview-action-icon" aria-hidden="true">📄</span>
-                    <span>{{ duplicatingPoiIds.has(previewPoi.id) ? 'Duplicating...' : 'Duplicate' }}</span>
-                  </button>
-                  @if (!previewPoi.enabled) {
-                    <button type="button" class="secondary preview-action danger-action" (click)="deletePoi(previewPoi)">
-                      <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                      <span>Delete POI</span>
+                    <button type="button" class="secondary preview-action" [disabled]="duplicatingPoiIds.has(selectedPoi.id)" (click)="duplicatePoi(selectedPoi)">
+                      <span class="preview-action-icon" aria-hidden="true">📄</span>
+                      <span>{{ duplicatingPoiIds.has(selectedPoi.id) ? 'Duplicating...' : 'Duplicate' }}</span>
                     </button>
+                    @if (!selectedPoi.enabled) {
+                      <button type="button" class="secondary preview-action danger-action" (click)="deletePoi(selectedPoi)">
+                        <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                        <span>Delete POI</span>
+                      </button>
+                    }
                   }
                 }
               </div>
@@ -642,6 +642,11 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     return selected.length > 0 && selected.every(poi => poi.enabled);
   }
 
+  singleSelectedPoi(): Poi | null {
+    if (this.selectedPoiIds.size !== 1) return null;
+    return this.selectedPois()[0] || null;
+  }
+
   fitPreviewToCurrentPois(): void {
     if (this.selectedPoiIds.size > 0) {
       this.renderSelectedPoiPreviewIfNeeded(true);
@@ -706,6 +711,16 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.previewMap?.invalidateSize(false);
     this.previewMap?.setView([poi.gps_latitude, poi.gps_longitude], Math.max(this.previewMap.getZoom() || 0, 14), {
       animate: false
+    });
+  }
+
+  openPoiInfoAndMedia(poi: Poi): void {
+    if (this.poiRowClickTimer !== null) {
+      window.clearTimeout(this.poiRowClickTimer);
+      this.poiRowClickTimer = null;
+    }
+    void this.router.navigate(['/pois', poi.id, 'edit'], {
+      queryParams: this.poiEditorReturnQueryParams(poi)
     });
   }
 
