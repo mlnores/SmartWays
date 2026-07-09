@@ -1,6 +1,20 @@
 #!/usr/bin/env sh
 set -eu
 
+if [ -z "${GDAL_LIBRARY_PATH:-}" ]; then
+  GDAL_LIBRARY_PATH="$(find /usr/lib -name 'libgdal.so*' -type f 2>/dev/null | sort | head -n 1 || true)"
+  if [ -n "$GDAL_LIBRARY_PATH" ]; then
+    export GDAL_LIBRARY_PATH
+  fi
+fi
+
+if [ -z "${SPATIALITE_LIBRARY_PATH:-}" ]; then
+  SPATIALITE_LIBRARY_PATH="$(find /usr/lib -name 'mod_spatialite.so*' -type f 2>/dev/null | sort | head -n 1 || true)"
+  if [ -n "$SPATIALITE_LIBRARY_PATH" ]; then
+    export SPATIALITE_LIBRARY_PATH
+  fi
+fi
+
 if [ "${DATABASE_ENGINE:-}" = "postgis" ]; then
   python - <<'PY'
 import os

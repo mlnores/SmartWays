@@ -288,6 +288,8 @@ The default import helper:
 1. imports official Romea Strata GPX routes with variants,
 2. imports RurAllure POIs from the dump within `MAX_DISTANCE_KM` of existing itineraries.
 
+`MAX_DISTANCE_KM` defaults to `25`.
+
 Run:
 
 ```bash
@@ -306,7 +308,7 @@ Override paths if your ZIP extraction layout differs:
 ROUTES_SOURCE_DIR=/data/routes_data/romea_strata_official \
 POI_DUMP_PATH=/data/POI_data/dump-rurallure_db.sql \
 COUNTRY_BOUNDARIES_PATH=/data/geoboundaries_adm0.geojson \
-MAX_DISTANCE_KM=5 \
+MAX_DISTANCE_KM=25 \
 ./scripts/import_deployment_data.sh
 ```
 
@@ -322,7 +324,7 @@ docker compose run --rm backend \
   python manage.py import_rurallure_dump_near_itineraries \
   /data/POI_data/dump-rurallure_db.sql \
   --country-boundaries /data/geoboundaries_adm0.geojson \
-  --max-distance-km 5
+  --max-distance-km 25
 ```
 
 ### Operational Notes
@@ -455,38 +457,38 @@ Use `import_rurallure_dump_near_itineraries` to import only POIs whose dump coor
 
 The command uses saved walking-route geometries when available and falls back to straight lines between saved itinerary points. It filters POIs first, then imports only the matching POIs and their related translations, categories, category assignments, media links, and files.
 
-Dry run for POIs within 5 km of any itinerary:
+Dry run for POIs within 25 km of any itinerary:
 
 ```bash
 cd backend
-python manage.py import_rurallure_dump_near_itineraries --max-distance-km 5 --dry-run
+python manage.py import_rurallure_dump_near_itineraries --max-distance-km 25 --dry-run
 ```
 
-Import POIs from 0 to 5 km away:
+Import POIs from 0 to 25 km away:
 
 ```bash
-python manage.py import_rurallure_dump_near_itineraries --max-distance-km 5
+python manage.py import_rurallure_dump_near_itineraries --max-distance-km 25
 ```
 
-Import POIs from 1 to 5 km away:
+Import POIs from 1 to 25 km away:
 
 ```bash
-python manage.py import_rurallure_dump_near_itineraries --min-distance-km 1 --max-distance-km 5
+python manage.py import_rurallure_dump_near_itineraries --min-distance-km 1 --max-distance-km 25
 ```
 
 Clear existing POI/category data before importing the filtered subset:
 
 ```bash
-python manage.py import_rurallure_dump_near_itineraries --max-distance-km 5 --clear
+python manage.py import_rurallure_dump_near_itineraries --max-distance-km 25 --clear
 ```
 
 The command accepts the same dump, country-boundary, media-base-url, clear, and dry-run options as `import_rurallure_dump`:
 
 ```bash
-python manage.py import_rurallure_dump_near_itineraries /path/to/dump-rurallure_db.sql --max-distance-km 5
-python manage.py import_rurallure_dump_near_itineraries --country-boundaries /path/to/geoboundaries_adm0.geojson --max-distance-km 5
-python manage.py import_rurallure_dump_near_itineraries --skip-country-annotation --max-distance-km 5
-python manage.py import_rurallure_dump_near_itineraries --image-base-url "https://example.com/images/" --max-distance-km 5
+python manage.py import_rurallure_dump_near_itineraries /path/to/dump-rurallure_db.sql --max-distance-km 25
+python manage.py import_rurallure_dump_near_itineraries --country-boundaries /path/to/geoboundaries_adm0.geojson --max-distance-km 25
+python manage.py import_rurallure_dump_near_itineraries --skip-country-annotation --max-distance-km 25
+python manage.py import_rurallure_dump_near_itineraries --image-base-url "https://example.com/images/" --max-distance-km 25
 ```
 
 The database must already contain itineraries with usable coordinates before running this command.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MAX_DISTANCE_KM="${MAX_DISTANCE_KM:-5}"
+MAX_DISTANCE_KM="${MAX_DISTANCE_KM:-25}"
 POI_DUMP_PATH="${POI_DUMP_PATH:-/data/POI_data/dump-rurallure_db.sql}"
 COUNTRY_BOUNDARIES_PATH="${COUNTRY_BOUNDARIES_PATH:-/data/geoboundaries_adm0.geojson}"
 ROUTES_SOURCE_DIR="${ROUTES_SOURCE_DIR:-/data/routes_data/romea_strata_official}"

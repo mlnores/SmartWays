@@ -1,9 +1,7 @@
 FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    GDAL_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/libgdal.so \
-    SPATIALITE_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/mod_spatialite.so
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
