@@ -385,9 +385,19 @@ export class ApiService {
 
   private collectPages<T>(firstPage: Observable<ApiPage<T>>): Observable<T[]> {
     return firstPage.pipe(
-      expand(page => page.next ? this.http.get<ApiPage<T>>(page.next) : EMPTY),
+      expand(page => page.next ? this.http.get<ApiPage<T>>(this.apiPageUrl(page.next)) : EMPTY),
       map(page => page.results),
       reduce((items, pageItems) => [...items, ...pageItems], [] as T[])
     );
+  }
+
+  private apiPageUrl(nextUrl: string): string {
+    try {
+      const parsedNextUrl = new URL(nextUrl, globalThis.location?.origin || 'http://localhost');
+      const parsedApiBaseUrl = new URL(API_BASE_URL, globalThis.location?.origin || 'http://localhost');
+      return `${parsedApiBaseUrl.origin}${parsedNextUrl.pathname}${parsedNextUrl.search}`;
+    } catch {
+      return nextUrl;
+    }
   }
 }
