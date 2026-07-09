@@ -2,13 +2,52 @@ services:
   db:
     image: postgis/postgis:16-3.4
     environment:
-      POSTGRES_DB: smartways
-      POSTGRES_USER: smartways
-      POSTGRES_PASSWORD: smartways
+      POSTGRES_DB: ${POSTGRES_DB:-smartways}
+      POSTGRES_USER: ${POSTGRES_USER:-smartways}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartways}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT_ON_HOST:-5432}:5432"
     volumes:
       - smartways_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartways} -d ${POSTGRES_DB:-smartways}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-for-deployment}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
+      DATABASE_ENGINE: postgis
+      POSTGRES_DB: ${POSTGRES_DB:-smartways}
+      POSTGRES_USER: ${POSTGRES_USER:-smartways}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartways}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./docker-data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    environment:
+      SMARTWAYS_API_BASE_URL: ${SMARTWAYS_API_BASE_URL:-/api}
+    ports:
+      - "${FRONTEND_PORT:-4200}:80"
+    depends_on:
+      - backend
 
 volumes:
   smartways_postgres_data:

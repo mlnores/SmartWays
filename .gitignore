@@ -6,7 +6,10 @@ __pycache__/
 .venv/
 db.sqlite3
 staticfiles/
-.gitignore
+docker-data/
+POI_data.zip
+routes_data.zip
+.env
 POI_data/dataset_metadata.jsonld
 POI_data/dump-rurallure_db.sql
 POI_data/ECHOES_D7.1.pdf

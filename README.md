@@ -40,8 +40,7 @@ backend/                    Django backend and API
 frontend/                   Angular frontend
 POI_data/                   Local RurAllure SQL dump input, not required for normal runtime
 routes_data/                Local route/GPX import inputs, ignored by git
-interactive_itinerary_map.* Legacy static editor fallback
-docker-compose.yml          Optional local PostGIS database
+docker-compose.yml          Docker deployment stack: PostGIS, backend, frontend
 requirements.txt            Minimal pip requirements for Django/DRF
 ```
 
@@ -203,6 +202,135 @@ Run the Angular type check used during development:
 cd frontend
 npm exec tsc -- --noEmit --project tsconfig.app.json
 ```
+
+## Docker Deployment
+
+The Docker setup keeps large import datasets outside the application images. The images contain only the backend, frontend, and management commands. RurAllure data is downloaded or mounted into `docker-data/`, which is ignored by git and mounted into the backend container at `/data`.
+
+### Configure
+
+Create a local environment file:
+
+```bash
+cp .env.example .env
+```
+
+For a real deployment, change at least:
+
+```text
+DJANGO_SECRET_KEY
+POSTGRES_PASSWORD
+DJANGO_ALLOWED_HOSTS
+DJANGO_CSRF_TRUSTED_ORIGINS
+```
+
+If the app is served from a public domain, `DJANGO_ALLOWED_HOSTS` must include that domain. If using the Django admin through that domain, add the full origin to `DJANGO_CSRF_TRUSTED_ORIGINS`, for example:
+
+```text
+DJANGO_ALLOWED_HOSTS=smartways.example.org,backend
+DJANGO_CSRF_TRUSTED_ORIGINS=https://smartways.example.org
+```
+
+### Prepare Import Data
+
+The helper script downloads these shared Google Drive files when local ZIPs are not already present:
+
+- `POI_data.zip`
+- `routes_data.zip`
+
+Run:
+
+```bash
+./scripts/download_deployment_data.sh
+```
+
+This prepares:
+
+```text
+docker-data/POI_data/
+docker-data/routes_data/
+```
+
+If you want physical country annotation during POI import, also place the geoBoundaries ADM0 file here:
+
+```text
+docker-data/geoboundaries_adm0.geojson
+```
+
+If that file is missing, the provided import helper falls back to `--skip-country-annotation`.
+
+### Build And Start
+
+```bash
+docker compose up -d --build
+```
+
+The backend container runs migrations and collects static files on startup. The frontend is served by Nginx and proxies `/api/`, `/admin/`, and `/static/` to the backend container.
+
+Default local URLs:
+
+```text
+http://localhost:4200/        Angular frontend
+http://localhost:8000/api/    Backend API exposed directly
+http://localhost:4200/admin/  Django admin through frontend Nginx
+```
+
+### Create An Admin User
+
+```bash
+docker compose run --rm backend python manage.py createsuperuser
+```
+
+### Import Deployment Data
+
+The default import helper:
+
+1. imports official Romea Strata GPX routes with variants,
+2. imports RurAllure POIs from the dump within `MAX_DISTANCE_KM` of existing itineraries.
+
+Run:
+
+```bash
+./scripts/import_deployment_data.sh
+```
+
+Override the POI distance threshold:
+
+```bash
+MAX_DISTANCE_KM=10 ./scripts/import_deployment_data.sh
+```
+
+Override paths if your ZIP extraction layout differs:
+
+```bash
+ROUTES_SOURCE_DIR=/data/routes_data/romea_strata_official \
+POI_DUMP_PATH=/data/POI_data/dump-rurallure_db.sql \
+COUNTRY_BOUNDARIES_PATH=/data/geoboundaries_adm0.geojson \
+MAX_DISTANCE_KM=5 \
+./scripts/import_deployment_data.sh
+```
+
+You can also run individual commands manually:
+
+```bash
+docker compose run --rm backend \
+  python manage.py rurallure_import_romea_strata_official \
+  --source-dir /data/routes_data/romea_strata_official \
+  --include-variants
+
+docker compose run --rm backend \
+  python manage.py import_rurallure_dump_near_itineraries \
+  /data/POI_data/dump-rurallure_db.sql \
+  --country-boundaries /data/geoboundaries_adm0.geojson \
+  --max-distance-km 5
+```
+
+### Operational Notes
+
+- `POI_data/`, `routes_data/`, `POI_data.zip`, `routes_data.zip`, and `docker-data/` should stay out of git.
+- The Docker backend uses PostgreSQL/PostGIS, not the local SpatiaLite database.
+- The frontend runtime API base URL is generated from `SMARTWAYS_API_BASE_URL`; Docker defaults it to `/api`.
+- The app images do not contain import datasets, so rebuilding images does not duplicate large data.
 
 ## Main Frontend Routes
 
@@ -440,5 +568,5 @@ npm run build
 - The backend defaults to `DATABASE_ENGINE=spatialite`; set `DATABASE_ENGINE=postgis` for PostGIS.
 - Draft/public state is enforced by the backend, not only by the UI.
 - The Angular app uses the local backend URL in `frontend/src/app/api.service.ts`.
-- The root `interactive_itinerary_map.html`, `.css`, and `.js` files are legacy fallback assets. The active editor is the Angular route.
+- The active itinerary editor is the Angular route at `/itineraries/:id/edit`.
 - Large local route/POI datasets are development inputs and should stay out of git.
