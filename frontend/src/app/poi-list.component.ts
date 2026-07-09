@@ -1,10 +1,10 @@
-import { AsyncPipe } from '@angular/common';
+import { AsyncPipe, NgTemplateOutlet } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
-import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, Observable, of, startWith, switchMap } from 'rxjs';
+import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, forkJoin, map, Observable, of, startWith, switchMap } from 'rxjs';
 
-import { ApiPage, ApiService, Category, Poi, PoiMedia, Translation } from './api.service';
+import { ApiPage, ApiService, Category, Itinerary, Poi, PoiMedia, Translation } from './api.service';
 
 interface TranslationDraft {
   language_code: string;
@@ -33,10 +33,27 @@ interface CategoryDraft {}
 interface ItineraryPointExport {
   type?: string;
   id?: number | string;
+  name?: string;
+  title?: string;
+  label?: string;
+  lat?: number;
+  lng?: number;
+  coordinates?: {
+    lat?: number;
+    lng?: number;
+  };
+}
+
+interface ItinerarySegmentExport {
+  bufferDistanceMeters?: number;
+  selectedWalkingRoute?: {
+    geometry?: unknown;
+  } | null;
 }
 
 interface ItineraryJsonExport {
   points?: ItineraryPointExport[];
+  segments?: ItinerarySegmentExport[];
 }
 
 interface MapBoundsFilter {
@@ -46,15 +63,29 @@ interface MapBoundsFilter {
   east: number;
 }
 
+interface PoiGroup {
+  key: string;
+  title: string;
+  items: Poi[];
+}
+
+interface PoiListState {
+  items: Poi[];
+  count: number;
+  groups: PoiGroup[];
+  error: string;
+}
+
 type PoiSortKey = 'title' | 'country' | 'draft';
 type SortDirection = 'asc' | 'desc';
 
 declare const L: any;
+declare const turf: any;
 
 @Component({
   selector: 'app-poi-list',
   standalone: true,
-  imports: [AsyncPipe, FormsModule, RouterLink],
+  imports: [AsyncPipe, FormsModule, NgTemplateOutlet, RouterLink],
   template: `
     <section class="page">
       <header class="page-header">
@@ -62,7 +93,7 @@ declare const L: any;
           <h1>{{ itineraryId ? 'Itinerary POIs' : 'POIs' }}</h1>
           <p>
             @if (itineraryId) {
-              POIs included in {{ itineraryTitle || 'this itinerary' }}.
+              POIs included in and near {{ itineraryTitle || 'this itinerary' }}.
             } @else {
               Browse and manage points of interest from the backend API.
             }
@@ -127,104 +158,127 @@ declare const L: any;
         @if (state.error) {
           <p class="status error">{{ state.error }}</p>
         } @else {
-          <div class="preview-layout poi-preview-layout">
-            <div class="preview-list">
-              <div class="table-wrap">
-                <table class="resource-table">
-                  <thead>
-                    <tr>
-                      <th class="selection-column" aria-label="Select">
+          <ng-template #poiTable let-items="items">
+            <div class="table-wrap">
+              <table class="resource-table">
+                <thead>
+                  <tr>
+                    <th class="selection-column" aria-label="Select">
+                      <input
+                        type="checkbox"
+                        title="Select all POIs"
+                        aria-label="Select all POIs"
+                        [checked]="areAllPoisSelected(items)"
+                        [indeterminate]="areSomePoisSelected(items)"
+                        (change)="setPoisSelected(items, $any($event.target).checked)"
+                      />
+                    </th>
+                    <th class="poi-name-column">
+                      <button type="button" class="sortable-header" (click)="togglePoiSort('title')">
+                        <span>POI</span>
+                        <span aria-hidden="true">{{ poiSortIndicator('title') }}</span>
+                      </button>
+                    </th>
+                    <th>Included in</th>
+                    <th>Categories</th>
+                    <th>
+                      <button type="button" class="sortable-header" (click)="togglePoiSort('country')">
+                        <span>Country</span>
+                        <span aria-hidden="true">{{ poiSortIndicator('country') }}</span>
+                      </button>
+                    </th>
+                    <th class="enabled-column">
+                      <button type="button" class="sortable-header" (click)="togglePoiSort('draft')">
+                        <span>Draft?</span>
+                        <span aria-hidden="true">{{ poiSortIndicator('draft') }}</span>
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (poi of items; track poi.id) {
+                    <tr
+                      [attr.id]="poiRowId(poi)"
+                      [class.highlight-row]="highlightedPoiId === poi.id"
+                      [class.preview-selected-row]="selectedPoiIds.has(poi.id)"
+                      (click)="queuePoiRowSelection(poi)"
+                      (dblclick)="openPoiInfoAndMedia(poi)"
+                    >
+                      <td class="selection-column" (click)="$event.stopPropagation()">
                         <input
                           type="checkbox"
-                          title="Select all POIs"
-                          aria-label="Select all POIs"
-                          [checked]="areAllPoisSelected(state.items)"
-                          [indeterminate]="areSomePoisSelected(state.items)"
-                          (change)="setPoisSelected(state.items, $any($event.target).checked)"
+                          title="Select POI for preview"
+                          aria-label="Select POI for preview"
+                          [checked]="selectedPoiIds.has(poi.id)"
+                          (change)="setPoiSelected(poi, $any($event.target).checked)"
                         />
-                      </th>
-                      <th class="poi-name-column">
-                        <button type="button" class="sortable-header" (click)="togglePoiSort('title')">
-                          <span>POI</span>
-                          <span aria-hidden="true">{{ poiSortIndicator('title') }}</span>
-                        </button>
-                      </th>
-                      <th>Included in</th>
-                      <th>Categories</th>
-                      <th>
-                        <button type="button" class="sortable-header" (click)="togglePoiSort('country')">
-                          <span>Country</span>
-                          <span aria-hidden="true">{{ poiSortIndicator('country') }}</span>
-                        </button>
-                      </th>
-                      <th class="enabled-column">
-                        <button type="button" class="sortable-header" (click)="togglePoiSort('draft')">
-                          <span>Draft?</span>
-                          <span aria-hidden="true">{{ poiSortIndicator('draft') }}</span>
-                        </button>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    @for (poi of state.items; track poi.id) {
-                      <tr
-                        [attr.id]="poiRowId(poi)"
-                        [class.highlight-row]="highlightedPoiId === poi.id"
-                        [class.preview-selected-row]="selectedPoiIds.has(poi.id)"
-                        (click)="queuePoiRowSelection(poi)"
-                        (dblclick)="openPoiInfoAndMedia(poi)"
-                      >
-                        <td class="selection-column" (click)="$event.stopPropagation()">
-                          <input
-                            type="checkbox"
-                            title="Select POI for preview"
-                            aria-label="Select POI for preview"
-                            [checked]="selectedPoiIds.has(poi.id)"
-                            (change)="setPoiSelected(poi, $any($event.target).checked)"
-                          />
-                        </td>
-                        <td class="poi-name-column">
-                          <strong>{{ poi.title || 'Untitled POI' }}</strong>
-                          <p class="description-preview">{{ poi.description || 'No description' }}</p>
-                        </td>
-                        <td>
-                          <div class="route-membership-badges">
-                            @for (inclusion of poi.itinerary_inclusions; track inclusion.itinerary) {
-                              <span class="route-membership-badge poi-inclusion-badge">
-                                <span>{{ inclusion.itinerary_title || 'Itinerary ' + inclusion.itinerary }}</span>
-                                @if (inclusion.stage_number !== null) {
-                                  <span>{{ inclusion.stage_number }}</span>
-                                }
-                              </span>
-                            } @empty {
-                              <span class="muted">No itineraries</span>
+                      </td>
+                      <td class="poi-name-column">
+                        <strong>{{ poi.title || 'Untitled POI' }}</strong>
+                        <p class="description-preview">{{ poi.description || 'No description' }}</p>
+                      </td>
+                      <td>
+                        <div class="route-membership-badges">
+                          @for (inclusion of poi.itinerary_inclusions; track inclusion.itinerary) {
+                            <span class="route-membership-badge poi-inclusion-badge">
+                              <span>{{ inclusion.itinerary_title || 'Itinerary ' + inclusion.itinerary }}</span>
+                              @if (inclusion.stage_number !== null) {
+                                <span>{{ inclusion.stage_number }}</span>
+                              }
+                            </span>
+                          } @empty {
+                            <span class="muted">No itineraries</span>
+                          }
+                        </div>
+                      </td>
+                      <td>
+                        @if (poi.categories.length) {
+                          <div class="chip-list">
+                            @for (category of poi.categories; track category.id) {
+                              <span class="small-chip">{{ category.name || category.slug }}</span>
                             }
                           </div>
-                        </td>
-                        <td>
-                          @if (poi.categories.length) {
-                            <div class="chip-list">
-                              @for (category of poi.categories; track category.id) {
-                                <span class="small-chip">{{ category.name || category.slug }}</span>
-                              }
-                            </div>
-                          } @else {
-                            <span class="muted">No categories</span>
-                          }
-                        </td>
-                        <td>{{ countryName(poi.country_code) }}</td>
-                        <td class="enabled-column">
-                          {{ poi.enabled ? 'No' : 'Yes' }}
-                        </td>
-                      </tr>
-                    } @empty {
-                      <tr>
-                        <td colspan="6">No POIs found.</td>
-                      </tr>
-                    }
-                  </tbody>
-                </table>
-              </div>
+                        } @else {
+                          <span class="muted">No categories</span>
+                        }
+                      </td>
+                      <td>{{ countryName(poi.country_code) }}</td>
+                      <td class="enabled-column">
+                        {{ poi.enabled ? 'No' : 'Yes' }}
+                      </td>
+                    </tr>
+                  } @empty {
+                    <tr>
+                      <td colspan="6">No POIs found.</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </ng-template>
+
+          <div class="preview-layout poi-preview-layout">
+            <div class="preview-list">
+              @if (state.groups.length) {
+                <div class="route-group-list poi-group-list">
+                  @for (group of state.groups; track group.key) {
+                    <section class="route-group">
+                      <header class="route-group-header">
+                        <button type="button" class="route-group-toggle" (click)="togglePoiGroup(group.key)">
+                          <span class="route-group-caret" aria-hidden="true">{{ isPoiGroupCollapsed(group.key) ? '▶' : '▼' }}</span>
+                          <span>{{ group.title }}</span>
+                          <span>{{ group.items.length }} {{ group.items.length === 1 ? 'POI' : 'POIs' }}</span>
+                        </button>
+                      </header>
+                      @if (!isPoiGroupCollapsed(group.key)) {
+                        <ng-container *ngTemplateOutlet="poiTable; context: { items: group.items }"></ng-container>
+                      }
+                    </section>
+                  }
+                </div>
+              } @else {
+                <ng-container *ngTemplateOutlet="poiTable; context: { items: state.items }"></ng-container>
+              }
             </div>
             <aside class="preview-panel" aria-label="POI map preview">
               <header>
@@ -463,6 +517,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   itineraryId: string | null = null;
   itineraryTitle: string | null = null;
   itineraryPoiIds: string[] = [];
+  currentItinerary: Itinerary | null = null;
   selectedCategory = '';
   selectedCountry = '';
   poiSortKey: PoiSortKey = 'title';
@@ -484,7 +539,9 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   mergeTargetCategoryId: number | null = null;
   readonly selectedPoiIds = new Set<number>();
   readonly duplicatingPoiIds = new Set<number>();
+  readonly collapsedPoiGroupKeys = new Set<string>();
   currentPois: Poi[] = [];
+  currentPoiGroups: PoiGroup[] = [];
   poiTotalCount = 0;
   poiNextPage: number | null = null;
   loadingMorePois = false;
@@ -505,7 +562,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.restoreFiltersFromQueryParams();
   }
 
-  readonly state$ = combineLatest([
+  readonly state$: Observable<PoiListState> = combineLatest([
     this.query$.pipe(debounceTime(250)),
     this.refresh$,
     this.mapFilter$,
@@ -522,17 +579,31 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         switchMap(([itinerary, categories, countries]) => {
           this.availableCategories = categories;
           this.availableCountries = countries;
+          this.currentItinerary = itinerary;
           this.itineraryTitle = itinerary?.title || null;
           this.itineraryPoiIds = itinerary ? this.poiIdsForItinerary(itinerary.itinerary_json) : [];
-          if (itineraryId && this.itineraryPoiIds.length === 0) {
-            this.currentPois = [];
-            this.poiTotalCount = 0;
-            this.poiNextPage = null;
-            this.renderVisiblePoisPreview([]);
-            return of({ items: [] as Poi[], count: 0, error: '' });
+          if (itineraryId && itinerary) {
+            return this.fetchItineraryPoiGroups(itinerary, query).pipe(
+              map(result => {
+                this.currentPoiGroups = result.groups;
+                this.currentPois = result.items;
+                this.poiTotalCount = result.items.length;
+                this.poiNextPage = null;
+                this.loadingMorePois = false;
+                this.pruneSelectedPois(this.currentPois);
+                this.schedulePoiHighlight(this.pendingHighlightPoiId, this.currentPois);
+                if (this.selectedPoiIds.size > 0) {
+                  this.renderSelectedPoiPreviewIfNeeded(!this.selectedPreviewFitLocked);
+                } else {
+                  this.renderVisiblePoisPreview(this.currentPois);
+                }
+                return { items: this.currentPois, count: this.currentPois.length, groups: this.currentPoiGroups, error: '' };
+              })
+            );
           }
           return this.fetchPoiPage(query, 1).pipe(
             map(page => {
+              this.currentPoiGroups = [];
               this.currentPois = this.sortedPois(page.results);
               this.poiTotalCount = page.count;
               this.poiNextPage = page.next ? 2 : null;
@@ -543,20 +614,22 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
               } else {
                 this.renderVisiblePoisPreview(this.currentPois);
               }
-              return { items: this.currentPois, count: page.count, error: '' };
+              return { items: this.currentPois, count: page.count, groups: [] as PoiGroup[], error: '' };
             })
           );
         }),
         catchError(error => {
           this.currentPois = [];
+          this.currentPoiGroups = [];
+          this.currentItinerary = null;
           this.poiTotalCount = 0;
           this.poiNextPage = null;
           this.loadingMorePois = false;
-          return of({ items: [] as Poi[], count: 0, error: `Could not load POIs. ${error.message}` });
+          return of({ items: [] as Poi[], count: 0, groups: [] as PoiGroup[], error: `Could not load POIs. ${error.message}` });
         })
       );
     }),
-    startWith({ items: [] as Poi[], count: 0, error: '' })
+    startWith({ items: [] as Poi[], count: 0, groups: [] as PoiGroup[], error: '' })
   );
 
   ngAfterViewInit(): void {
@@ -651,6 +724,18 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     return pois.some(poi => this.selectedPoiIds.has(poi.id)) && !this.areAllPoisSelected(pois);
   }
 
+  togglePoiGroup(key: string): void {
+    if (this.collapsedPoiGroupKeys.has(key)) {
+      this.collapsedPoiGroupKeys.delete(key);
+    } else {
+      this.collapsedPoiGroupKeys.add(key);
+    }
+  }
+
+  isPoiGroupCollapsed(key: string): boolean {
+    return this.collapsedPoiGroupKeys.has(key);
+  }
+
   selectedPoisAreDraft(): boolean {
     const selected = this.selectedPois();
     return selected.length > 0 && selected.every(poi => !poi.enabled);
@@ -741,6 +826,9 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.poiSortDirection = 'asc';
     }
     this.currentPois.splice(0, this.currentPois.length, ...this.sortedPois(this.currentPois));
+    this.currentPoiGroups.forEach(group => {
+      group.items.splice(0, group.items.length, ...this.sortedPois(group.items));
+    });
     if (this.selectedPoiIds.size > 0) {
       this.renderSelectedPoiPreviewIfNeeded(false);
     } else {
@@ -1198,6 +1286,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
 
     this.previewLayer.clearLayers();
     this.drawMapBoundsFilter();
+    this.drawCurrentItineraryPreview();
     if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) {
       this.previewMessage = 'This POI does not have valid coordinates.';
       this.fitPreviewMap(null);
@@ -1232,8 +1321,13 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     if (pois.length === 0) {
       this.previewLayer?.clearLayers();
       this.drawMapBoundsFilter();
+      const itineraryBounds = this.drawCurrentItineraryPreview();
       this.previewMessage = 'No POIs found.';
-      this.fitPreviewMapToWorld();
+      if (itineraryBounds?.isValid?.()) {
+        this.fitPreviewBounds(itineraryBounds);
+      } else {
+        this.fitPreviewMapToWorld();
+      }
       return;
     }
     this.renderPreviewPois(pois, true, 'visible POIs');
@@ -1250,9 +1344,14 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
 
     this.previewLayer.clearLayers();
     this.drawMapBoundsFilter();
+    const itineraryBounds = this.drawCurrentItineraryPreview();
     const bounds = L.latLngBounds([]);
     const fitBounds = L.latLngBounds([]);
     let validCoordinateCount = 0;
+    if (itineraryBounds?.isValid?.()) {
+      bounds.extend(itineraryBounds);
+      fitBounds.extend(itineraryBounds);
+    }
 
     pois.forEach(poi => {
       if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) return;
@@ -1282,6 +1381,49 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         ? '1 POI with coordinates.'
         : `${validCoordinateCount} POIs with coordinates.`;
     }
+  }
+
+  private drawCurrentItineraryPreview(): any {
+    if (!this.previewLayer || !this.currentItinerary) return null;
+
+    const json = this.itineraryJson(this.currentItinerary);
+    const pointCoordinates = this.pointCoordinatesByIndex(json.points || []);
+    const segments = json.segments || [];
+    const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
+    const bounds = L.latLngBounds([]);
+
+    for (let index = 0; index < segmentCount; index += 1) {
+      const geometry = segments[index]?.selectedWalkingRoute?.geometry;
+      if (geometry) {
+        const routeLayer = L.geoJSON(geometry, {
+          style: {
+            color: '#2563eb',
+            weight: 5,
+            opacity: 0.75
+          },
+          interactive: false
+        }).addTo(this.previewLayer);
+        const routeBounds = routeLayer.getBounds();
+        if (routeBounds.isValid()) {
+          bounds.extend(routeBounds);
+        }
+        continue;
+      }
+
+      const start = pointCoordinates[index];
+      const end = pointCoordinates[index + 1];
+      if (start && end) {
+        const line = L.polyline([[start.lat, start.lng], [end.lat, end.lng]], {
+          color: '#2563eb',
+          weight: 4,
+          opacity: 0.65,
+          interactive: false
+        }).addTo(this.previewLayer);
+        bounds.extend(line.getBounds());
+      }
+    }
+
+    return bounds;
   }
 
   private previewMarkerIcon(selected = false): any {
@@ -1554,6 +1696,166 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       ids.push(id);
     }
     return ids;
+  }
+
+  private fetchItineraryPoiGroups(itinerary: Itinerary, query: string): Observable<{ items: Poi[]; groups: PoiGroup[] }> {
+    const directIds = this.poiIdsForItinerary(itinerary.itinerary_json);
+    const directIdSet = new Set(directIds.map(id => String(id)));
+    const directPois$ = directIds.length > 0
+      ? this.api.listAllPois(
+        query,
+        '',
+        undefined,
+        this.selectedCategory,
+        this.selectedCountry,
+        directIds,
+        this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : undefined
+      )
+      : of([] as Poi[]);
+
+    return this.nearbyPoiIdsForItinerary(itinerary).pipe(
+      switchMap(nearbyIds => {
+        const nearbyOnlyIds = nearbyIds.filter(id => !directIdSet.has(String(id)));
+        const nearbyPois$ = nearbyOnlyIds.length > 0
+          ? this.api.listAllPois(
+            query,
+            '',
+            undefined,
+            this.selectedCategory,
+            this.selectedCountry,
+            nearbyOnlyIds,
+            this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : undefined
+          )
+          : of([] as Poi[]);
+
+        return forkJoin([directPois$, nearbyPois$]).pipe(
+          map(([directPois, nearbyPois]) => {
+            const groups = [
+              {
+                key: 'direct',
+                title: 'Included directly in the itinerary',
+                items: this.sortedPois(directPois)
+              },
+              {
+                key: 'nearby',
+                title: 'Nearby POIs in segment buffer zones',
+                items: this.sortedPois(nearbyPois)
+              }
+            ];
+            return {
+              groups,
+              items: this.uniquePois([...groups[0].items, ...groups[1].items])
+            };
+          })
+        );
+      })
+    );
+  }
+
+  private nearbyPoiIdsForItinerary(itinerary: Itinerary): Observable<string[]> {
+    const buffers = this.bufferGeometriesForItinerary(itinerary);
+    if (buffers.length === 0) return of([]);
+
+    return forkJoin(
+      buffers.map(buffer =>
+        this.api.findBufferPois(buffer.geometry, buffer.segmentIndex, 200).pipe(
+          catchError(() => of({ results: [] }))
+        )
+      )
+    ).pipe(
+      map(responses => {
+        const seen = new Set<string>();
+        const ids: string[] = [];
+        for (const response of responses) {
+          for (const poi of response.results || []) {
+            const id = String(poi.id);
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            ids.push(id);
+          }
+        }
+        return ids;
+      })
+    );
+  }
+
+  private bufferGeometriesForItinerary(itinerary: Itinerary): Array<{ segmentIndex: number; geometry: unknown }> {
+    if (typeof turf === 'undefined') return [];
+
+    const json = this.itineraryJson(itinerary);
+    const pointCoordinates = this.pointCoordinatesByIndex(json.points || []);
+    const segments = json.segments || [];
+    const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
+    const buffers: Array<{ segmentIndex: number; geometry: unknown }> = [];
+
+    for (let index = 0; index < segmentCount; index += 1) {
+      const segment = segments[index];
+      const feature = this.segmentFeature(segment, pointCoordinates[index], pointCoordinates[index + 1]);
+      if (!feature) continue;
+
+      const bufferDistanceMeters = Number(segment?.bufferDistanceMeters);
+      const radiusKilometers = Number.isFinite(bufferDistanceMeters) && bufferDistanceMeters > 0
+        ? bufferDistanceMeters / 1000
+        : 1;
+      try {
+        const buffered = turf.buffer(feature, radiusKilometers, { units: 'kilometers' });
+        const geometry = buffered?.geometry;
+        if (geometry?.type === 'Polygon' || geometry?.type === 'MultiPolygon') {
+          buffers.push({ segmentIndex: index, geometry });
+        }
+      } catch {
+        // Ignore malformed saved segment geometry and keep the rest of the itinerary usable.
+      }
+    }
+
+    return buffers;
+  }
+
+  private segmentFeature(
+    segment: ItinerarySegmentExport | undefined,
+    start: { lat: number; lng: number } | null | undefined,
+    end: { lat: number; lng: number } | null | undefined
+  ): unknown | null {
+    const geometry = segment?.selectedWalkingRoute?.geometry;
+    if (this.isLineGeometry(geometry)) {
+      return { type: 'Feature', properties: {}, geometry };
+    }
+    if (start && end) {
+      return turf.lineString([[start.lng, start.lat], [end.lng, end.lat]]);
+    }
+    return null;
+  }
+
+  private isLineGeometry(geometry: unknown): boolean {
+    if (!geometry || typeof geometry !== 'object') return false;
+    const type = (geometry as { type?: unknown }).type;
+    return type === 'LineString' || type === 'MultiLineString';
+  }
+
+  private pointCoordinatesByIndex(points: ItineraryPointExport[]): Array<{ lat: number; lng: number } | null> {
+    return points.map(point => {
+      const lat = point.coordinates?.lat ?? point.lat;
+      const lng = point.coordinates?.lng ?? point.lng;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { lat: Number(lat), lng: Number(lng) };
+    });
+  }
+
+  private itineraryJson(itinerary: Itinerary): ItineraryJsonExport {
+    return itinerary.itinerary_json && typeof itinerary.itinerary_json === 'object'
+      ? itinerary.itinerary_json as ItineraryJsonExport
+      : {};
+  }
+
+  private uniquePois(pois: Poi[]): Poi[] {
+    const seen = new Set<number>();
+    const unique: Poi[] = [];
+    for (const poi of pois) {
+      if (seen.has(poi.id)) continue;
+      seen.add(poi.id);
+      unique.push(poi);
+    }
+    return unique;
   }
 
   private fetchPoiPage(query: string, page: number): Observable<ApiPage<Poi>> {

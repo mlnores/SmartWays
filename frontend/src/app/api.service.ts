@@ -17,6 +17,10 @@ export interface ApiPage<T> {
   results: T[];
 }
 
+export interface BufferPoiLookupResult {
+  id: number | string;
+}
+
 export interface CountryBounds {
   country: string;
   bounds: [[number, number], [number, number]];
@@ -292,6 +296,27 @@ export class ApiService {
       params = params.set('q', query.trim());
     }
     return this.http.get<ApiPage<Poi>>(`${API_BASE_URL}/pois/`, { params });
+  }
+
+  listAllPois(
+    query = '',
+    language = '',
+    enabled?: boolean,
+    category?: number | string,
+    country?: string,
+    ids?: Array<number | string>,
+    bbox?: string
+  ): Observable<Poi[]> {
+    return this.collectPages(this.listPois(query, language, enabled, category, country, ids, bbox));
+  }
+
+  findBufferPois(buffer: unknown, segmentIndex: number, limit = 200, language = ''): Observable<{ results: BufferPoiLookupResult[] }> {
+    return this.http.post<{ results: BufferPoiLookupResult[] }>(`${API_BASE_URL}/buffer-pois/`, {
+      buffer,
+      segmentIndex,
+      limit,
+      language
+    });
   }
 
   createPoi(payload: PoiPayload): Observable<Poi> {
