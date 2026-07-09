@@ -770,7 +770,7 @@ button:disabled:hover {
 
 .segment-control.collapsed {
   width: max-content;
-  margin: -20px 0 10px 34px;
+  margin: -20px 0 10px 24px;
   padding: 0;
   border-left: 0;
   background: transparent;
@@ -817,6 +817,14 @@ button:disabled:hover {
   font-size: 1.2rem;
 }
 
+.segment-toggle-triangle {
+  display: inline-block;
+  width: 1em;
+  font-size: 1.15rem;
+  line-height: 1;
+  text-align: center;
+}
+
 .segment-actions {
   display: flex;
   gap: 6px;
@@ -834,6 +842,10 @@ button:disabled:hover {
 }
 
 .segment-control.collapsed .segment-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   min-width: 36px;
   padding: 6px 9px;
   border-radius: 8px;

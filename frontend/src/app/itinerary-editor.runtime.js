@@ -2204,7 +2204,7 @@
                   <strong>Path ${labelForIndex(index)} → ${labelForIndex(index + 1)}</strong>
                   <span class="segment-header-actions">
                     <button data-action="fit-segment" data-segment="${index}" aria-label="Fit map to path" title="Fit map to path">🔎</button>
-                    <button class="plain-close" data-action="toggle-segment" data-segment="${index}" aria-expanded="true" aria-label="Hide path panel" title="Hide path panel">✖</button>
+                    <button class="plain-close" data-action="toggle-segment" data-segment="${index}" aria-expanded="true" aria-label="Hide path panel" title="Hide path panel"><span class="segment-toggle-triangle" aria-hidden="true">▴</span></button>
                   </span>
                 </div>
                   <div class="segment-buffer-edit">
@@ -2226,7 +2226,10 @@
                   </div>
               ` : `
                 <div class="segment-actions">
-                  <button class="${walkingRoute ? "route-defined" : "no-route"}" data-action="toggle-segment" data-segment="${index}" aria-expanded="false" aria-label="Expand path ${labelForIndex(index)} to ${labelForIndex(index + 1)}" title="${walkingRoute ? "Expand path with walking path" : "Expand path without walking path"}">${walkingRoute ? "✓" : "?"}</button>
+                  <button class="${walkingRoute ? "route-defined" : "no-route"}" data-action="toggle-segment" data-segment="${index}" aria-expanded="false" aria-label="Expand path ${labelForIndex(index)} to ${labelForIndex(index + 1)}" title="${walkingRoute ? "Expand path with walking path" : "Expand path without walking path"}">
+                    <span>${walkingRoute ? "✓" : "?"}</span>
+                    <span class="segment-toggle-triangle" aria-hidden="true">▾</span>
+                  </button>
                 </div>
               `;
               pointList.appendChild(segmentItem);

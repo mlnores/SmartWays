@@ -17,3 +17,4 @@ POI_data/poi.jsonld
 backend/pois/data/geoboundaries_adm0.geojson
 routes_data/
 .DS_Store
+geoboundaries_adm0.geojson
