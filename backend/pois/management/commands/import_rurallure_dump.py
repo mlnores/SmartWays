@@ -127,6 +127,13 @@ def valid_language_code(value):
     return None
 
 
+def valid_poi_translation_title(value):
+    title = (value or "").strip()
+    if not title or title == "...":
+        return None
+    return title[:255]
+
+
 def unique_slug(raw_value, used_slugs, fallback, max_length):
     base = slugify(raw_value or "")
     if not base:
@@ -329,14 +336,18 @@ class Command(BaseCommand):
             language_codes,
             imported_at,
         )
+        valid_translation_rows_by_poi = self.valid_poi_translation_rows_by_poi(
+            data["public.point_of_interest_translation"],
+            language_codes,
+        )
         pois_by_source_id, poi_stats = self.import_pois(
             data["public.point_of_interest"],
+            valid_translation_rows_by_poi,
             imported_at,
             country_lookup,
         )
         translation_stats = self.import_poi_translations(
-            data["public.point_of_interest_translation"],
-            language_codes,
+            valid_translation_rows_by_poi,
             pois_by_source_id,
         )
         relation_stats = self.import_category_relations(
@@ -441,16 +452,55 @@ class Command(BaseCommand):
             "category_translations_created": len(translation_objects),
         }
 
-    def import_pois(self, rows, imported_at, country_lookup):
+    def valid_poi_translation_rows_by_poi(self, rows, language_codes):
+        rows_by_poi = defaultdict(list)
+        skipped_invalid_language = 0
+        skipped_invalid_title = 0
+        seen_poi_languages = set()
+
+        for row in rows:
+            language_code = language_codes.get(row["language_id"])
+            if not language_code:
+                skipped_invalid_language += 1
+                continue
+
+            title = valid_poi_translation_title(row["title"])
+            if not title:
+                skipped_invalid_title += 1
+                continue
+
+            key = (row["point_of_interest_id"], language_code)
+            if key in seen_poi_languages:
+                skipped_invalid_title += 1
+                continue
+            seen_poi_languages.add(key)
+
+            rows_by_poi[row["point_of_interest_id"]].append({
+                **row,
+                "language_code": language_code,
+                "normalized_title": title,
+            })
+
+        rows_by_poi["_stats"] = {
+            "poi_translations_skipped_invalid_language": skipped_invalid_language,
+            "poi_translations_skipped_invalid_title": skipped_invalid_title,
+        }
+        return rows_by_poi
+
+    def import_pois(self, rows, valid_translation_rows_by_poi, imported_at, country_lookup):
         pois_by_source_id = {}
         pois = []
         skipped_without_coordinates = 0
         skipped_disabled = 0
+        skipped_without_valid_translations = 0
         without_country = 0
 
         for row in rows:
             if not parse_bool(row["enabled"], default=True):
                 skipped_disabled += 1
+                continue
+            if not valid_translation_rows_by_poi.get(row["id"]):
+                skipped_without_valid_translations += 1
                 continue
 
             latitude = parse_decimal(row["gps_latitude"])
@@ -484,54 +534,51 @@ class Command(BaseCommand):
             "pois_created": len(pois),
             "pois_skipped_disabled": skipped_disabled,
             "pois_skipped_without_coordinates": skipped_without_coordinates,
+            "pois_skipped_without_valid_translations": skipped_without_valid_translations,
             "pois_without_country": without_country,
         }
 
-    def import_poi_translations(self, rows, language_codes, pois_by_source_id):
+    def import_poi_translations(self, valid_translation_rows_by_poi, pois_by_source_id):
         used_slugs_by_language = defaultdict(set)
-        seen_poi_languages = set()
-        reference_pois = set()
         translations = []
         skipped = 0
 
-        for row in rows:
-            poi = pois_by_source_id.get(row["point_of_interest_id"])
-            language_code = language_codes.get(row["language_id"])
-            if not poi or not language_code:
-                skipped += 1
+        for source_poi_id, rows in valid_translation_rows_by_poi.items():
+            if source_poi_id == "_stats":
                 continue
 
-            key = (poi.pk, language_code)
-            if key in seen_poi_languages:
-                skipped += 1
+            poi = pois_by_source_id.get(source_poi_id)
+            if not poi:
+                skipped += len(rows)
                 continue
-            seen_poi_languages.add(key)
 
-            title = (row["title"] or "Untitled POI")[:255]
-            slug = unique_slug(
-                row["slug"] or title,
-                used_slugs_by_language[language_code],
-                f"poi-{row['point_of_interest_id']}",
-                255,
-            )
-            is_reference = poi.pk not in reference_pois
-            reference_pois.add(poi.pk)
-            translations.append(
-                POITranslation(
-                    poi=poi,
-                    language_code=language_code,
-                    title=title,
-                    description=row["description"] or "",
-                    slug=slug,
-                    is_reference=is_reference,
+            for index, row in enumerate(rows):
+                language_code = row["language_code"]
+                title = row["normalized_title"]
+                slug = unique_slug(
+                    row["slug"] or title,
+                    used_slugs_by_language[language_code],
+                    f"poi-{source_poi_id}",
+                    255,
                 )
-            )
+                translations.append(
+                    POITranslation(
+                        poi=poi,
+                        language_code=language_code,
+                        title=title,
+                        description=row["description"] or "",
+                        slug=slug,
+                        is_reference=index == 0,
+                    )
+                )
 
         POITranslation.objects.bulk_create(translations)
+        validation_stats = valid_translation_rows_by_poi.get("_stats", {})
 
         return {
             "poi_translations_created": len(translations),
             "poi_translations_skipped": skipped,
+            **validation_stats,
         }
 
     def import_category_relations(self, rows, pois_by_source_id, categories_by_source_id):

@@ -10,7 +10,11 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .management.commands.import_rurallure_dump import Command, CountryBoundaryLookup
+from .management.commands.import_rurallure_dump import COPY_TABLES, Command, CountryBoundaryLookup
+from .management.commands.import_rurallure_dump_near_itineraries import (
+    Command as NearbyPOIImportCommand,
+    ItineraryDistanceIndex,
+)
 from .models import Category, CategoryTranslation, Itinerary, POI, POIMedia, POITranslation, Route, RouteStage, RouteTranslation
 
 
@@ -442,6 +446,147 @@ class POIAPITests(APITestCase):
         self.assertEqual(
             set(CategoryTranslation.objects.filter(category=categories_by_source_id["source-1"]).values_list("language_code", "name")),
             {("en", "Castle"), ("es", "Castillo")},
+        )
+
+    def test_rurallure_import_discards_placeholder_poi_translation_titles(self):
+        command = Command()
+        language_codes = {"lang-en": "en", "lang-es": "es"}
+        translation_rows = [
+            {
+                "point_of_interest_id": "poi-1",
+                "language_id": "lang-en",
+                "title": "...",
+                "slug": "placeholder",
+                "description": "Placeholder title.",
+            },
+            {
+                "point_of_interest_id": "poi-1",
+                "language_id": "lang-es",
+                "title": "Título correcto",
+                "slug": "titulo-correcto",
+                "description": "Usable title.",
+            },
+            {
+                "point_of_interest_id": "poi-2",
+                "language_id": "lang-en",
+                "title": "   ",
+                "slug": "",
+                "description": "Blank title.",
+            },
+            {
+                "point_of_interest_id": "poi-2",
+                "language_id": "lang-es",
+                "title": "...",
+                "slug": "placeholder-2",
+                "description": "Placeholder title.",
+            },
+        ]
+        valid_translation_rows = command.valid_poi_translation_rows_by_poi(
+            translation_rows,
+            language_codes,
+        )
+        pois_by_source_id, poi_stats = command.import_pois(
+            [
+                {
+                    "id": "poi-1",
+                    "enabled": "t",
+                    "gps_latitude": "42.1",
+                    "gps_longitude": "-8.6",
+                    "website": "",
+                },
+                {
+                    "id": "poi-2",
+                    "enabled": "t",
+                    "gps_latitude": "42.2",
+                    "gps_longitude": "-8.7",
+                    "website": "",
+                },
+            ],
+            valid_translation_rows,
+            timezone.now(),
+            None,
+        )
+        translation_stats = command.import_poi_translations(valid_translation_rows, pois_by_source_id)
+
+        self.assertIn("poi-1", pois_by_source_id)
+        self.assertNotIn("poi-2", pois_by_source_id)
+        self.assertEqual(poi_stats["pois_skipped_without_valid_translations"], 1)
+        self.assertEqual(translation_stats["poi_translations_created"], 1)
+        self.assertEqual(translation_stats["poi_translations_skipped_invalid_title"], 3)
+        translation = POITranslation.objects.get(poi=pois_by_source_id["poi-1"])
+        self.assertEqual(translation.language_code, "es")
+        self.assertEqual(translation.title, "Título correcto")
+        self.assertTrue(translation.is_reference)
+
+    def test_rurallure_import_near_itineraries_filters_dump_tables_by_distance_range(self):
+        Itinerary.objects.create(
+            itinerary_json={
+                "points": [
+                    {"coordinates": {"lat": 42.0, "lng": -8.0}},
+                    {"coordinates": {"lat": 42.0, "lng": -7.9}},
+                ],
+                "segments": [],
+            }
+        )
+        command = NearbyPOIImportCommand()
+        data = {table_name: [] for table_name in COPY_TABLES}
+        data["public.point_of_interest"] = [
+            {
+                "id": "near-poi",
+                "gps_latitude": "42.001",
+                "gps_longitude": "-7.95",
+            },
+            {
+                "id": "far-poi",
+                "gps_latitude": "43.0",
+                "gps_longitude": "-7.95",
+            },
+        ]
+        data["public.point_of_interest_translation"] = [
+            {"point_of_interest_id": "near-poi", "language_id": "lang-en", "title": "Near"},
+            {"point_of_interest_id": "far-poi", "language_id": "lang-en", "title": "Far"},
+        ]
+        data["public.point_of_interest_category"] = [
+            {"point_of_interest_id": "near-poi", "category_id": "cat-near"},
+            {"point_of_interest_id": "far-poi", "category_id": "cat-far"},
+        ]
+        data["public.category"] = [{"id": "cat-near"}, {"id": "cat-far"}]
+        data["public.category_translation"] = [
+            {"category_id": "cat-near", "language_id": "lang-en", "description": "Near category"},
+            {"category_id": "cat-far", "language_id": "lang-en", "description": "Far category"},
+        ]
+        data["public.image_point_of_interest"] = [
+            {"point_of_interest_id": "near-poi", "file_uploaded_id": "file-near"},
+            {"point_of_interest_id": "far-poi", "file_uploaded_id": "file-far"},
+        ]
+        data["public.file_uploaded"] = [
+            {"id": "file-near", "filename": "near.jpg"},
+            {"id": "file-far", "filename": "far.jpg"},
+        ]
+
+        filtered_data, stats = command.filter_data_by_distance_range(
+            data,
+            ItineraryDistanceIndex.from_database(max_distance_km=2),
+            min_distance_km=0,
+            max_distance_km=2,
+        )
+
+        self.assertEqual(stats["pois_matching_distance_range"], 1)
+        self.assertEqual(
+            [row["id"] for row in filtered_data["public.point_of_interest"]],
+            ["near-poi"],
+        )
+        self.assertEqual(
+            [row["point_of_interest_id"] for row in filtered_data["public.point_of_interest_translation"]],
+            ["near-poi"],
+        )
+        self.assertEqual(
+            [row["id"] for row in filtered_data["public.category"]],
+            ["cat-near"],
+        )
+        self.assertEqual(
+            [row["id"] for row in filtered_data["public.file_uploaded"]],
+            ["file-near"],
         )
 
     def test_itinerary_create_accepts_json_and_translations(self):

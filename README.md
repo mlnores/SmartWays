@@ -8,7 +8,7 @@ SmartWays is a Django + Angular application for managing routes, itineraries, an
 
 - Angular application under `frontend/`.
 - Route browser at `/routes`, with map previews and route-level actions.
-- Route itinerary browser at `/route/:slug`, with stage ordering for draft routes.
+- Route itinerary browser at `/route/:slug`, with stage ordering for draft routes and tools to add or import existing itineraries into a draft route.
 - Itinerary browser at `/itineraries`, including route memberships, map previews, selection, sorting, and filtering to the visible map area.
 - Itinerary editor at `/itineraries/:id/edit`, with Leaflet map editing, waypoint and POI workflows, route/path lookup, buffer POI lookup, undo/redo, and direct save.
 - POI browser at `/pois`, with category/country/map filters, map preview, sorting, pagination via `Load more`, category management, and viewer/editor navigation.
@@ -218,6 +218,24 @@ npm exec tsc -- --noEmit --project tsconfig.app.json
 /pois/:id/edit             View/edit POI metadata, translations, and media
 ```
 
+### Building Draft Routes
+
+The route itinerary page at `/route/:slug` is the main UI for composing a route from existing itineraries.
+
+For draft routes, the toolbar next to the search box includes:
+
+- `Add`: opens a simplified searchable itinerary picker. It omits the map preview, route-inclusion badges, and draft column from the main itinerary list so the user can quickly select one or more itineraries.
+- `Import from other routes`: opens a two-lane picker. The left lane lists other routes plus `Unassigned itineraries`; the right lane lists the itineraries available from the selected source.
+
+Both dialogs allow inserting the selected itineraries:
+
+- at the beginning of the current route,
+- at the end,
+- before an existing itinerary,
+- after an existing itinerary.
+
+After insertion, the list scrolls to the first newly added itinerary and keeps all newly added itineraries selected. Public routes are read-only, so these buttons are not shown for public routes.
+
 ## API Overview
 
 Base URL:
@@ -302,6 +320,48 @@ python manage.py import_rurallure_dump --image-base-url "https://example.com/ima
 ```
 
 Disabled source POIs are skipped. Imported timestamps use the import time.
+
+### Importing Only POIs Near Existing Itineraries
+
+Use `import_rurallure_dump_near_itineraries` to import only POIs whose dump coordinates are within a distance range from any itinerary currently stored in the database.
+
+The command uses saved walking-route geometries when available and falls back to straight lines between saved itinerary points. It filters POIs first, then imports only the matching POIs and their related translations, categories, category assignments, media links, and files.
+
+Dry run for POIs within 5 km of any itinerary:
+
+```bash
+cd backend
+python manage.py import_rurallure_dump_near_itineraries --max-distance-km 5 --dry-run
+```
+
+Import POIs from 0 to 5 km away:
+
+```bash
+python manage.py import_rurallure_dump_near_itineraries --max-distance-km 5
+```
+
+Import POIs from 1 to 5 km away:
+
+```bash
+python manage.py import_rurallure_dump_near_itineraries --min-distance-km 1 --max-distance-km 5
+```
+
+Clear existing POI/category data before importing the filtered subset:
+
+```bash
+python manage.py import_rurallure_dump_near_itineraries --max-distance-km 5 --clear
+```
+
+The command accepts the same dump, country-boundary, media-base-url, clear, and dry-run options as `import_rurallure_dump`:
+
+```bash
+python manage.py import_rurallure_dump_near_itineraries /path/to/dump-rurallure_db.sql --max-distance-km 5
+python manage.py import_rurallure_dump_near_itineraries --country-boundaries /path/to/geoboundaries_adm0.geojson --max-distance-km 5
+python manage.py import_rurallure_dump_near_itineraries --skip-country-annotation --max-distance-km 5
+python manage.py import_rurallure_dump_near_itineraries --image-base-url "https://example.com/images/" --max-distance-km 5
+```
+
+The database must already contain itineraries with usable coordinates before running this command.
 
 ## Importing Routes
 
