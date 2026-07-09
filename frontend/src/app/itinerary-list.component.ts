@@ -312,7 +312,7 @@ declare const L: any;
                   }
                   <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'pois']" [queryParams]="backQueryParams()">
                     <span class="preview-action-icon" aria-hidden="true">📍</span>
-                    <span>View POIs</span>
+                    <span>View POIs on the path and nearby</span>
                   </a>
                   <button type="button" class="secondary preview-action" [disabled]="duplicatingIds.has(previewItinerary.id)" (click)="duplicateItinerary(previewItinerary)">
                     <span class="preview-action-icon" aria-hidden="true">📄</span>
