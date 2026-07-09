@@ -347,6 +347,27 @@ class POIAPITests(APITestCase):
         self.poi.refresh_from_db()
         self.assertFalse(self.poi.enabled)
 
+    def test_poi_turned_to_draft_cascades_to_itineraries_and_routes(self):
+        itinerary = Itinerary.objects.create(
+            enabled=True,
+            itinerary_json={
+                "points": [{"type": "poi", "id": self.poi.id}],
+                "segments": [],
+            },
+        )
+        route = Route.objects.create(enabled=True)
+        RouteStage.objects.create(route=route, itinerary=itinerary, stage_number=1)
+
+        response = self.client.patch(reverse("poi-detail", args=[self.poi.id]), {"enabled": False}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.poi.refresh_from_db()
+        itinerary.refresh_from_db()
+        route.refresh_from_db()
+        self.assertFalse(self.poi.enabled)
+        self.assertFalse(itinerary.enabled)
+        self.assertFalse(route.enabled)
+
     def test_poi_create_rejects_multiple_reference_translations(self):
         response = self.client.post(
             reverse("poi-list"),
@@ -717,6 +738,34 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         route.refresh_from_db()
         self.assertFalse(route.enabled)
+
+    def test_route_turned_public_cascades_to_itineraries_and_pois(self):
+        poi = POI.objects.create(
+            enabled=False,
+            country_code="ES",
+            location=Point(-8.7207, 42.2406, srid=4326),
+        )
+        route = Route.objects.create(enabled=False)
+        route.translations.create(language_code="en", title="Draft route", slug="draft-route")
+        itinerary = Itinerary.objects.create(
+            enabled=False,
+            itinerary_json={
+                "points": [{"type": "poi", "id": poi.id}],
+                "segments": [],
+            },
+        )
+        itinerary.translations.create(language_code="en", title="Draft itinerary", slug="draft-itinerary")
+        RouteStage.objects.create(route=route, itinerary=itinerary, stage_number=1)
+
+        response = self.client.patch(reverse("route-detail", args=[route.id]), {"enabled": True}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        poi.refresh_from_db()
+        itinerary.refresh_from_db()
+        route.refresh_from_db()
+        self.assertTrue(route.enabled)
+        self.assertTrue(itinerary.enabled)
+        self.assertTrue(poi.enabled)
 
     def test_public_route_cannot_add_or_remove_itineraries(self):
         route = Route.objects.create(enabled=True)

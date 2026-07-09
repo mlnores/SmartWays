@@ -197,7 +197,7 @@ declare const L: any;
                               [class.highlight-row]="highlightedItineraryId === itinerary.id"
                               [class.preview-selected-row]="selectedItineraryIds.has(itinerary.id)"
                               (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
-                              (dblclick)="openItineraryInEditor(itinerary)"
+                              (dblclick)="openItineraryFromDoubleClick(itinerary)"
                             >
                               <td class="selection-column" (click)="$event.stopPropagation()">
                                 <input
@@ -334,7 +334,7 @@ declare const L: any;
                   [class.dragging-row]="draggedItineraryId === itinerary.id"
                   [attr.draggable]="routeSlug && currentRouteIsDraft ? true : null"
                   (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
-                  (dblclick)="openItineraryInEditor(itinerary)"
+                  (dblclick)="openItineraryFromDoubleClick(itinerary)"
                   (dragstart)="startStageDrag(itinerary)"
                   (dragover)="allowStageDrop($event)"
                   (drop)="dropStage(itinerary, items)"
@@ -817,6 +817,16 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     void this.router.navigate(['/itineraries', itinerary.id, 'edit'], {
       queryParams: this.backQueryParamsFor(itinerary)
     });
+  }
+
+  openItineraryFromDoubleClick(itinerary: Itinerary): void {
+    if (itinerary.enabled) {
+      void this.router.navigate(['/itineraries', itinerary.id, 'pois'], {
+        queryParams: this.backQueryParamsFor(itinerary)
+      });
+      return;
+    }
+    this.openItineraryInEditor(itinerary);
   }
 
   openRouteMembership(membership: ItineraryRouteMembership, itinerary: Itinerary, event?: MouseEvent): void {
@@ -1927,26 +1937,11 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     const itemLabel = itineraries.length === 1 ? 'itinerary' : 'itineraries';
     let message = `Really ${action} ${itineraries.length} selected ${itemLabel}?`;
     if (!enabled) {
-      const affectedRoutes = this.affectedPublicRouteNamesForItineraries(itineraries);
-      if (affectedRoutes.length > 0) {
-        message += `\n\nThe following routes are affected and will also be turned to draft:\n- ${affectedRoutes.join('\n- ')}`;
-      }
+      message += '\n\nRoutes containing the selected itinerary/itineraries can also be turned to draft.';
+    } else {
+      message += '\n\nDraft POIs included in the selected itinerary/itineraries can also be made public.';
     }
     return window.confirm(message);
-  }
-
-  private affectedPublicRouteNamesForItineraries(itineraries: Itinerary[]): string[] {
-    const names = new Map<number, string>();
-    for (const itinerary of itineraries) {
-      for (const membership of this.routeMembershipsFor(itinerary)) {
-        const route = this.routeForId(membership.route);
-        if (route && !route.enabled) continue;
-        names.set(membership.route, membership.route_title || route?.title || `Route ${membership.route}`);
-      }
-    }
-    return [...names.entries()]
-      .sort(([leftId], [rightId]) => leftId - rightId)
-      .map(([, name]) => name);
   }
 
   private scheduleHighlight(itineraryId: number | null, itineraries: Itinerary[]): void {

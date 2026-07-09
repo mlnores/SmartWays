@@ -552,6 +552,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   }
 
   async setRouteEnabled(route: Route, enabled: boolean): Promise<void> {
+    if (!this.confirmRouteDraftChange([route], enabled)) return;
     try {
       await firstValueFrom(this.api.updateRoute(route.id, { enabled }));
       this.clearStatus();
@@ -564,9 +565,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   async setSelectedRoutesEnabled(enabled: boolean): Promise<void> {
     const selected = this.selectedRoutes();
     if (selected.length === 0) return;
-    const action = enabled ? 'make public' : 'turn to draft';
-    const confirmed = window.confirm(`Really ${action} ${selected.length} selected ${selected.length === 1 ? 'route' : 'routes'}?`);
-    if (!confirmed) return;
+    if (!this.confirmRouteDraftChange(selected, enabled)) return;
 
     try {
       await Promise.all(selected.map(route => firstValueFrom(this.api.updateRoute(route.id, { enabled }))));
@@ -575,6 +574,16 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     } catch (error) {
       this.showStatus(`Could not update selected routes. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
+  }
+
+  private confirmRouteDraftChange(routes: Route[], enabled: boolean): boolean {
+    const action = enabled ? 'make public' : 'turn to draft';
+    const itemLabel = routes.length === 1 ? 'route' : 'routes';
+    let message = `Really ${action} ${routes.length} selected ${itemLabel}?`;
+    if (enabled) {
+      message += '\n\nDraft itineraries in the selected route(s), and draft POIs included in those itineraries, will also be made public.';
+    }
+    return window.confirm(message);
   }
 
   async deleteRoute(route: Route): Promise<void> {

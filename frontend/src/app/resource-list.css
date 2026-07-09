@@ -1013,6 +1013,22 @@ label span {
   overflow: auto;
 }
 
+.dialog-status {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  color: #047857;
+  background: #f0fdf4;
+  font-weight: 600;
+}
+
+.dialog-status.error {
+  border-color: #fecaca;
+  color: #b00020;
+  background: #fef2f2;
+}
+
 .category-select-button {
   width: 100%;
   padding: 9px 10px;

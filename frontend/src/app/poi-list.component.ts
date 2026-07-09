@@ -28,9 +28,7 @@ interface CategoryTranslationDraft {
   name: string;
 }
 
-interface CategoryDraft {
-  slug: string;
-}
+interface CategoryDraft {}
 
 interface ItineraryPointExport {
   type?: string;
@@ -384,11 +382,6 @@ declare const L: any;
             </section>
 
             <section class="category-editor-panel">
-              <label>
-                <span>Slug</span>
-                <input type="text" [(ngModel)]="categoryDraft.slug" name="categorySlug" placeholder="category-slug" />
-              </label>
-
               <section class="translation-list poi-translation-list">
                 @for (translation of categoryTranslationDrafts; track $index) {
                   <div class="category-translation-row">
@@ -404,6 +397,10 @@ declare const L: any;
                 }
                 <button type="button" class="secondary" (click)="addCategoryTranslationDraft()">Add translation</button>
               </section>
+
+              @if (categoryDialogStatusMessage) {
+                <p class="dialog-status" [class.error]="categoryDialogStatusIsError">{{ categoryDialogStatusMessage }}</p>
+              }
 
               @if (editingCategory) {
                 <section class="category-danger-zone">
@@ -424,8 +421,8 @@ declare const L: any;
           </div>
 
           <footer class="metadata-dialog-footer">
-            <button type="button" class="secondary" (click)="closeCategoryManagerDialog()">Close</button>
             <button type="submit" class="primary">{{ editingCategory ? 'Save category' : 'Create category' }}</button>
+            <button type="button" class="secondary" (click)="closeCategoryManagerDialog()">Close</button>
           </footer>
         </form>
       </dialog>
@@ -462,6 +459,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   editingCategory: Category | null = null;
   categoryDraft: CategoryDraft = this.emptyCategoryDraft();
   categoryTranslationDrafts: CategoryTranslationDraft[] = [];
+  categoryDialogStatusMessage = '';
+  categoryDialogStatusIsError = false;
   mergeTargetCategoryId: number | null = null;
   readonly selectedPoiIds = new Set<number>();
   readonly duplicatingPoiIds = new Set<number>();
@@ -805,6 +804,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   async setPoiEnabled(poi: Poi, enabled: boolean): Promise<void> {
+    if (!this.confirmPoiDraftChange([poi], enabled)) return;
     try {
       await firstValueFrom(this.api.updatePoi(poi.id, { enabled }));
       this.clearStatus();
@@ -817,9 +817,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   async setSelectedPoisEnabled(enabled: boolean): Promise<void> {
     const selected = this.selectedPois();
     if (selected.length === 0) return;
-    const action = enabled ? 'make public' : 'turn to draft';
-    const confirmed = window.confirm(`Really ${action} ${selected.length} selected ${selected.length === 1 ? 'POI' : 'POIs'}?`);
-    if (!confirmed) return;
+    if (!this.confirmPoiDraftChange(selected, enabled)) return;
 
     try {
       await Promise.all(selected.map(poi => firstValueFrom(this.api.updatePoi(poi.id, { enabled }))));
@@ -828,6 +826,16 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     } catch (error) {
       this.showStatus(`Could not update selected POIs. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
+  }
+
+  private confirmPoiDraftChange(pois: Poi[], enabled: boolean): boolean {
+    const action = enabled ? 'make public' : 'turn to draft';
+    const itemLabel = pois.length === 1 ? 'POI' : 'POIs';
+    let message = `Really ${action} ${pois.length} selected ${itemLabel}?`;
+    if (!enabled) {
+      message += '\n\nItineraries containing the selected POI(s), and routes containing those itineraries, will also be turned to draft.';
+    }
+    return window.confirm(message);
   }
 
   async duplicatePoi(poi: Poi): Promise<void> {
@@ -960,6 +968,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.editingCategory = null;
     this.categoryDraft = this.emptyCategoryDraft();
     this.categoryTranslationDrafts = [];
+    this.clearCategoryDialogStatus();
     this.mergeTargetCategoryId = null;
   }
 
@@ -967,18 +976,20 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.editingCategory = null;
     this.categoryDraft = this.emptyCategoryDraft();
     this.categoryTranslationDrafts = [{ language_code: 'en', name: '' }];
+    this.clearCategoryDialogStatus();
     this.mergeTargetCategoryId = null;
   }
 
   selectCategoryForEditing(category: Category): void {
     this.editingCategory = category;
-    this.categoryDraft = { slug: category.slug || '' };
+    this.categoryDraft = this.emptyCategoryDraft();
     this.categoryTranslationDrafts = category.translations.length > 0
       ? category.translations.map(translation => ({
         language_code: translation.language_code,
         name: translation.name || ''
       }))
       : [{ language_code: 'en', name: category.name || '' }];
+    this.clearCategoryDialogStatus();
     this.mergeTargetCategoryId = null;
   }
 
@@ -991,14 +1002,14 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   async saveCategoryDialog(): Promise<void> {
-    const slug = this.categoryDraft.slug.trim();
+    const slug = this.categorySlugPreview();
     const translations = this.normalizedCategoryTranslations();
     if (!slug) {
-      this.showStatus('Category slug is required.', true);
+      this.showCategoryDialogStatus('Enter a category name to generate its slug.', true);
       return;
     }
     if (translations.length === 0 || translations.some(translation => !translation.language_code || !translation.name)) {
-      this.showStatus('Every category translation needs a language and name.', true);
+      this.showCategoryDialogStatus('Every category translation needs a language and name.', true);
       return;
     }
 
@@ -1010,16 +1021,16 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         await firstValueFrom(this.api.createCategory({ slug, translations }));
       }
       await this.reloadCategories();
-      this.clearStatus();
       const savedCategory = editingCategoryId
         ? this.availableCategories.find(category => category.id === editingCategoryId)
         : this.availableCategories.find(category => category.slug === slug);
       if (savedCategory) {
         this.selectCategoryForEditing(savedCategory);
       }
+      this.showCategoryDialogStatus(editingCategoryId ? 'Category saved.' : 'Category created.', false);
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
-      this.showStatus(`Could not save category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showCategoryDialogStatus(`Could not save category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
@@ -1040,16 +1051,16 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       } else {
         this.startNewCategory();
       }
-      this.clearStatus();
+      this.showCategoryDialogStatus('Category deleted.', false);
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
-      this.showStatus(`Could not delete category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showCategoryDialogStatus(`Could not delete category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
   async mergeSelectedCategory(): Promise<void> {
     if (!this.editingCategory || !this.mergeTargetCategoryId) {
-      this.showStatus('Select a target category to merge into.', true);
+      this.showCategoryDialogStatus('Select a target category to merge into.', true);
       return;
     }
     const target = this.availableCategories.find(category => category.id === this.mergeTargetCategoryId);
@@ -1067,10 +1078,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       if (mergedTarget) {
         this.selectCategoryForEditing(mergedTarget);
       }
-      this.clearStatus();
+      this.showCategoryDialogStatus('Category merged.', false);
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
-      this.showStatus(`Could not merge category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showCategoryDialogStatus(`Could not merge category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
@@ -1447,7 +1458,32 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   private emptyCategoryDraft(): CategoryDraft {
-    return { slug: '' };
+    return {};
+  }
+
+  categorySlugPreview(): string {
+    return this.slugFromCategoryTranslations(this.categoryTranslationDrafts);
+  }
+
+  private slugFromCategoryTranslations(translations: CategoryTranslationDraft[]): string {
+    const namedTranslations = translations
+      .map(translation => ({
+        language_code: translation.language_code.trim().toLowerCase(),
+        name: translation.name.trim()
+      }))
+      .filter(translation => translation.name);
+    const source = namedTranslations.find(translation => translation.language_code === 'en') || namedTranslations[0];
+    return source ? this.slugFromText(source.name) : '';
+  }
+
+  private slugFromText(value: string): string {
+    return value
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/-{2,}/g, '-');
   }
 
   private async reloadCategories(): Promise<void> {
@@ -1583,5 +1619,15 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private clearStatus(): void {
     this.statusMessage = '';
     this.statusIsError = false;
+  }
+
+  private showCategoryDialogStatus(message: string, isError: boolean): void {
+    this.categoryDialogStatusMessage = message;
+    this.categoryDialogStatusIsError = isError;
+  }
+
+  private clearCategoryDialogStatus(): void {
+    this.categoryDialogStatusMessage = '';
+    this.categoryDialogStatusIsError = false;
   }
 }

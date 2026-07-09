@@ -294,6 +294,82 @@ def is_turn_to_draft_request(data):
     return False
 
 
+def request_sets_enabled(data, enabled):
+    if "enabled" not in data:
+        return False
+    value = data.get("enabled")
+    if isinstance(value, bool):
+        return value is enabled
+    if isinstance(value, str):
+        normalized = value.lower()
+        return normalized in ({"true", "1", "yes"} if enabled else {"false", "0", "no"})
+    return False
+
+
+def poi_ids_from_itinerary_json(itinerary_json):
+    if not isinstance(itinerary_json, dict):
+        return set()
+    points = itinerary_json.get("points")
+    if not isinstance(points, list):
+        return set()
+
+    poi_ids = set()
+    for point in points:
+        if not isinstance(point, dict) or point.get("type") != "poi":
+            continue
+        raw_id = point.get("id") or point.get("poi_id") or point.get("poiId")
+        try:
+            poi_ids.add(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    return poi_ids
+
+
+def itinerary_ids_containing_poi(poi_id, enabled=None):
+    queryset = Itinerary.objects.all()
+    if enabled is not None:
+        queryset = queryset.filter(enabled=enabled)
+    return [
+        itinerary.id
+        for itinerary in queryset.only("id", "itinerary_json")
+        if poi_id in poi_ids_from_itinerary_json(itinerary.itinerary_json)
+    ]
+
+
+def cascade_poi_to_draft(poi):
+    itinerary_ids = itinerary_ids_containing_poi(poi.id, enabled=True)
+    if not itinerary_ids:
+        return
+
+    Itinerary.objects.filter(id__in=itinerary_ids, enabled=True).update(enabled=False)
+    route_ids = (
+        RouteStage.objects
+        .filter(itinerary_id__in=itinerary_ids, route__enabled=True)
+        .values_list("route_id", flat=True)
+        .distinct()
+    )
+    Route.objects.filter(id__in=route_ids).update(enabled=False)
+
+
+def cascade_itinerary_to_public(itinerary):
+    poi_ids = poi_ids_from_itinerary_json(itinerary.itinerary_json)
+    if poi_ids:
+        POI.objects.filter(id__in=poi_ids, enabled=False).update(enabled=True)
+
+
+def cascade_route_to_public(route):
+    itineraries = list(route.stages.select_related("itinerary").all())
+    itinerary_ids = [stage.itinerary_id for stage in itineraries]
+    if itinerary_ids:
+        Itinerary.objects.filter(id__in=itinerary_ids, enabled=False).update(enabled=True)
+
+    poi_ids = set()
+    for stage in itineraries:
+        poi_ids.update(poi_ids_from_itinerary_json(stage.itinerary.itinerary_json))
+    if poi_ids:
+        POI.objects.filter(id__in=poi_ids, enabled=False).update(enabled=True)
+
+
 class DraftOnlyMutationMixin:
     draft_label = "item"
 
@@ -332,6 +408,15 @@ class DraftParentOnlyMutationMixin(DraftOnlyMutationMixin):
 class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
     draft_label = "POI"
     serializer_class = POISerializer
+
+    def update(self, request, *args, **kwargs):
+        if is_turn_to_draft_request(request.data):
+            with transaction.atomic():
+                poi = self.get_object()
+                response = super().update(request, *args, **kwargs)
+                cascade_poi_to_draft(poi)
+                return response
+        return super().update(request, *args, **kwargs)
 
     def get_queryset(self):
         queryset = (
@@ -469,6 +554,13 @@ class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.Mo
                 itinerary = self.get_object()
                 Route.objects.filter(stages__itinerary=itinerary, enabled=True).distinct().update(enabled=False)
                 return super().update(request, *args, **kwargs)
+        if request_sets_enabled(request.data, True):
+            with transaction.atomic():
+                response = super().update(request, *args, **kwargs)
+                itinerary = self.get_object()
+                if itinerary.enabled:
+                    cascade_itinerary_to_public(itinerary)
+                return response
         return super().update(request, *args, **kwargs)
 
     def get_serializer_context(self):
@@ -518,6 +610,16 @@ class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.Mo
 class RouteViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
     draft_label = "route"
     serializer_class = RouteSerializer
+
+    def update(self, request, *args, **kwargs):
+        if request_sets_enabled(request.data, True):
+            with transaction.atomic():
+                response = super().update(request, *args, **kwargs)
+                route = self.get_object()
+                if route.enabled:
+                    cascade_route_to_public(route)
+                return response
+        return super().update(request, *args, **kwargs)
 
     def get_queryset(self):
         queryset = Route.objects.prefetch_related(

@@ -605,6 +605,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
 
+    if (this.poi && this.poi.enabled !== this.enabled && !this.confirmPublicationStateChange()) {
+      return;
+    }
+
     if (this.poi?.enabled && !this.enabled) {
       this.saving = true;
       try {
@@ -673,6 +677,16 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   canEditContent(): boolean {
     return this.isNewPoi || !this.poi || !this.poi.enabled || !this.enabled;
+  }
+
+  private confirmPublicationStateChange(): boolean {
+    if (!this.poi) return true;
+    if (this.enabled) {
+      return window.confirm('Really make this POI public?');
+    }
+    return window.confirm(
+      'Really turn this POI to draft?\n\nItineraries containing this POI, and routes containing those itineraries, will also be turned to draft.'
+    );
   }
 
   canSave(): boolean {
