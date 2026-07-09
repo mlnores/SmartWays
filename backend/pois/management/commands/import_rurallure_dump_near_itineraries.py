@@ -198,8 +198,8 @@ class Command(RurallureDumpImportCommand):
         parser.add_argument(
             "--max-distance-km",
             type=float,
-            required=True,
-            help="Maximum distance in kilometers from any itinerary.",
+            default=25,
+            help="Maximum distance in kilometers from any itinerary. Defaults to 25.",
         )
 
     def handle(self, *args, **options):

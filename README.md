@@ -38,8 +38,6 @@ SmartWays is a Django + Angular application for managing routes, itineraries, an
 ```text
 backend/                    Django backend and API
 frontend/                   Angular frontend
-POI_data/                   Local RurAllure SQL dump input, not required for normal runtime
-routes_data/                Local route/GPX import inputs, ignored by git
 docker-compose.yml          Docker deployment stack: PostGIS, backend, frontend
 requirements.txt            Minimal pip requirements for Django/DRF
 ```
@@ -55,7 +53,7 @@ requirements.txt            Minimal pip requirements for Django/DRF
   - GEOS
   - PROJ
   - SQLite with SpatiaLite for local development, or PostgreSQL with PostGIS.
-- For RurAllure country annotation, a geoBoundaries ADM0 GeoJSON file:
+- For country annotation, a geoBoundaries ADM0 GeoJSON file:
 
 ```text
 backend/pois/data/geoboundaries_adm0.geojson
@@ -237,6 +235,7 @@ The helper script downloads these shared Google Drive files when local ZIPs are 
 
 - `POI_data.zip`
 - `routes_data.zip`
+- `geoboundaries_adm0.geojson`
 
 Run:
 
@@ -249,15 +248,10 @@ This prepares:
 ```text
 docker-data/POI_data/
 docker-data/routes_data/
-```
-
-If you want physical country annotation during POI import, also place the geoBoundaries ADM0 file here:
-
-```text
 docker-data/geoboundaries_adm0.geojson
 ```
 
-If that file is missing, the provided import helper falls back to `--skip-country-annotation`.
+If the geoBoundaries file is missing, the provided import helper falls back to `--skip-country-annotation`.
 
 ### Build And Start
 
@@ -457,17 +451,17 @@ Use `import_rurallure_dump_near_itineraries` to import only POIs whose dump coor
 
 The command uses saved walking-route geometries when available and falls back to straight lines between saved itinerary points. It filters POIs first, then imports only the matching POIs and their related translations, categories, category assignments, media links, and files.
 
-Dry run for POIs within 25 km of any itinerary:
+Dry run for POIs within the default 25 km of any itinerary:
 
 ```bash
 cd backend
-python manage.py import_rurallure_dump_near_itineraries --max-distance-km 25 --dry-run
+python manage.py import_rurallure_dump_near_itineraries --dry-run
 ```
 
-Import POIs from 0 to 25 km away:
+Import POIs from 0 to the default 25 km away:
 
 ```bash
-python manage.py import_rurallure_dump_near_itineraries --max-distance-km 25
+python manage.py import_rurallure_dump_near_itineraries
 ```
 
 Import POIs from 1 to 25 km away:
@@ -479,16 +473,16 @@ python manage.py import_rurallure_dump_near_itineraries --min-distance-km 1 --ma
 Clear existing POI/category data before importing the filtered subset:
 
 ```bash
-python manage.py import_rurallure_dump_near_itineraries --max-distance-km 25 --clear
+python manage.py import_rurallure_dump_near_itineraries --clear
 ```
 
 The command accepts the same dump, country-boundary, media-base-url, clear, and dry-run options as `import_rurallure_dump`:
 
 ```bash
-python manage.py import_rurallure_dump_near_itineraries /path/to/dump-rurallure_db.sql --max-distance-km 25
-python manage.py import_rurallure_dump_near_itineraries --country-boundaries /path/to/geoboundaries_adm0.geojson --max-distance-km 25
-python manage.py import_rurallure_dump_near_itineraries --skip-country-annotation --max-distance-km 25
-python manage.py import_rurallure_dump_near_itineraries --image-base-url "https://example.com/images/" --max-distance-km 25
+python manage.py import_rurallure_dump_near_itineraries /path/to/dump-rurallure_db.sql
+python manage.py import_rurallure_dump_near_itineraries --country-boundaries /path/to/geoboundaries_adm0.geojson
+python manage.py import_rurallure_dump_near_itineraries --skip-country-annotation
+python manage.py import_rurallure_dump_near_itineraries --image-base-url "https://example.com/images/"
 ```
 
 The database must already contain itineraries with usable coordinates before running this command.

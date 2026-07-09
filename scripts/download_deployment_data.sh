@@ -4,6 +4,7 @@ set -euo pipefail
 DATA_DIR="${1:-docker-data}"
 POI_FILE_ID="1TqabARuHiM2oyGg37Oo2xUzq6D1BMpTY"
 ROUTES_FILE_ID="1udNMTwR4YWqnyDCFjdxCKuQO4Q0lWdjA"
+GEOBOUNDARIES_FILE_ID="1OJH8xRf8hmy6Xs5QemrFZUs-mCVYVPnT"
 
 mkdir -p "$DATA_DIR"
 
@@ -45,6 +46,22 @@ prepare_zip() {
   fi
 }
 
+prepare_file() {
+  local local_name="$1"
+  local file_id="$2"
+  local target_file="$DATA_DIR/$local_name"
+
+  if [ -f "$local_name" ]; then
+    echo "Using local $local_name"
+    cp "$local_name" "$target_file"
+  elif [ -f "$target_file" ]; then
+    echo "Using existing $target_file"
+  else
+    echo "Downloading $local_name"
+    download_drive_file "$file_id" "$target_file"
+  fi
+}
+
 command -v curl >/dev/null 2>&1 || {
   echo "curl is required." >&2
   exit 1
@@ -56,6 +73,7 @@ command -v unzip >/dev/null 2>&1 || {
 
 prepare_zip "POI_data.zip" "$POI_FILE_ID"
 prepare_zip "routes_data.zip" "$ROUTES_FILE_ID"
+prepare_file "geoboundaries_adm0.geojson" "$GEOBOUNDARIES_FILE_ID"
 
 echo "Extracting POI_data.zip"
 unzip -q -o "$DATA_DIR/POI_data.zip" -d "$DATA_DIR"
@@ -69,7 +87,5 @@ Data prepared under $DATA_DIR.
 Expected paths after extraction:
   $DATA_DIR/POI_data/
   $DATA_DIR/routes_data/
-
-If you want country annotation during POI import, also place:
   $DATA_DIR/geoboundaries_adm0.geojson
 EOF
