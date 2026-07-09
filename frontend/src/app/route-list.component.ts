@@ -125,7 +125,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                       </th>
                       <th class="enabled-column">
                         <button type="button" class="sortable-header" (click)="toggleRouteSort('draft')">
-                          <span>Draft</span>
+                          <span>Draft?</span>
                           <span aria-hidden="true">{{ routeSortIndicator('draft') }}</span>
                         </button>
                       </th>
@@ -162,7 +162,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                           ></span>
                         </td>
                         <td class="enabled-column">
-                          {{ route.enabled ? 'Public' : 'Draft' }}
+                          {{ route.enabled ? 'No' : 'Yes' }}
                         </td>
                       </tr>
                     } @empty {
@@ -259,6 +259,22 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
         </form>
       </dialog>
 
+      <dialog class="metadata-dialog" #deleteRouteDialog>
+        <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); confirmDeleteRoutes()">
+          <header class="metadata-dialog-header">
+            <h2>Delete route</h2>
+            <button type="button" class="icon-button" aria-label="Close delete route dialog" (click)="closeDeleteRouteDialog()">✖</button>
+          </header>
+          <div class="form-stack">
+            <p>{{ deleteRouteMessage() }}</p>
+          </div>
+          <footer class="metadata-dialog-footer">
+            <button type="button" class="secondary" (click)="closeDeleteRouteDialog()">Cancel</button>
+            <button type="submit" class="secondary danger-action">Delete</button>
+          </footer>
+        </form>
+      </dialog>
+
       <dialog class="metadata-dialog wide" #translationDialog>
         <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveTranslationDialog()">
           <header class="metadata-dialog-header">
@@ -349,6 +365,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
 })
 export class RouteListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('newRouteDialog') private readonly newRouteDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('deleteRouteDialog') private readonly deleteRouteDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('translationDialog') private readonly translationDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
 
@@ -363,6 +380,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   statusMessage = '';
   statusIsError = false;
   editingRoute: Route | null = null;
+  routesPendingDeletion: Route[] = [];
   translationDrafts: TranslationDraft[] = [];
   activeTranslationIndex = 0;
   highlightedRouteId: number | null = null;
@@ -622,46 +640,53 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     return window.confirm(message);
   }
 
-  async deleteRoute(route: Route): Promise<void> {
+  deleteRoute(route: Route): void {
     if (route.enabled) {
       this.showStatus('Public routes cannot be deleted.', true);
       return;
     }
-    const confirmed = window.confirm(
-      `Delete route "${route.title || 'Untitled route'}"? Its constituent itineraries will not be deleted.`
-    );
-    if (!confirmed) return;
-
-    try {
-      await firstValueFrom(this.api.deleteRoute(route.id));
-      this.clearStatus();
-      this.refresh$.next(this.refresh$.value + 1);
-    } catch (error) {
-      this.showStatus(`Could not delete route. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
-    }
+    this.routesPendingDeletion = [route];
+    this.deleteRouteDialog?.nativeElement.showModal();
   }
 
-  async deleteSelectedRoutes(): Promise<void> {
+  deleteSelectedRoutes(): void {
     const selected = this.selectedRoutes();
     if (selected.length < 2) return;
     if (selected.some(route => route.enabled)) {
       this.showStatus('Only draft routes can be deleted.', true);
       return;
     }
-    const confirmed = window.confirm(
-      `Delete ${selected.length} selected routes? Their constituent itineraries will not be deleted.`
-    );
-    if (!confirmed) return;
+    this.routesPendingDeletion = selected;
+    this.deleteRouteDialog?.nativeElement.showModal();
+  }
 
+  closeDeleteRouteDialog(): void {
+    this.deleteRouteDialog?.nativeElement.close();
+    this.routesPendingDeletion = [];
+  }
+
+  deleteRouteMessage(): string {
+    if (this.routesPendingDeletion.length === 1) {
+      return `Delete route "${this.routesPendingDeletion[0].title || 'Untitled route'}"? Its constituent itineraries will not be deleted.`;
+    }
+    return `Delete ${this.routesPendingDeletion.length} selected routes? Their constituent itineraries will not be deleted.`;
+  }
+
+  async confirmDeleteRoutes(): Promise<void> {
+    const routes = [...this.routesPendingDeletion];
+    if (routes.length === 0) return;
     try {
-      await Promise.all(selected.map(route => firstValueFrom(this.api.deleteRoute(route.id))));
-      this.selectedRouteIds.clear();
-      this.selectedPreviewFitLocked = false;
-      this.previewRoute = null;
+      await Promise.all(routes.map(route => firstValueFrom(this.api.deleteRoute(route.id))));
+      if (routes.length > 1) {
+        this.selectedRouteIds.clear();
+        this.selectedPreviewFitLocked = false;
+        this.previewRoute = null;
+      }
+      this.closeDeleteRouteDialog();
       this.clearStatus();
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
-      this.showStatus(`Could not delete selected routes. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showStatus(`Could not delete route${routes.length > 1 ? 's' : ''}. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 

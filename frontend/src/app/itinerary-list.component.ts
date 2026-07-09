@@ -33,6 +33,18 @@ interface NewItineraryDraft {
   stageNumber: number | null;
 }
 
+type RouteInsertMode = 'beginning' | 'end' | 'before' | 'after';
+
+interface RouteInsertDraft {
+  mode: RouteInsertMode;
+  anchorItineraryId: number | null;
+}
+
+interface ImportRouteSource {
+  id: number | 'unassigned';
+  title: string;
+}
+
 const LANGUAGE_OPTIONS = [
   { code: 'en', label: 'English' },
   { code: 'es', label: 'Spanish' },
@@ -143,6 +155,9 @@ declare const L: any;
               <span aria-hidden="true">×</span>
             </button>
           }
+        } @else if (currentRouteIsDraft) {
+          <button type="button" class="secondary toolbar-action" (click)="openAddExistingItinerariesDialog()">Add</button>
+          <button type="button" class="secondary toolbar-action" (click)="openImportItinerariesDialog()">Import from other routes</button>
         }
       </div>
       @if (statusMessage) {
@@ -201,10 +216,10 @@ declare const L: any;
                               </button>
                             </th>
                             <th class="enabled-column">
-                              <button type="button" class="sortable-header" (click)="toggleItinerarySort('draft')">
-                                <span>Draft</span>
-                                <span aria-hidden="true">{{ itinerarySortIndicator('draft') }}</span>
-                              </button>
+                            <button type="button" class="sortable-header" (click)="toggleItinerarySort('draft')">
+                              <span>Draft?</span>
+                              <span aria-hidden="true">{{ itinerarySortIndicator('draft') }}</span>
+                            </button>
                             </th>
                           </tr>
                         </thead>
@@ -233,7 +248,7 @@ declare const L: any;
                               </td>
                               <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
                               <td class="enabled-column">
-                                {{ itinerary.enabled ? 'Public' : 'Draft' }}
+                                {{ itinerary.enabled ? 'No' : 'Yes' }}
                               </td>
                             </tr>
                           }
@@ -352,7 +367,7 @@ declare const L: any;
                 </th>
                 <th class="enabled-column">
                   <button type="button" class="sortable-header" (click)="toggleItinerarySort('draft')">
-                    <span>Draft</span>
+                    <span>Draft?</span>
                     <span aria-hidden="true">{{ itinerarySortIndicator('draft') }}</span>
                   </button>
                 </th>
@@ -412,7 +427,7 @@ declare const L: any;
                   }
                   <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
                   <td class="enabled-column">
-                    {{ itinerary.enabled ? 'Public' : 'Draft' }}
+                    {{ itinerary.enabled ? 'No' : 'Yes' }}
                   </td>
                 </tr>
               } @empty {
@@ -423,6 +438,158 @@ declare const L: any;
             </tbody>
           </table>
         </div>
+      </ng-template>
+
+      <dialog class="metadata-dialog wide" #addExistingItinerariesDialog>
+        <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveAddExistingItinerariesDialog()">
+          <header class="metadata-dialog-header">
+            <h2>Add itineraries</h2>
+            <button type="button" class="icon-button" aria-label="Close add itineraries dialog" (click)="closeAddExistingItinerariesDialog()">✖</button>
+          </header>
+          <div class="route-construction-dialog">
+            <div class="dialog-search-row">
+              <input
+                type="search"
+                placeholder="Search title or description"
+                [(ngModel)]="addItinerarySearch"
+                name="addItinerarySearch"
+                (keyup.enter)="loadAddItineraryCandidates()"
+              />
+              <button type="button" class="secondary" (click)="loadAddItineraryCandidates()">Search</button>
+            </div>
+
+            <div class="dialog-list" aria-label="Available itineraries">
+              @if (addItineraryLoading) {
+                <p class="muted dialog-list-message">Loading itineraries...</p>
+              } @else {
+                @for (itinerary of addItineraryCandidates; track itinerary.id) {
+                  <label class="dialog-list-item">
+                    <input
+                      type="checkbox"
+                      [checked]="addItinerarySelectedIds.has(itinerary.id)"
+                      (change)="toggleAddItinerarySelection(itinerary.id, $any($event.target).checked)"
+                    />
+                    <span>
+                      <strong>{{ itinerary.title || 'Untitled itinerary' }}</strong>
+                      <span class="description-preview">{{ itinerary.description || 'No description' }}</span>
+                      <span class="point-preview">{{ firstPointName(itinerary) }} → {{ lastPointName(itinerary) }} · {{ estimatedDistance(itinerary) }}</span>
+                    </span>
+                  </label>
+                } @empty {
+                  <p class="muted dialog-list-message">No itineraries found.</p>
+                }
+              }
+            </div>
+
+            <ng-container *ngTemplateOutlet="insertControls; context: { draft: addItineraryInsert, prefix: 'add' }"></ng-container>
+          </div>
+          <footer class="metadata-dialog-footer">
+            <button type="button" class="secondary" (click)="closeAddExistingItinerariesDialog()">Cancel</button>
+            <button type="submit" class="primary" [disabled]="addItinerarySelectedIds.size === 0">Add selected</button>
+          </footer>
+        </form>
+      </dialog>
+
+      <dialog class="metadata-dialog wide" #importItinerariesDialog>
+        <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); saveImportItinerariesDialog()">
+          <header class="metadata-dialog-header">
+            <h2>Import from other routes</h2>
+            <button type="button" class="icon-button" aria-label="Close import itineraries dialog" (click)="closeImportItinerariesDialog()">✖</button>
+          </header>
+          <div class="route-construction-dialog">
+            <div class="route-import-grid">
+              <section class="route-import-lane" aria-label="Routes">
+                <h3>Routes</h3>
+                <div class="dialog-list compact">
+                  @for (source of importRouteSources; track source.id) {
+                    <button
+                      type="button"
+                      class="route-source-button"
+                      [class.active]="importSelectedSourceId === source.id"
+                      (click)="selectImportRouteSource(source.id)"
+                    >
+                      {{ source.title }}
+                    </button>
+                  } @empty {
+                    <p class="muted dialog-list-message">No routes found.</p>
+                  }
+                </div>
+              </section>
+
+              <section class="route-import-lane" aria-label="Itineraries in selected route">
+                <h3>Itineraries</h3>
+                <div class="dialog-list compact">
+                  @if (importItineraryLoading) {
+                    <p class="muted dialog-list-message">Loading itineraries...</p>
+                  } @else {
+                    @for (itinerary of importItineraries; track itinerary.id) {
+                      <label class="dialog-list-item">
+                        <input
+                          type="checkbox"
+                          [checked]="importItinerarySelectedIds.has(itinerary.id)"
+                          (change)="toggleImportItinerarySelection(itinerary.id, $any($event.target).checked)"
+                        />
+                        <span>
+                          <strong>{{ itinerary.title || 'Untitled itinerary' }}</strong>
+                          <span class="description-preview">{{ itinerary.description || 'No description' }}</span>
+                          <span class="point-preview">{{ firstPointName(itinerary) }} → {{ lastPointName(itinerary) }} · {{ estimatedDistance(itinerary) }}</span>
+                        </span>
+                      </label>
+                    } @empty {
+                      <p class="muted dialog-list-message">No itineraries found.</p>
+                    }
+                  }
+                </div>
+              </section>
+            </div>
+
+            <ng-container *ngTemplateOutlet="insertControls; context: { draft: importItineraryInsert, prefix: 'import' }"></ng-container>
+          </div>
+          <footer class="metadata-dialog-footer">
+            <button type="button" class="secondary" (click)="closeImportItinerariesDialog()">Cancel</button>
+            <button type="submit" class="primary" [disabled]="importItinerarySelectedIds.size === 0">Import selected</button>
+          </footer>
+        </form>
+      </dialog>
+
+      <ng-template #insertControls let-draft="draft" let-prefix="prefix">
+        <fieldset class="insert-controls">
+          <legend>Insert selected itineraries</legend>
+          <label>
+            <input type="radio" [name]="prefix + 'InsertMode'" value="beginning" [(ngModel)]="draft.mode" />
+            <span>At the beginning</span>
+          </label>
+          <label>
+            <input type="radio" [name]="prefix + 'InsertMode'" value="end" [(ngModel)]="draft.mode" />
+            <span>At the end</span>
+          </label>
+          <label>
+            <input type="radio" [name]="prefix + 'InsertMode'" value="before" [(ngModel)]="draft.mode" [disabled]="routeStageOrder().length === 0" />
+            <span>Before</span>
+            <select
+              [name]="prefix + 'BeforeAnchor'"
+              [(ngModel)]="draft.anchorItineraryId"
+              [disabled]="draft.mode !== 'before' || routeStageOrder().length === 0"
+            >
+              @for (itinerary of routeStageOrder(); track itinerary.id) {
+                <option [ngValue]="itinerary.id">{{ itinerary.title || 'Untitled itinerary' }}</option>
+              }
+            </select>
+          </label>
+          <label>
+            <input type="radio" [name]="prefix + 'InsertMode'" value="after" [(ngModel)]="draft.mode" [disabled]="routeStageOrder().length === 0" />
+            <span>After</span>
+            <select
+              [name]="prefix + 'AfterAnchor'"
+              [(ngModel)]="draft.anchorItineraryId"
+              [disabled]="draft.mode !== 'after' || routeStageOrder().length === 0"
+            >
+              @for (itinerary of routeStageOrder(); track itinerary.id) {
+                <option [ngValue]="itinerary.id">{{ itinerary.title || 'Untitled itinerary' }}</option>
+              }
+            </select>
+          </label>
+        </fieldset>
       </ng-template>
 
       <dialog class="metadata-dialog" #newItineraryDialog>
@@ -617,6 +784,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('duplicateDialog') private readonly duplicateDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('routeInclusionDialog') private readonly routeInclusionDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('translationDialog') private readonly translationDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('addExistingItinerariesDialog') private readonly addExistingItinerariesDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('importItinerariesDialog') private readonly importItinerariesDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
 
   private readonly api = inject(ApiService);
@@ -640,14 +809,27 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   duplicatedItinerary: Itinerary | null = null;
   highlightedItineraryId: number | null = null;
   pendingHighlightItineraryId: number | null = null;
+  pendingScrollItineraryId: number | null = null;
   currentItineraries: Itinerary[] = [];
   editingItinerary: Itinerary | null = null;
   translationDrafts: TranslationDraft[] = [];
   activeTranslationIndex = 0;
+  addItinerarySearch = '';
+  addItineraryCandidates: Itinerary[] = [];
+  readonly addItinerarySelectedIds = new Set<number>();
+  addItineraryLoading = false;
+  addItineraryInsert: RouteInsertDraft = { mode: 'end', anchorItineraryId: null };
+  importRouteSources: ImportRouteSource[] = [];
+  importSelectedSourceId: number | 'unassigned' | null = null;
+  importItineraries: Itinerary[] = [];
+  readonly importItinerarySelectedIds = new Set<number>();
+  importItineraryLoading = false;
+  importItineraryInsert: RouteInsertDraft = { mode: 'end', anchorItineraryId: null };
   readonly duplicatingIds = new Set<number>();
   readonly assigningIds = new Set<number>();
   readonly assignmentDrafts = new Map<number, AssignmentDraft>();
   readonly collapsedGroupKeys = new Set<string>();
+  readonly initializedCollapsedGroupKeys = new Set<string>();
   draggedItineraryId: number | null = null;
   reorderingStages = false;
   readonly selectedItineraryIds = new Set<number>();
@@ -713,6 +895,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
             }),
             map(state => {
               this.scheduleHighlight(highlightedItineraryId || this.pendingHighlightItineraryId, state.items);
+              this.scheduleScrollToItinerary(this.pendingScrollItineraryId, state.items);
               return state;
             })
           );
@@ -1000,6 +1183,107 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not create itinerary. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  openAddExistingItinerariesDialog(): void {
+    if (!this.currentRouteCanBeEdited()) return;
+    this.addItinerarySearch = '';
+    this.addItinerarySelectedIds.clear();
+    this.addItineraryInsert = this.defaultRouteInsertDraft();
+    this.addExistingItinerariesDialog?.nativeElement.showModal();
+    void this.loadAddItineraryCandidates();
+  }
+
+  closeAddExistingItinerariesDialog(): void {
+    this.addExistingItinerariesDialog?.nativeElement.close();
+  }
+
+  async loadAddItineraryCandidates(): Promise<void> {
+    if (!this.currentRouteCanBeEdited()) return;
+    this.addItineraryLoading = true;
+    try {
+      const existingIds = new Set(this.currentItineraries.map(itinerary => itinerary.id));
+      const itineraries = await firstValueFrom(this.api.listAllItineraries(this.addItinerarySearch, ''));
+      this.addItineraryCandidates = this.sortedItineraries(itineraries.filter(itinerary => !existingIds.has(itinerary.id)));
+      const candidateIds = new Set(this.addItineraryCandidates.map(itinerary => itinerary.id));
+      [...this.addItinerarySelectedIds].forEach(id => {
+        if (!candidateIds.has(id)) this.addItinerarySelectedIds.delete(id);
+      });
+    } catch (error) {
+      this.showStatus(`Could not load itineraries. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    } finally {
+      this.addItineraryLoading = false;
+    }
+  }
+
+  toggleAddItinerarySelection(itineraryId: number, selected: boolean): void {
+    if (selected) {
+      this.addItinerarySelectedIds.add(itineraryId);
+    } else {
+      this.addItinerarySelectedIds.delete(itineraryId);
+    }
+  }
+
+  async saveAddExistingItinerariesDialog(): Promise<void> {
+    const itineraryIds = [...this.addItinerarySelectedIds];
+    if (itineraryIds.length === 0) return;
+    if (await this.insertItinerariesIntoCurrentRoute(itineraryIds, this.addItineraryInsert)) {
+      this.closeAddExistingItinerariesDialog();
+    }
+  }
+
+  openImportItinerariesDialog(): void {
+    if (!this.currentRouteCanBeEdited()) return;
+    this.importRouteSources = [
+      { id: 'unassigned', title: 'Unassigned itineraries' },
+      ...this.availableRoutes
+        .filter(route => route.id !== this.currentRouteId)
+        .map(route => ({ id: route.id, title: route.title || `Route ${route.id}` }))
+    ];
+    this.importSelectedSourceId = this.importRouteSources[0]?.id || null;
+    this.importItinerarySelectedIds.clear();
+    this.importItineraryInsert = this.defaultRouteInsertDraft();
+    this.importItinerariesDialog?.nativeElement.showModal();
+    if (this.importSelectedSourceId !== null) {
+      void this.selectImportRouteSource(this.importSelectedSourceId);
+    }
+  }
+
+  closeImportItinerariesDialog(): void {
+    this.importItinerariesDialog?.nativeElement.close();
+  }
+
+  async selectImportRouteSource(sourceId: number | 'unassigned'): Promise<void> {
+    if (!this.currentRouteCanBeEdited()) return;
+    this.importSelectedSourceId = sourceId;
+    this.importItinerarySelectedIds.clear();
+    this.importItineraryLoading = true;
+    try {
+      const route = sourceId === 'unassigned' ? 'null' : sourceId;
+      const existingIds = new Set(this.currentItineraries.map(itinerary => itinerary.id));
+      const itineraries = await firstValueFrom(this.api.listAllItineraries('', '', route));
+      this.importItineraries = this.routeStageOrderFor(itineraries.filter(itinerary => !existingIds.has(itinerary.id)));
+    } catch (error) {
+      this.showStatus(`Could not load route itineraries. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    } finally {
+      this.importItineraryLoading = false;
+    }
+  }
+
+  toggleImportItinerarySelection(itineraryId: number, selected: boolean): void {
+    if (selected) {
+      this.importItinerarySelectedIds.add(itineraryId);
+    } else {
+      this.importItinerarySelectedIds.delete(itineraryId);
+    }
+  }
+
+  async saveImportItinerariesDialog(): Promise<void> {
+    const itineraryIds = [...this.importItinerarySelectedIds];
+    if (itineraryIds.length === 0) return;
+    if (await this.insertItinerariesIntoCurrentRoute(itineraryIds, this.importItineraryInsert)) {
+      this.closeImportItinerariesDialog();
     }
   }
 
@@ -1966,7 +2250,22 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   groupsFor(itineraries: Itinerary[]): ItineraryGroup[] {
-    return this.groupItineraries(itineraries);
+    const groups = this.groupItineraries(itineraries);
+    this.collapseNewGroupsByDefault(groups);
+    return groups;
+  }
+
+  private collapseNewGroupsByDefault(groups: ItineraryGroup[]): void {
+    groups.forEach(group => {
+      const key = this.groupKey(group);
+      if (this.initializedCollapsedGroupKeys.has(key)) return;
+      this.initializedCollapsedGroupKeys.add(key);
+      this.collapsedGroupKeys.add(key);
+    });
+  }
+
+  routeStageOrder(): Itinerary[] {
+    return this.routeStageOrderFor(this.currentItineraries);
   }
 
   private resolveRoute(routeSlug: string | null) {
@@ -1984,6 +2283,88 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
   private routeForId(routeId: number): Route | undefined {
     return this.availableRoutes.find(candidate => candidate.id === routeId);
+  }
+
+  private currentRouteCanBeEdited(): boolean {
+    if (!this.routeSlug || this.currentRouteId === null) {
+      this.showStatus('Choose a route before adding itineraries.', true);
+      return false;
+    }
+    if (!this.currentRouteIsDraft) {
+      this.showStatus('Only draft routes can be modified.', true);
+      return false;
+    }
+    return true;
+  }
+
+  private defaultRouteInsertDraft(): RouteInsertDraft {
+    return {
+      mode: 'end',
+      anchorItineraryId: this.routeStageOrder()[0]?.id || null
+    };
+  }
+
+  private async insertItinerariesIntoCurrentRoute(
+    itineraryIds: number[],
+    insertDraft: RouteInsertDraft
+  ): Promise<boolean> {
+    if (!this.currentRouteCanBeEdited() || this.currentRouteId === null) return false;
+
+    const currentIds = this.routeStageOrder().map(itinerary => itinerary.id);
+    const currentIdSet = new Set(currentIds);
+    const insertedIds = itineraryIds.filter((id, index) => itineraryIds.indexOf(id) === index && !currentIdSet.has(id));
+    if (insertedIds.length === 0) {
+      this.showStatus('The selected itineraries are already included in this route.', true);
+      return false;
+    }
+
+    try {
+      await firstValueFrom(this.api.addItinerariesToRoute(this.currentRouteId, insertedIds));
+      const nextOrder = this.insertIdsIntoRouteOrder(currentIds, insertedIds, insertDraft);
+      await firstValueFrom(this.api.reorderRouteItineraries(
+        this.currentRouteId,
+        nextOrder.map((id, index) => ({
+          id,
+          stage_number: index + 1
+        }))
+      ));
+      this.selectedItineraryIds.clear();
+      insertedIds.forEach(id => this.selectedItineraryIds.add(id));
+      this.selectedPreviewFitLocked = false;
+      this.previewItinerary = null;
+      this.pendingScrollItineraryId = insertedIds[0] || null;
+      this.clearStatus();
+      this.refresh$.next(this.refresh$.value + 1);
+      return true;
+    } catch (error) {
+      this.showStatus(`Could not add itineraries to route. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      return false;
+    }
+  }
+
+  private insertIdsIntoRouteOrder(currentIds: number[], insertedIds: number[], insertDraft: RouteInsertDraft): number[] {
+    const nextOrder = currentIds.filter(id => !insertedIds.includes(id));
+    let insertIndex = nextOrder.length;
+
+    if (insertDraft.mode === 'beginning') {
+      insertIndex = 0;
+    } else if (insertDraft.mode === 'before' || insertDraft.mode === 'after') {
+      const anchorIndex = nextOrder.indexOf(insertDraft.anchorItineraryId || -1);
+      if (anchorIndex >= 0) {
+        insertIndex = insertDraft.mode === 'before' ? anchorIndex : anchorIndex + 1;
+      }
+    }
+
+    nextOrder.splice(insertIndex, 0, ...insertedIds);
+    return nextOrder;
+  }
+
+  private routeStageOrderFor(itineraries: Itinerary[]): Itinerary[] {
+    return [...itineraries].sort((left, right) => {
+      const leftStage = left.stage_number ?? Number.MAX_SAFE_INTEGER;
+      const rightStage = right.stage_number ?? Number.MAX_SAFE_INTEGER;
+      return leftStage - rightStage || left.id - right.id;
+    });
   }
 
   private confirmItineraryDraftChange(itineraries: Itinerary[], enabled: boolean): boolean {
@@ -2018,6 +2399,18 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
         this.highlightedItineraryId = null;
       }
     }, 4500);
+  }
+
+  private scheduleScrollToItinerary(itineraryId: number | null, itineraries: Itinerary[]): void {
+    if (!itineraryId || !itineraries.some(candidate => candidate.id === itineraryId)) return;
+
+    this.pendingScrollItineraryId = null;
+    window.setTimeout(() => {
+      document.getElementById(`itinerary-row-${itineraryId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    }, 80);
   }
 
   private async nextStageNumberForRoute(routeId: number, excludeItineraryId: number | null = null): Promise<number> {

@@ -159,7 +159,7 @@ declare const L: any;
                       </th>
                       <th class="enabled-column">
                         <button type="button" class="sortable-header" (click)="togglePoiSort('draft')">
-                          <span>Draft</span>
+                          <span>Draft?</span>
                           <span aria-hidden="true">{{ poiSortIndicator('draft') }}</span>
                         </button>
                       </th>
@@ -214,7 +214,7 @@ declare const L: any;
                         </td>
                         <td>{{ countryName(poi.country_code) }}</td>
                         <td class="enabled-column">
-                          {{ poi.enabled ? 'Public' : 'Draft' }}
+                          {{ poi.enabled ? 'No' : 'Yes' }}
                         </td>
                       </tr>
                     } @empty {
