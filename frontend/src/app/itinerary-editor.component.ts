@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, ViewEncapsulation, inject } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, ViewChild, ViewEncapsulation, inject } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { EditorApiService } from './editor-api.service';
 import { ItineraryEditorDialogsComponent } from './itinerary-editor-dialogs.component';
@@ -12,6 +12,11 @@ declare global {
       root: HTMLElement;
       itineraryId: string | null;
       api: ItineraryEditorApi;
+      initialSegmentIndex?: number | null;
+      editorSessionToken?: string;
+      createPoiAt?: (lat: number, lng: number, segmentIndex: number | null, pointId?: string | null, label?: string) => void;
+      editPoi?: (poiId: string, segmentIndex: number | null) => void;
+      saveStatusChanged?: (status: { message: string; type: 'info' | 'success' | 'error' } | null) => void;
     }) => ItineraryEditorRuntime;
   }
 }
@@ -36,10 +41,14 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly editorApi = inject(EditorApiService);
+  private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly requestedBackLink = this.route.snapshot.queryParamMap.get('returnTo');
   readonly backLink = this.router.parseUrl(this.requestedBackLink?.startsWith('/') ? this.requestedBackLink : '/itineraries');
   readonly backLabel = this.route.snapshot.queryParamMap.get('returnLabel') || 'Back to itineraries';
+  private readonly editorSessionToken = globalThis.crypto?.randomUUID?.() || `editor-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   private editor: ItineraryEditorRuntime | null = null;
+  private saveFeedbackTimer: number | null = null;
+  saveFeedback: { message: string; type: 'info' | 'success' | 'error' } | null = null;
 
   ngAfterViewInit(): void {
     if (!window.initInteractiveItineraryEditor) {
@@ -58,6 +67,25 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
         saveItinerary: (itineraryId, payload) => this.editorApi.saveItinerary(itineraryId, payload),
         getWalkingRoutes: (coordinates, queryString) => this.editorApi.getWalkingRoutes(coordinates, queryString),
         findBufferPois: (buffer, segmentIndex, limit) => this.editorApi.findBufferPois(buffer, segmentIndex, limit)
+      },
+      initialSegmentIndex: this.requestedSegmentIndex(),
+      editorSessionToken: this.editorSessionToken,
+      createPoiAt: (lat, lng, segmentIndex, pointId, label) => this.openPoiEditorAt(lat, lng, segmentIndex, pointId, label),
+      editPoi: (poiId, segmentIndex) => this.openPoiEditorForExistingPoi(poiId, segmentIndex),
+      saveStatusChanged: status => {
+        this.saveFeedback = status;
+        if (this.saveFeedbackTimer !== null) {
+          window.clearTimeout(this.saveFeedbackTimer);
+          this.saveFeedbackTimer = null;
+        }
+        if (status && status.type !== 'info') {
+          this.saveFeedbackTimer = window.setTimeout(() => {
+            this.saveFeedback = null;
+            this.saveFeedbackTimer = null;
+            this.changeDetector.detectChanges();
+          }, status.type === 'success' ? 2500 : 6000);
+        }
+        this.changeDetector.detectChanges();
       }
     });
 
@@ -67,20 +95,64 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.saveFeedbackTimer !== null) {
+      window.clearTimeout(this.saveFeedbackTimer);
+      this.saveFeedbackTimer = null;
+    }
     this.editor?.destroy();
     this.editor = null;
+  }
+
+  private requestedSegmentIndex(): number | null {
+    const rawValue = this.route.snapshot.queryParamMap.get('segment');
+    if (rawValue === null) return null;
+    const segmentIndex = Number.parseInt(rawValue, 10);
+    return Number.isInteger(segmentIndex) && segmentIndex >= 0 ? segmentIndex : null;
+  }
+
+  private openPoiEditorAt(lat: number, lng: number, segmentIndex: number | null, pointId: string | null = null, label = ''): void {
+    const returnTo = this.router.serializeUrl(this.router.createUrlTree([], {
+      relativeTo: this.route,
+      queryParams: segmentIndex === null ? {} : { segment: segmentIndex },
+      queryParamsHandling: 'merge'
+    }));
+    const poiEditorUrl = this.router.serializeUrl(this.router.createUrlTree(['/pois/new'], {
+      queryParams: {
+        latitude: lat.toFixed(7),
+        longitude: lng.toFixed(7),
+        returnTo,
+        returnLabel: 'Back to itinerary editor',
+        title: label || null,
+        itineraryEditorToken: this.editorSessionToken,
+        convertPointId: pointId || null
+      }
+    }));
+    void this.router.navigateByUrl(poiEditorUrl);
+  }
+
+  private openPoiEditorForExistingPoi(poiId: string, segmentIndex: number | null): void {
+    const returnTo = this.router.serializeUrl(this.router.createUrlTree([], {
+      relativeTo: this.route,
+      queryParams: segmentIndex === null ? {} : { segment: segmentIndex },
+      queryParamsHandling: 'merge'
+    }));
+    const poiEditorUrl = this.router.serializeUrl(this.router.createUrlTree(['/pois', poiId, 'edit'], {
+      queryParams: {
+        returnTo,
+        returnLabel: 'Back to itinerary editor'
+      }
+    }));
+    void this.router.navigateByUrl(poiEditorUrl);
   }
 
   clearAll(): void { this.editor?.clearAll(); }
   fitRoute(): void { this.editor?.fitRoute(); }
   showRouteSummary(): void { this.editor?.showRouteSummary(); }
   saveItinerary(): void { this.editor?.saveItinerary(); }
-  saveItineraryToServer(): void { this.editor?.saveItineraryToServer(); }
   revertItinerary(): void { this.editor?.revertItinerary(); }
   undoItinerary(): void { this.editor?.undoItinerary(); }
   redoItinerary(): void { this.editor?.redoItinerary(); }
   closeRouteDialog(): void { this.editor?.closeRouteDialog(); }
-  closeItineraryJsonDialog(): void { this.editor?.closeItineraryJsonDialog(); }
   closePoiDetailDialog(): void { this.editor?.closePoiDetailDialog(); }
   addPoiFromDetail(): void { this.editor?.addPoiFromDetail(); }
   activateTab(tabName: SearchType): void { this.editor?.activateTab(tabName); }

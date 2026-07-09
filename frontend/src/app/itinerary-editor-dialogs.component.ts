@@ -8,8 +8,6 @@ import { Component, EventEmitter, Output } from '@angular/core';
 })
 export class ItineraryEditorDialogsComponent {
   @Output() readonly closeRouteDialog = new EventEmitter<void>();
-  @Output() readonly closeItineraryJsonDialog = new EventEmitter<void>();
-  @Output() readonly saveItineraryToServer = new EventEmitter<void>();
   @Output() readonly closePoiDetailDialog = new EventEmitter<void>();
   @Output() readonly poiDetailBodyClick = new EventEmitter<MouseEvent>();
   @Output() readonly addPoiFromDetail = new EventEmitter<void>();

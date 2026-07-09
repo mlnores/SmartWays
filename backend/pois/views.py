@@ -192,7 +192,7 @@ def buffer_poi_lookup(request):
         return cors_json_response({"detail": str(error)}, status=400)
 
     queryset = (
-        POI.objects.filter(enabled=True, location__within=buffer_geometry)
+        POI.objects.filter(location__within=buffer_geometry)
         .prefetch_related("translations", "media", "categories", "categories__translations")
         .order_by("id")[:limit]
     )
@@ -213,6 +213,7 @@ def poi_for_buffer_response(poi, language_code):
 
     return {
         "id": str(poi.pk),
+        "enabled": poi.enabled,
         "label": translation.title if translation else f"POI {poi.pk}",
         "snippet": translation.description if translation else "",
         "imageUrl": image.url if image else "",

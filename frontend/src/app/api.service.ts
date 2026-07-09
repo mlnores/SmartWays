@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import { EMPTY, Observable, expand, map, reduce, shareReplay } from 'rxjs';
 
 const API_BASE_URL = 'http://127.0.0.1:8000/api';
+const PHOTON_BASE_URL = 'https://photon.komoot.io';
 
 export interface ApiPage<T> {
   count: number;
@@ -337,6 +338,13 @@ export class ApiService {
       .set('lat', String(latitude))
       .set('lng', String(longitude));
     return this.http.get<{ country: string }>(`${API_BASE_URL}/pois/country-at/`, { params });
+  }
+
+  reverseGeocode(latitude: number, longitude: number): Observable<{ features?: unknown[] }> {
+    const params = new HttpParams()
+      .set('lat', latitude.toFixed(6))
+      .set('lon', longitude.toFixed(6));
+    return this.http.get<{ features?: unknown[] }>(`${PHOTON_BASE_URL}/reverse`, { params });
   }
 
   listCategories(query = '', language = ''): Observable<ApiPage<Category>> {

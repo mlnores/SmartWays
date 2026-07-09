@@ -72,7 +72,7 @@ declare const L: any;
         } @else {
           <div class="list-actions">
             <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
-            <a class="primary" title="New POI" aria-label="New POI" routerLink="/pois/new">New POI</a>
+            <a class="primary" title="New POI" aria-label="New POI" routerLink="/pois/new" [queryParams]="poiEditorReturnQueryParams()">New POI</a>
           </div>
         }
       </header>
@@ -82,13 +82,13 @@ declare const L: any;
           type="search"
           placeholder="Search title or category"
           [ngModel]="query"
-          (ngModelChange)="query = $event; query$.next($event)"
+          (ngModelChange)="updateQueryFilter($event)"
         />
         <select
           class="toolbar-select"
           aria-label="Filter by category"
           [(ngModel)]="selectedCategory"
-          (ngModelChange)="refresh$.next(refresh$.value + 1)"
+          (ngModelChange)="updateCategoryFilter($event)"
         >
           <option value="">All categories</option>
           @for (category of availableCategories; track category.id) {
@@ -99,7 +99,7 @@ declare const L: any;
           class="toolbar-select"
           aria-label="Filter by country"
           [(ngModel)]="selectedCountry"
-          (ngModelChange)="refresh$.next(refresh$.value + 1)"
+          (ngModelChange)="updateCountryFilter($event)"
         >
           <option value="">All countries</option>
           @for (countryCode of availableCountries; track countryCode) {
@@ -251,7 +251,7 @@ declare const L: any;
                   </button>
                 } @else if (previewPoi) {
                   @if (!previewPoi.enabled) {
-                    <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']">
+                    <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']" [queryParams]="poiEditorReturnQueryParams(previewPoi)">
                       <span class="preview-action-icon" aria-hidden="true">🗺️</span>
                       <span>Open in editor</span>
                     </a>
@@ -482,6 +482,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private poiRowClickTimer: number | null = null;
   private selectedPreviewFitLocked = false;
 
+  constructor() {
+    this.restoreFiltersFromQueryParams();
+  }
+
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
     this.refresh$,
@@ -705,6 +709,24 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     });
   }
 
+  updateQueryFilter(value: string): void {
+    this.query = value;
+    this.query$.next(value);
+    this.syncFiltersToUrl();
+  }
+
+  updateCategoryFilter(value: string): void {
+    this.selectedCategory = value;
+    this.refresh$.next(this.refresh$.value + 1);
+    this.syncFiltersToUrl();
+  }
+
+  updateCountryFilter(value: string): void {
+    this.selectedCountry = value;
+    this.refresh$.next(this.refresh$.value + 1);
+    this.syncFiltersToUrl();
+  }
+
   filterToPreviewArea(): void {
     if (!this.previewMap) return;
     const bounds = this.previewMap.getBounds();
@@ -719,6 +741,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.previewPoi = null;
     this.mapFilter$.next(this.mapFilter$.value + 1);
     this.drawMapBoundsFilter();
+    this.syncFiltersToUrl();
   }
 
   clearMapAreaFilter(): void {
@@ -728,6 +751,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.selectedPreviewFitLocked = false;
     this.previewPoi = null;
     this.mapFilter$.next(this.mapFilter$.value + 1);
+    this.syncFiltersToUrl();
   }
 
   async loadMorePois(): Promise<void> {
@@ -1453,6 +1477,50 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     );
   }
 
+  poiEditorReturnQueryParams(poi: Poi | null = null): Record<string, string> {
+    return {
+      returnTo: this.poiListReturnUrl(poi?.id ?? null),
+      returnLabel: this.itineraryId ? 'Back to itinerary POIs' : 'Back to POIs'
+    };
+  }
+
+  private restoreFiltersFromQueryParams(): void {
+    const params = this.activatedRoute.snapshot.queryParamMap;
+    this.query = params.get('q') || '';
+    this.query$.next(this.query);
+    this.selectedCategory = params.get('category') || '';
+    this.selectedCountry = (params.get('country') || '').toUpperCase();
+    this.mapBoundsFilter = this.parseBboxParam(params.get('bbox'));
+    this.pendingHighlightPoiId = this.parsePositiveInteger(params.get('highlight'));
+  }
+
+  private syncFiltersToUrl(): void {
+    void this.router.navigate([], {
+      relativeTo: this.activatedRoute,
+      queryParams: this.poiListQueryParams(),
+      replaceUrl: true
+    });
+  }
+
+  private poiListReturnUrl(highlightPoiId: number | null = null): string {
+    return this.router.serializeUrl(this.router.createUrlTree([], {
+      relativeTo: this.activatedRoute,
+      queryParams: {
+        ...this.poiListQueryParams(),
+        highlight: highlightPoiId === null ? null : String(highlightPoiId)
+      }
+    }));
+  }
+
+  private poiListQueryParams(): Record<string, string | null> {
+    return {
+      q: this.query.trim() || null,
+      category: this.selectedCategory || null,
+      country: this.selectedCountry || null,
+      bbox: this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : null
+    };
+  }
+
   private selectedPois(): Poi[] {
     return this.currentPois.filter(poi => this.selectedPoiIds.has(poi.id));
   }
@@ -1476,6 +1544,20 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
 
   private bboxParam(bounds: MapBoundsFilter): string {
     return [bounds.west, bounds.south, bounds.east, bounds.north].join(',');
+  }
+
+  private parseBboxParam(value: string | null): MapBoundsFilter | null {
+    if (!value) return null;
+    const parts = value.split(',').map(part => Number(part));
+    if (parts.length !== 4 || parts.some(part => !Number.isFinite(part))) return null;
+    const [west, south, east, north] = parts;
+    return { south, west, north, east };
+  }
+
+  private parsePositiveInteger(value: string | null): number | null {
+    if (!value) return null;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
   }
 
   private showStatus(message: string, isError: boolean): void {

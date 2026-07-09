@@ -39,12 +39,16 @@
     (poiBrowserListFocusin)="handlePoiBrowserListFocusin($event)"
     (poiBrowserListFocusout)="handlePoiBrowserListFocusout($event)"
   ></app-itinerary-editor-map>
+
+  @if (saveFeedback) {
+    <div class="save-toast" [class.error]="saveFeedback.type === 'error'" [class.success]="saveFeedback.type === 'success'" role="status" aria-live="polite">
+      {{ saveFeedback.message }}
+    </div>
+  }
 </main>
 
 <app-itinerary-editor-dialogs
   (closeRouteDialog)="closeRouteDialog()"
-  (closeItineraryJsonDialog)="closeItineraryJsonDialog()"
-  (saveItineraryToServer)="saveItineraryToServer()"
   (closePoiDetailDialog)="closePoiDetailDialog()"
   (poiDetailBodyClick)="handlePoiDetailBodyClick($event)"
   (addPoiFromDetail)="addPoiFromDetail()"

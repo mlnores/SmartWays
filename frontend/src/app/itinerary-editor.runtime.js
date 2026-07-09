@@ -4,8 +4,18 @@
     if (!window.L) {
       throw new Error('Leaflet did not load.');
     }
-    const editorRoot = options.root || document;
+        const editorRoot = options.root || document;
         const editorApi = options.api || {};
+        const createPoiAt = typeof options.createPoiAt === "function" ? options.createPoiAt : null;
+        const editPoi = typeof options.editPoi === "function" ? options.editPoi : null;
+        const dirtyStateChanged = typeof options.dirtyStateChanged === "function" ? options.dirtyStateChanged : null;
+        const saveStatusChanged = typeof options.saveStatusChanged === "function" ? options.saveStatusChanged : null;
+        const editorSessionToken = options.editorSessionToken || `editor-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const poiSaveChannelName = "smartways-poi-editor-saved";
+        const poiSaveChannel = "BroadcastChannel" in window ? new BroadcastChannel(poiSaveChannelName) : null;
+        const initialSegmentIndex = Number.isInteger(options.initialSegmentIndex) && options.initialSegmentIndex >= 0
+          ? options.initialSegmentIndex
+          : null;
         const getElementById = id => editorRoot.querySelector('#' + id) || document.getElementById(id);
         const mapElement = getElementById("mapCanvas");
         const map = L.map(mapElement, {
@@ -38,6 +48,7 @@
         let selectedPoiCategory = "";
         let pendingBufferWaypoint = null;
         let pendingBufferWaypointPopup = null;
+        let suppressMapClickUntil = 0;
         let lastPoiSearchBbox = null;
         let nextMockPoiId = 1;
         const temporaryPoiLayer = window.L.markerClusterGroup
@@ -75,14 +86,6 @@
         const togglePoiBrowser = getElementById("togglePoiBrowser");
         const routeDialog = getElementById("routeDialog");
         const routeDialogBody = getElementById("routeDialogBody");
-        const itineraryJsonDialog = getElementById("itineraryJsonDialog");
-        const itineraryJsonPreview = getElementById("itineraryJsonPreview");
-        const itineraryLanguage = getElementById("itineraryLanguage");
-        const itineraryTitle = getElementById("itineraryTitle");
-        const itineraryDescription = getElementById("itineraryDescription");
-        const itinerarySaveStatus = getElementById("itinerarySaveStatus");
-        const saveItineraryToServer = getElementById("saveItineraryToServer");
-        const downloadItineraryJson = getElementById("downloadItineraryJson");
         const poiDetailDialog = getElementById("poiDetailDialog");
         const poiDetailTitle = getElementById("poiDetailTitle");
         const poiDetailBody = getElementById("poiDetailBody");
@@ -96,12 +99,13 @@
         let savedItineraryState = null;
         let savedItineraryExport = null;
         let editingItineraryId = null;
-        let itineraryJsonUrl = null;
+        let itineraryMetadata = { enabled: false, language: "en", title: "", description: "" };
         let nextPoiId = 1;
         let nextPointId = 1;
         let undoStack = [];
         let redoStack = [];
         let editingLabelIndex = null;
+        let lastDirtyState = null;
         const MAX_HISTORY_STATES = 100;
         function labelForIndex(index) {
           return String(index + 1);
@@ -148,11 +152,14 @@
           points.forEach(normalizePoint);
         }
     
-        function makePoint(lat, lng, label = "", labelSource = label ? "manual" : "default", type = "waypoint", poiId = null) {
+        function makePoint(lat, lng, label = "", labelSource = label ? "manual" : "default", type = "waypoint", poiId = null, poiEnabled = null) {
           const point = { id: createPointId(), lat, lng, label, labelSource, movedSinceLabel: false, type };
     
           if (type === "poi") {
             point.poiId = poiId || createPoiId();
+            if (poiEnabled !== null) {
+              point.poiEnabled = Boolean(poiEnabled);
+            }
           }
     
           return point;
@@ -383,10 +390,11 @@
           pois.forEach(poi => {
             const title = poi.title || `POI ${poi.id}`;
             const detail = poiSearchDetail(poi);
+            const draftClass = poi.enabled === false ? " draft-poi" : "";
             const item = document.createElement("li");
     
             item.innerHTML = `
-              <button type="button" data-action="select-poi-search-result" data-poi-id="${escapeHtml(String(poi.id))}" data-label="${escapeHtml(title)}" data-lat="${poi.gps_latitude}" data-lng="${poi.gps_longitude}">
+              <button type="button" class="${draftClass}" data-action="select-poi-search-result" data-poi-id="${escapeHtml(String(poi.id))}" data-poi-enabled="${poi.enabled === false ? "false" : "true"}" data-label="${escapeHtml(title)}" data-lat="${poi.gps_latitude}" data-lng="${poi.gps_longitude}">
                 <span class="search-result-name">${escapeHtml(title)}</span>
                 ${detail ? `<span class="search-result-detail">${escapeHtml(detail)}</span>` : ""}
               </button>
@@ -455,7 +463,6 @@
           try {
             const data = await editorApi.searchPois({
               query,
-              enabled: true,
               language: "en",
               bbox: searchBbox
             });
@@ -568,7 +575,7 @@
         function setSegmentBufferDistance(segmentIndex, value) {
           const distanceMeters = Number.parseFloat(value);
           if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) {
-            setRouteStatus("Enter a segment buffer width greater than 0 meters.", "error");
+            setRouteStatus("Enter a path buffer width greater than 0 meters.", "error");
             return false;
           }
     
@@ -577,6 +584,7 @@
             rememberItineraryState();
           }
           segmentBufferDistances[segmentIndex] = distanceMeters;
+          notifyDirtyState();
           return true;
         }
     
@@ -726,11 +734,11 @@
     
           const distance = segmentBufferDistance(segmentIndex);
           segmentBufferLayer.bindPopup(
-            `<strong>Segment buffer</strong><br>` +
-            `${formatDistance(distance)} around segment ${segmentIndex + 1} → ${segmentIndex + 2}`
+            `<strong>Path buffer</strong><br>` +
+            `${formatDistance(distance)} around path ${segmentIndex + 1} → ${segmentIndex + 2}`
           );
           setRouteStatus(
-            `<strong>Segment buffer</strong>${formatDistance(distance)} around segment ${segmentIndex + 1} → ${segmentIndex + 2}.`
+            `<strong>Path buffer</strong>${formatDistance(distance)} around path ${segmentIndex + 1} → ${segmentIndex + 2}.`
           );
     
           if (activeSegmentIndex === segmentIndex) {
@@ -764,7 +772,7 @@
           }).addTo(map);
     
           segmentWalkingRouteLayer.bindPopup(
-            `<strong>Walking route ${segmentIndex + 1} → ${segmentIndex + 2}</strong><br>` +
+            `<strong>Walking path ${segmentIndex + 1} → ${segmentIndex + 2}</strong><br>` +
             `${formatDistance(route.distance)} · ${formatDuration(walkingDurationSeconds(route))} estimated`
           );
     
@@ -779,7 +787,7 @@
           if (!start || !end) return;
     
           normalizeSegmentWalkingRoutes();
-          setRouteStatus(`Calculating walking routes for segment ${segmentIndex + 1} → ${segmentIndex + 2}...`);
+          setRouteStatus(`Calculating walking paths for path ${segmentIndex + 1} → ${segmentIndex + 2}...`);
     
           const coordinates = [
             `${start.lng.toFixed(6)},${start.lat.toFixed(6)}`,
@@ -795,7 +803,7 @@
           try {
             const data = await editorApi.getWalkingRoutes(coordinates, params.toString());
             if (data.code !== "Ok" || !Array.isArray(data.routes) || data.routes.length === 0) {
-              throw new Error(data.message || "No walking route found for this segment.");
+              throw new Error(data.message || "No walking path found for this path.");
             }
     
             rememberItineraryState();
@@ -809,11 +817,11 @@
     
             const route = data.routes[0];
             setRouteStatus(
-              `<strong>Walking route</strong>` +
-              `Segment ${segmentIndex + 1} → ${segmentIndex + 2}: ${formatDistance(route.distance)} · ${formatDuration(walkingDurationSeconds(route))} estimated.`
+              `<strong>Walking path</strong>` +
+              `Path ${segmentIndex + 1} → ${segmentIndex + 2}: ${formatDistance(route.distance)} · ${formatDuration(walkingDurationSeconds(route))} estimated.`
             );
           } catch (error) {
-            setRouteStatus(`Could not calculate walking routes. ${escapeHtml(error.message)}`, "error");
+            setRouteStatus(`Could not calculate walking paths. ${escapeHtml(error.message)}`, "error");
           }
         }
     
@@ -888,7 +896,8 @@
                   coordinates: {
                     lat: point.lat,
                     lng: point.lng
-                  }
+                  },
+                  enabled: point.poiEnabled
                 };
               }
     
@@ -909,71 +918,84 @@
             }))
           };
         }
-    
-        function saveItinerary() {
-          savedItineraryState = currentItineraryState();
-          savedItineraryExport = itineraryExportFromState(savedItineraryState);
-          const exportJson = JSON.stringify(savedItineraryExport, null, 2);
-    
-          itineraryJsonPreview.textContent = exportJson;
-          itinerarySaveStatus.textContent = "";
-          itinerarySaveStatus.className = "save-status";
-          if (itineraryJsonUrl) {
-            URL.revokeObjectURL(itineraryJsonUrl);
+
+        function itineraryDirtySnapshot() {
+          const exportData = itineraryExportFromState(currentItineraryState());
+          return JSON.stringify({
+            points: exportData.points,
+            segments: exportData.segments
+          });
+        }
+
+        function notifyDirtyState(force = false) {
+          const isDirty = savedItineraryState ? itineraryDirtySnapshot() !== JSON.stringify({
+            points: savedItineraryExport?.points || [],
+            segments: savedItineraryExport?.segments || []
+          }) : points.length > 0;
+          if (force || isDirty !== lastDirtyState) {
+            lastDirtyState = isDirty;
+            dirtyStateChanged?.(isDirty);
           }
-          itineraryJsonUrl = URL.createObjectURL(new Blob([exportJson], { type: "application/json" }));
-          downloadItineraryJson.href = itineraryJsonUrl;
-          itineraryJsonDialog.showModal();
+        }
+
+        function setSaveStatus(message, type = "info") {
+          saveStatusChanged?.({ message, type });
         }
     
-        async function saveItineraryRecordToServer() {
-          if (!savedItineraryExport) {
-            saveItinerary();
+        async function saveItinerary() {
+          const stateToSave = currentItineraryState();
+          const exportToSave = itineraryExportFromState(stateToSave);
+
+          if (!editingItineraryId) {
+            setSaveStatus("Create the itinerary first.", "error");
+            setRouteStatus("Create the itinerary before saving its path.", "error");
             return;
           }
-    
-          const languageCode = itineraryLanguage.value.trim() || "en";
-          const title = itineraryTitle.value.trim();
-          const description = itineraryDescription.value.trim();
-    
-          itinerarySaveStatus.className = "save-status";
-          if (!title) {
-            itinerarySaveStatus.textContent = "Enter a title before saving to the server.";
-            itinerarySaveStatus.classList.add("error");
-            itineraryTitle.focus();
+
+          if (!itineraryMetadata.title) {
+            setSaveStatus("Add metadata before saving.", "error");
+            setRouteStatus("Add itinerary metadata before saving its path.", "error");
             return;
           }
-    
-          saveItineraryToServer.disabled = true;
-          itinerarySaveStatus.textContent = "Saving itinerary...";
-    
+
+          setSaveStatus("Saving...", "info");
+          setRouteStatus("Saving itinerary...");
+
           try {
             const data = await editorApi.saveItinerary(editingItineraryId, {
-              enabled: true,
-              itinerary_json: savedItineraryExport,
+              enabled: itineraryMetadata.enabled,
+              itinerary_json: exportToSave,
               translations: [
                 {
-                  language_code: languageCode,
-                  title,
-                  description
+                  language_code: itineraryMetadata.language || "en",
+                  title: itineraryMetadata.title,
+                  description: itineraryMetadata.description || ""
                 }
               ]
             });
-    
+
             editingItineraryId = String(data.id);
-            itinerarySaveStatus.textContent = `Saved itinerary #${data.id}.`;
-            itinerarySaveStatus.classList.add("success");
+            itineraryMetadata = {
+              enabled: Boolean(data.enabled),
+              language: itineraryMetadata.language || "en",
+              title: data.title || itineraryMetadata.title,
+              description: data.description || itineraryMetadata.description || ""
+            };
+            savedItineraryState = stateToSave;
+            savedItineraryExport = exportToSave;
+            notifyDirtyState(true);
+            setSaveStatus("Saved.", "success");
+            setRouteStatus(`Saved itinerary #${data.id}.`);
           } catch (error) {
-            itinerarySaveStatus.textContent = `Could not save itinerary. ${error.message}`;
-            itinerarySaveStatus.classList.add("error");
-          } finally {
-            saveItineraryToServer.disabled = false;
+            setSaveStatus(`Save failed: ${error.message || "Request failed."}`, "error");
+            setRouteStatus(`Could not save itinerary. ${escapeHtml(error.message || "Request failed.")}`, "error");
           }
         }
-    
+
         function updateHistoryButtons() {
           getElementById("undoItinerary").disabled = undoStack.length === 0;
           getElementById("redoItinerary").disabled = redoStack.length === 0;
+          notifyDirtyState();
         }
     
         function rememberItineraryState() {
@@ -1021,7 +1043,8 @@
             poi.title || `POI ${poi.id}`,
             "manual",
             "poi",
-            String(poi.id)
+            String(poi.id),
+            poi.enabled
           );
         }
     
@@ -1035,7 +1058,8 @@
                 point.label || `POI ${point.id}`,
                 point.label ? "manual" : "default",
                 "poi",
-                point.id || null
+                point.id || null,
+                typeof point.enabled === "boolean" ? point.enabled : null
               );
             }
             return poiPointFromId(point.id);
@@ -1055,7 +1079,7 @@
           );
         }
     
-        async function loadItineraryForEditing(itineraryId) {
+        async function loadItineraryForEditing(itineraryId, segmentToActivate = null) {
           try {
             editingItineraryId = String(itineraryId);
             const itinerary = await editorApi.getItinerary(String(itineraryId), "en");
@@ -1086,15 +1110,21 @@
             redoStack = [];
             savedItineraryState = currentItineraryState();
             savedItineraryExport = itineraryJson;
-            itineraryTitle.value = itinerary.title || "";
-            itineraryDescription.value = itinerary.description || "";
-            itineraryLanguage.value = "en";
+            itineraryMetadata = {
+              enabled: Boolean(itinerary.enabled),
+              language: "en",
+              title: itinerary.title || "",
+              description: itinerary.description || ""
+            };
             clearTemporaryPois();
             clearSegmentBuffer();
             clearSegmentWalkingRouteLayer();
             render();
             updateHistoryButtons();
-            if (points.length > 0) {
+            notifyDirtyState(true);
+            if (segmentToActivate !== null && segmentToActivate >= 0 && segmentToActivate < points.length - 1) {
+              activateSegment(segmentToActivate, true, true);
+            } else if (points.length > 0) {
               fitRoute();
             }
           } catch (error) {
@@ -1215,7 +1245,7 @@
           normalizeSegmentWalkingRoutes();
     
           if (segmentCount === 0) {
-            routeDialogBody.innerHTML = "<p>Add at least two points to show a route summary.</p>";
+            routeDialogBody.innerHTML = "<p>Add at least two points to show an itinerary summary.</p>";
             routeDialog.showModal();
             return;
           }
@@ -1233,18 +1263,18 @@
               totalDistance += route.distance;
               totalDuration += walkingDurationSeconds(route);
               loadedRouteCount += 1;
-              segmentText = `Route ${state.selectedIndex + 1} of ${state.count}: ${formatDistance(route.distance)} · ${formatDuration(walkingDurationSeconds(route))} estimated`;
+              segmentText = `Path ${state.selectedIndex + 1} of ${state.count}: ${formatDistance(route.distance)} · ${formatDuration(walkingDurationSeconds(route))} estimated`;
             } else {
               const straightLineDistance = straightLineSegmentDistance(index);
               const straightLineDuration = walkingDurationForDistance(straightLineDistance);
               totalDistance += straightLineDistance;
               totalDuration += straightLineDuration;
-              segmentText = `<span class="route-summary-straight-estimate">⚠ Walking route not loaded. Straight-line estimate: ${formatDistance(straightLineDistance)} · ${formatDuration(straightLineDuration)}</span>`;
+              segmentText = `<span class="route-summary-straight-estimate">⚠ Walking path not loaded. Straight-line estimate: ${formatDistance(straightLineDistance)} · ${formatDuration(straightLineDuration)}</span>`;
             }
     
             return `
               <div class="route-summary-segment">
-                <strong>Segment ${index + 1} → ${index + 2}</strong>
+                <strong>Path ${index + 1} → ${index + 2}</strong>
                 ${segmentText}
               </div>
             `;
@@ -1253,11 +1283,11 @@
           routeDialogBody.innerHTML = `
             <div class="route-summary-grid">
               <div class="route-summary-stat">
-                <strong>Segments</strong>
-                ${segmentCount}
+                <strong>Points</strong>
+                ${points.length}
               </div>
               <div class="route-summary-stat">
-                <strong>Loaded Routes</strong>
+                <strong>Loaded Paths</strong>
                 ${loadedRouteCount} of ${segmentCount}
               </div>
               <div class="route-summary-stat">
@@ -1265,7 +1295,7 @@
                 ${formatDistance(totalDistance)} · ${formatDuration(totalDuration)}
               </div>
             </div>
-            <div class="route-summary-map" id="routeSummaryMap" aria-label="Map of selected walking routes"></div>
+            <div class="route-summary-map" id="routeSummaryMap" aria-label="Map of selected walking paths"></div>
             ${segmentRows}
           `;
           routeDialog.showModal();
@@ -1327,7 +1357,7 @@
           clearSegmentWalkingRouteLayer();
           clearTemporaryPois();
           renderList();
-          setRouteStatus("Expand a segment panel to work with its buffer zone.");
+          setRouteStatus("Expand a path panel to work with its buffer zone.");
         }
     
         function moveActiveSegment(direction) {
@@ -1365,6 +1395,12 @@
         }
     
         function addPoiToItinerary(poi, segmentIndex) {
+          if (poiAlreadyInItinerary(poi.id)) {
+            setRouteStatus("This POI is already included in the itinerary.");
+            map.closePopup();
+            return;
+          }
+
           let insertedIndex = -1;
           if (Number.isInteger(segmentIndex)) {
             insertedIndex = insertPoint(
@@ -1374,7 +1410,8 @@
               poi.label || "",
               poi.label ? "manual" : "default",
               "poi",
-              poi.id || null
+              poi.id || null,
+              poi.enabled
             );
           } else {
             insertedIndex = addPoint(
@@ -1383,7 +1420,8 @@
               poi.label || "",
               poi.label ? "manual" : "default",
               "poi",
-              poi.id || null
+              poi.id || null,
+              poi.enabled
             );
           }
     
@@ -1393,6 +1431,54 @@
             activateTab("poi");
             selectPointSegment(insertedIndex);
           }
+        }
+
+        function poiAlreadyInItinerary(poiId) {
+          if (!poiId) return false;
+          const normalizedPoiId = String(poiId);
+          return points.some(point => pointType(point) === "poi" && String(point.poiId || "") === normalizedPoiId);
+        }
+
+        function segmentIndexForPointIndex(pointIndex) {
+          if (points.length < 2) return null;
+          return Math.max(0, Math.min(pointIndex, points.length - 2));
+        }
+
+        function editPoiFromPointIndex(pointIndex) {
+          const point = points[pointIndex];
+          if (!point || pointType(point) !== "poi" || !point.poiId || !editPoi) return;
+          editPoi(String(point.poiId), segmentIndexForPointIndex(pointIndex));
+        }
+
+        function replaceWaypointWithPoi(pointId, poi) {
+          if (!pointId || !poi?.id) return;
+          const pointIndex = points.findIndex(point => point.id === pointId);
+          if (pointIndex < 0 || pointType(points[pointIndex]) !== "waypoint") return;
+          if (poiAlreadyInItinerary(poi.id)) {
+            setRouteStatus("This POI is already included in the itinerary.");
+            return;
+          }
+
+          rememberItineraryState();
+          const previousSegmentState = captureSegmentState();
+          const previousPoint = points[pointIndex];
+          const replacementPoint = makePoint(
+            Number.isFinite(poi.lat) ? poi.lat : previousPoint.lat,
+            Number.isFinite(poi.lng) ? poi.lng : previousPoint.lng,
+            poi.label || previousPoint.label || "",
+            poi.label ? "manual" : previousPoint.labelSource || "default",
+            "poi",
+            String(poi.id),
+            poi.enabled
+          );
+          replacementPoint.id = previousPoint.id;
+          points[pointIndex] = replacementPoint;
+          restoreSegmentState(previousSegmentState);
+          render();
+          pointsDidChange();
+          activateTab("poi");
+          selectPointSegment(pointIndex);
+          setRouteStatus(`Waypoint replaced with POI "${escapeHtml(poi.label || poi.id)}".`);
         }
     
         function setHighlightedPoi(poiId) {
@@ -1415,12 +1501,38 @@
         function markerPopupContent(point, index) {
           const title = pointTitle(point, index);
           const relabelDisabled = point.labelSource === "geocoder" && !point.movedSinceLabel;
-    
-          return (
-            `<strong>${escapeHtml(title)}</strong><br>` +
-            `<button data-action="relabel-map-point" data-index="${index}" title="Use place name from geocoder" ${relabelDisabled ? "disabled" : ""}>Relabel</button> ` +
-            `<button data-action="delete-map-point" data-index="${index}" aria-label="Delete point" title="Delete point">🗑</button>`
-          );
+          const isWaypoint = pointType(point) === "waypoint";
+          return `
+            <article class="point-popup-card">
+              <div class="point-popup-body">
+                <div class="point-popup-text">
+                  <strong class="poi-browser-title">${escapeHtml(title)}</strong>
+                  <p class="poi-browser-snippet">${escapeHtml(pointType(point) === "poi" ? "Point of interest" : "Waypoint")}</p>
+                </div>
+                <div class="point-popup-actions">
+                  ${isWaypoint ? `<button class="point-popup-action" data-action="relabel-map-point" data-index="${index}" title="Use place name from geocoder" ${relabelDisabled ? "disabled" : ""}>Relabel</button>` : ""}
+                  ${isWaypoint ? `<button class="point-popup-action" data-action="convert-map-waypoint-poi" data-index="${index}" title="Turn waypoint into POI">Turn to POI</button>` : ""}
+                  ${!isWaypoint && point.poiEnabled === false ? `<button class="point-popup-action" data-action="edit-map-poi" data-index="${index}" title="Edit draft POI">Edit</button>` : ""}
+                  <button class="point-popup-action danger-action" data-action="delete-map-point" data-index="${index}" aria-label="Remove from itinerary" title="Remove from itinerary">Remove from itinerary</button>
+                </div>
+              </div>
+            </article>
+          `;
+        }
+
+        function pointRemovalConfirmContent(index) {
+          const point = points[index];
+          const title = point ? pointTitle(point, index) : `Point ${labelForIndex(index)}`;
+          return `
+            <article class="waypoint-confirm-card">
+              <strong>Remove from itinerary?</strong>
+              <p>${escapeHtml(title)} will be removed from this itinerary.</p>
+              <div>
+                <button type="button" class="danger-action" data-action="confirm-remove-point" data-index="${index}" data-choice="remove">Remove</button>
+                <button type="button" data-action="confirm-remove-point" data-index="${index}" data-choice="cancel">Cancel</button>
+              </div>
+            </article>
+          `;
         }
     
         async function relabelPointFromGeocoder(index, recordHistory = true) {
@@ -1480,8 +1592,9 @@
     
           return {
             id,
+            enabled: true,
             label,
-            snippet: `Mock point of interest returned for the current buffer region near segment ${activeSegmentIndex !== null ? activeSegmentIndex + 1 : ""}.`,
+            snippet: `Mock point of interest returned for the current buffer region near path ${activeSegmentIndex !== null ? activeSegmentIndex + 1 : ""}.`,
             imageUrl: `data:image/svg+xml,${imageSvg}`,
             lat,
             lng,
@@ -1552,7 +1665,7 @@
           togglePoiBrowser.title = poiBrowserCollapsed ? "Show POI list" : "Hide POI list";
           const categoryOptions = poiCategoryOptions();
           const filteredPois = filteredDisplayedPois();
-          poiBrowserTitle.textContent = `POIs for segment ${displayedPoiSegmentIndex + 1} → ${displayedPoiSegmentIndex + 2}`;
+          poiBrowserTitle.textContent = `POIs for path ${displayedPoiSegmentIndex + 1} → ${displayedPoiSegmentIndex + 2}`;
           poiBrowserFilters.innerHTML = `
             <label>
               <span>Category</span>
@@ -1572,20 +1685,27 @@
             return;
           }
     
-          poiBrowserList.innerHTML = filteredPois.map(poi => `
-            <article class="poi-browser-item" data-poi-key="${escapeHtml(poi.id)}" tabindex="0">
-              <img src="${escapeHtml(poi.imageUrl || "")}" alt="" />
-              <div>
-                <strong class="poi-browser-title">${escapeHtml(poi.label)}</strong>
-                <p class="poi-browser-snippet">${escapeHtml(poi.snippet || "")}</p>
-              </div>
-              <div class="poi-browser-actions">
-                <button data-action="center-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Center map on ${escapeHtml(poi.label)}" title="Center map on POI">🎯</button>
-                <button data-action="expand-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Open ${escapeHtml(poi.label)} details" title="Open details">🔍</button>
-                <button data-action="add-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">＋</button>
-              </div>
-            </article>
-          `).join("");
+          poiBrowserList.innerHTML = filteredPois.map(poi => {
+            const alreadyAdded = poiAlreadyInItinerary(poi.id);
+            const draftClass = poi.enabled === false ? " draft-poi" : "";
+            const imageMarkup = poi.imageUrl
+              ? `<img src="${escapeHtml(poi.imageUrl)}" alt="" />`
+              : "";
+            return `
+              <article class="poi-browser-item${draftClass}" data-poi-key="${escapeHtml(poi.id)}" tabindex="0">
+                ${imageMarkup}
+                <div>
+                  <strong class="poi-browser-title">${escapeHtml(poi.label)}</strong>
+                  <p class="poi-browser-type">${poi.enabled === false ? "Draft POI" : "POI"}</p>
+                  <p class="poi-browser-snippet">${escapeHtml(poi.snippet || "")}</p>
+                </div>
+                <div class="poi-browser-actions">
+                  <button class="poi-browser-action" data-action="open-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="${poi.enabled === false ? "View/edit info and media" : "View info and media"} for ${escapeHtml(poi.label)}" title="${poi.enabled === false ? "View/edit info and media" : "View info and media"}">${poi.enabled === false ? "View/edit info and media" : "View info and media"}</button>
+                  ${alreadyAdded ? "" : `<button class="poi-browser-action" data-action="add-displayed-poi" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">Add to itinerary</button>`}
+                </div>
+              </article>
+            `;
+          }).join("");
         }
     
         function poiImageUrls(poi) {
@@ -1597,19 +1717,23 @@
         function poiPopupContent(poi, segmentIndex) {
           const images = poiImageUrls(poi);
           const primaryImage = images[0] || "";
+          const alreadyAdded = poiAlreadyInItinerary(poi.id);
           return `
-            <article class="poi-popup-card">
-              <div class="poi-popup-media">
-                ${primaryImage ? `<img src="${escapeHtml(primaryImage)}" alt="" />` : ""}
-              </div>
+            <article class="poi-popup-card ${primaryImage ? "" : "without-media"}">
+              ${primaryImage ? `
+                <div class="poi-popup-media">
+                  <img src="${escapeHtml(primaryImage)}" alt="" />
+                </div>
+              ` : ""}
               <div class="poi-popup-body">
                 <div class="poi-popup-text">
                   <strong class="poi-browser-title">${escapeHtml(poi.label)}</strong>
-                  <p class="poi-browser-snippet">${escapeHtml(poi.snippet || "")}</p>
+                  <p class="poi-browser-snippet">${poi.enabled === false ? "Draft POI" : "POI"}</p>
+                  ${poi.snippet ? `<p class="poi-browser-snippet">${escapeHtml(poi.snippet)}</p>` : ""}
                 </div>
                 <div class="poi-popup-actions">
-                  <button data-action="expand-poi" data-segment="${segmentIndex}" data-poi-key="${escapeHtml(poi.id)}" aria-label="Open ${escapeHtml(poi.label)} details" title="Open details">🔍</button>
-                  <button data-action="add-poi" data-segment="${segmentIndex}" data-lat="${poi.lat}" data-lng="${poi.lng}" data-label="${escapeHtml(poi.label)}" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">＋</button>
+                  <button class="poi-popup-add-button" data-action="edit-poi" data-segment="${segmentIndex}" data-poi-key="${escapeHtml(poi.id)}" title="${poi.enabled === false ? "View/edit info and media" : "View info and media"}">${poi.enabled === false ? "View/edit info and media" : "View info and media"}</button>
+                  ${alreadyAdded ? "" : `<button class="poi-popup-add-button" data-action="add-poi" data-segment="${segmentIndex}" data-lat="${poi.lat}" data-lng="${poi.lng}" data-label="${escapeHtml(poi.label)}" data-poi-enabled="${poi.enabled === false ? "false" : "true"}" data-poi-key="${escapeHtml(poi.id)}" aria-label="Add ${escapeHtml(poi.label)} to itinerary" title="Add to itinerary">Add to itinerary</button>`}
                 </div>
               </div>
             </article>
@@ -1652,19 +1776,19 @@
           poiDetailDialog.showModal();
         }
     
-        function bindPoiHoverPopup(marker) {
+        function bindMarkerHoverPopup(marker) {
           let closeTimer = null;
-    
+
           const cancelClose = () => {
             window.clearTimeout(closeTimer);
             closeTimer = null;
           };
-    
+
           const scheduleClose = () => {
             cancelClose();
             closeTimer = window.setTimeout(() => marker.closePopup(), 180);
           };
-    
+
           marker.on("mouseover", () => {
             cancelClose();
             marker.openPopup();
@@ -1673,7 +1797,9 @@
           marker.on("popupopen", event => {
             const popupElement = event.popup.getElement();
             if (!popupElement) return;
-    
+
+            L.DomEvent.disableClickPropagation(popupElement);
+            L.DomEvent.disableScrollPropagation(popupElement);
             popupElement.addEventListener("mouseover", cancelClose);
             popupElement.addEventListener("mouseout", scheduleClose);
           });
@@ -1682,18 +1808,18 @@
         function renderTemporaryPois(segmentIndex, pois) {
           temporaryPoiLayer.clearLayers();
           displayedPoiMarkers = new Map();
-          displayedPois = pois;
+          displayedPois = pois.filter(poi => !poiAlreadyInItinerary(poi.id));
           displayedPoiSegmentIndex = segmentIndex;
           if (selectedPoiCategory && !poiCategoryOptions().some(category => category.slug === selectedPoiCategory)) {
             selectedPoiCategory = "";
           }
           renderPoiBrowser();
     
-          pois.forEach(poi => {
+          displayedPois.forEach(poi => {
             const marker = L.marker([poi.lat, poi.lng], {
               icon: L.divIcon({
                 className: "",
-                html: `<div class="poi-marker">POI</div>`,
+                html: `<div class="poi-marker ${poi.enabled === false ? "draft-poi" : ""}">POI</div>`,
                 iconSize: [28, 28],
                 iconAnchor: [14, 14],
                 popupAnchor: [0, -14]
@@ -1708,7 +1834,7 @@
                 minWidth: 320,
                 maxWidth: 360
               });
-            bindPoiHoverPopup(marker);
+            bindMarkerHoverPopup(marker);
             displayedPoiMarkers.set(poi.id, marker);
           });
         }
@@ -1748,7 +1874,7 @@
             if (cachedPois.length > 0) {
               renderTemporaryPois(segmentIndex, cachedPois);
             }
-            setRouteStatus(`Looking for POIs inside the ${formatDistance(distanceMeters)} buffer for segment ${segmentIndex + 1} → ${segmentIndex + 2}...`);
+            setRouteStatus(`Looking for POIs inside the ${formatDistance(distanceMeters)} buffer for path ${segmentIndex + 1} → ${segmentIndex + 2}...`);
     
             const pois = await fetchSegmentPois(segmentBuffer, segmentIndex, 100);
             if (requestId !== poiLookupRequestId || activeSegmentIndex !== segmentIndex) {
@@ -1758,7 +1884,7 @@
             if (pois.length === 0) {
               reconcilePoiCache(segmentBuffer, pois);
               renderTemporaryPois(segmentIndex, pois);
-              setRouteStatus(`No POIs found inside the ${formatDistance(distanceMeters)} buffer for segment ${segmentIndex + 1} → ${segmentIndex + 2}.`);
+              setRouteStatus(`No POIs found inside the ${formatDistance(distanceMeters)} buffer for path ${segmentIndex + 1} → ${segmentIndex + 2}.`);
               return;
             }
     
@@ -1767,7 +1893,7 @@
     
             setRouteStatus(
               `<strong>POIs</strong>` +
-              `Showing ${pois.length} POIs inside the ${formatDistance(distanceMeters)} buffer for segment ${segmentIndex + 1} → ${segmentIndex + 2}.`
+              `Showing ${pois.length} POIs inside the ${formatDistance(distanceMeters)} buffer for path ${segmentIndex + 1} → ${segmentIndex + 2}.`
             );
           } catch (error) {
             if (requestId === poiLookupRequestId) {
@@ -1805,17 +1931,18 @@
             clearSegmentWalkingRouteLayer();
             setRouteStatus(
               points.length < 2
-                ? "Add at least two points, then expand a segment panel to work with its buffer zone."
-                : "Expand a segment panel to work with its buffer zone."
+                ? "Add at least two points, then expand a path panel to work with its buffer zone."
+                : "Expand a path panel to work with its buffer zone."
             );
           } else {
             drawSegmentBuffer(activeSegmentIndex);
             drawSegmentWalkingRoute(activeSegmentIndex);
             renderList();
           }
+          notifyDirtyState();
         }
     
-        function addPoint(lat, lng, label = "", labelSource = label ? "manual" : "default", type = "waypoint", poiId = null) {
+        function addPoint(lat, lng, label = "", labelSource = label ? "manual" : "default", type = "waypoint", poiId = null, poiEnabled = null) {
           if (!isValidLatLng(lat, lng)) {
             alert("Please enter valid coordinates: latitude -90 to 90, longitude -180 to 180.");
             return -1;
@@ -1823,7 +1950,7 @@
     
           rememberItineraryState();
           const previousSegmentState = captureSegmentState();
-          const point = makePoint(lat, lng, label, labelSource, type, poiId);
+          const point = makePoint(lat, lng, label, labelSource, type, poiId, poiEnabled);
           const insertionIndex = bestInsertionIndexForPoint(point);
           points.splice(insertionIndex, 0, point);
           restoreSegmentState(previousSegmentState);
@@ -1836,7 +1963,7 @@
           return insertionIndex;
         }
     
-        function insertPoint(index, lat, lng, label = "", labelSource = label ? "manual" : "default", type = "poi", poiId = null) {
+        function insertPoint(index, lat, lng, label = "", labelSource = label ? "manual" : "default", type = "poi", poiId = null, poiEnabled = null) {
           if (!isValidLatLng(lat, lng)) {
             alert("Please enter valid coordinates: latitude -90 to 90, longitude -180 to 180.");
             return;
@@ -1845,7 +1972,7 @@
           rememberItineraryState();
           const previousSegmentState = captureSegmentState();
           const insertionIndex = Math.max(0, Math.min(index, points.length));
-          const point = makePoint(lat, lng, label, labelSource, type, poiId);
+          const point = makePoint(lat, lng, label, labelSource, type, poiId, poiEnabled);
           points.splice(insertionIndex, 0, point);
           restoreSegmentState(previousSegmentState);
           render();
@@ -1908,7 +2035,7 @@
           clearSegmentBuffer();
           clearSegmentWalkingRoutes();
           clearTemporaryPois();
-          setRouteStatus("Add at least two points, then expand a segment panel to work with its buffer zone.");
+          setRouteStatus("Add at least two points, then expand a path panel to work with its buffer zone.");
         }
     
         function fitRoute() {
@@ -1947,7 +2074,15 @@
               icon
             })
               .addTo(map)
-              .bindPopup(markerPopupContent(point, index));
+              .bindPopup(markerPopupContent(point, index), {
+                className: "point-popup",
+                closeButton: false,
+                autoClose: false,
+                closeOnClick: false,
+                minWidth: 220,
+                maxWidth: 340
+              });
+            bindMarkerHoverPopup(marker);
     
             if (pointType(point) !== "poi") {
               marker.on("dragend", event => {
@@ -2045,6 +2180,8 @@
                   <button class="icon-button" data-action="up" data-index="${index}" aria-label="Move point up" title="Move up" ${index === 0 ? "disabled" : ""}>↑</button>
                   <button class="icon-button" data-action="down" data-index="${index}" aria-label="Move point down" title="Move down" ${index === points.length - 1 ? "disabled" : ""}>↓</button>
                   <button class="icon-button" data-action="zoom" data-index="${index}" aria-label="Zoom to point" title="Zoom to point">🎯</button>
+                  ${pointType(point) === "waypoint" ? `<button class="icon-button" data-action="convert-waypoint-poi" data-index="${index}" aria-label="Turn waypoint into POI" title="Turn waypoint into POI">POI</button>` : ""}
+                  ${pointType(point) === "poi" && point.poiEnabled === false ? `<button class="icon-button" data-action="edit-card-poi" data-index="${index}" aria-label="Edit draft POI" title="Edit draft POI">Edit</button>` : ""}
                   <button class="icon-button" data-action="delete" data-index="${index}" aria-label="Delete point" title="Delete point">🗑</button>
                 </div>
               </div>
@@ -2064,10 +2201,10 @@
               segmentItem.tabIndex = isActive ? 0 : -1;
               segmentItem.innerHTML = isActive ? `
                 <div class="segment-header">
-                  <strong>Segment ${labelForIndex(index)} → ${labelForIndex(index + 1)}</strong>
+                  <strong>Path ${labelForIndex(index)} → ${labelForIndex(index + 1)}</strong>
                   <span class="segment-header-actions">
-                    <button data-action="fit-segment" data-segment="${index}" aria-label="Fit map to segment" title="Fit map to segment">🔎</button>
-                    <button class="plain-close" data-action="toggle-segment" data-segment="${index}" aria-expanded="true" aria-label="Hide segment panel" title="Hide segment panel">✖</button>
+                    <button data-action="fit-segment" data-segment="${index}" aria-label="Fit map to path" title="Fit map to path">🔎</button>
+                    <button class="plain-close" data-action="toggle-segment" data-segment="${index}" aria-expanded="true" aria-label="Hide path panel" title="Hide path panel">✖</button>
                   </span>
                 </div>
                   <div class="segment-buffer-edit">
@@ -2080,16 +2217,16 @@
                     </label>
                   </div>
                   <div class="segment-route-info">
-                    ${walkingRoute ? `Walking route ${walkingRouteState.selectedIndex + 1} of ${walkingRouteState.routes.length} · ${formatDistance(walkingRoute.distance)} · ${formatDuration(walkingDurationSeconds(walkingRoute))} estimated` : "No walking route loaded."}
+                    ${walkingRoute ? `Walking path ${walkingRouteState.selectedIndex + 1} of ${walkingRouteState.routes.length} · ${formatDistance(walkingRoute.distance)} · ${formatDuration(walkingDurationSeconds(walkingRoute))} estimated` : "No walking path loaded."}
                   </div>
                   <div class="segment-actions">
-                    <button data-action="segment-route-fetch" data-segment="${index}">${walkingRoute ? "Refresh walking routes" : "Get walking routes"}</button>
-                    <button data-action="segment-route-prev" data-segment="${index}" ${walkingRouteState.routes.length < 2 ? "disabled" : ""}>Previous route</button>
-                    <button data-action="segment-route-next" data-segment="${index}" ${walkingRouteState.routes.length < 2 ? "disabled" : ""}>Next route</button>
+                    <button data-action="segment-route-fetch" data-segment="${index}">${walkingRoute ? "Refresh walking paths" : "Get walking paths"}</button>
+                    <button data-action="segment-route-prev" data-segment="${index}" ${walkingRouteState.routes.length < 2 ? "disabled" : ""}>Previous path</button>
+                    <button data-action="segment-route-next" data-segment="${index}" ${walkingRouteState.routes.length < 2 ? "disabled" : ""}>Next path</button>
                   </div>
               ` : `
                 <div class="segment-actions">
-                  <button class="${walkingRoute ? "route-defined" : "no-route"}" data-action="toggle-segment" data-segment="${index}" aria-expanded="false" aria-label="Expand segment ${labelForIndex(index)} to ${labelForIndex(index + 1)}" title="${walkingRoute ? "Expand segment with walking route" : "Expand segment without walking route"}">${walkingRoute ? "👁 ✓" : "👁 ?"}</button>
+                  <button class="${walkingRoute ? "route-defined" : "no-route"}" data-action="toggle-segment" data-segment="${index}" aria-expanded="false" aria-label="Expand path ${labelForIndex(index)} to ${labelForIndex(index + 1)}" title="${walkingRoute ? "Expand path with walking path" : "Expand path without walking path"}">${walkingRoute ? "✓" : "?"}</button>
                 </div>
               `;
               pointList.appendChild(segmentItem);
@@ -2112,7 +2249,7 @@
           }
         }
     
-        function confirmPendingBufferWaypoint(shouldAdd) {
+        function confirmPendingBufferWaypoint(choice) {
           const waypoint = pendingBufferWaypoint;
           const popup = pendingBufferWaypointPopup;
           pendingBufferWaypoint = null;
@@ -2122,9 +2259,37 @@
             map.closePopup(popup);
           }
     
-          if (shouldAdd && waypoint) {
+          if ((choice === true || choice === "waypoint") && waypoint) {
             addWaypointFromMapClick(waypoint);
+            return;
           }
+
+          if (choice === "poi" && waypoint) {
+            if (createPoiAt) {
+              createPoiAt(waypoint.lat, waypoint.lng, activeSegmentIndex);
+            } else {
+              const params = new URLSearchParams({
+                latitude: String(waypoint.lat),
+                longitude: String(waypoint.lng)
+              });
+              window.location.assign(`/pois/new?${params.toString()}`);
+            }
+          }
+        }
+
+        function suppressNextMapClick(durationMs = 700) {
+          suppressMapClickUntil = Math.max(suppressMapClickUntil, Date.now() + durationMs);
+        }
+
+        function shouldIgnoreMapClick(event) {
+          if (Date.now() < suppressMapClickUntil) return true;
+          const originalTarget = event.originalEvent?.target;
+          return Boolean(originalTarget?.closest?.(".leaflet-popup, .leaflet-control"));
+        }
+
+        function suppressPopupActionMapClick(event) {
+          if (!event.target?.closest?.(".leaflet-popup button, .leaflet-popup a")) return;
+          suppressNextMapClick();
         }
     
         function openBufferWaypointPrompt(latlng) {
@@ -2133,7 +2298,7 @@
             closeButton: false,
             closeOnClick: false,
             autoClose: true,
-            minWidth: 220
+            minWidth: 300
           });
     
           pendingBufferWaypoint = latlng;
@@ -2147,12 +2312,17 @@
             })
             .setLatLng(latlng)
             .setContent(`
-              <article class="waypoint-confirm-card">
-                <strong>Add waypoint here?</strong>
-                <p>Press Enter for yes or Esc for no.</p>
-                <div>
-                  <button type="button" class="primary" data-action="confirm-buffer-waypoint" data-choice="yes">Yes</button>
-                  <button type="button" data-action="confirm-buffer-waypoint" data-choice="no">No</button>
+              <article class="point-popup-card buffer-location-card">
+                <div class="point-popup-body">
+                  <div class="point-popup-text">
+                    <strong class="poi-browser-title">Use this location?</strong>
+                    <p class="poi-browser-snippet">Create waypoint splits the current path immediately. Create POI opens a draft point of interest here, which can be added as a waypoint later.</p>
+                  </div>
+                  <div class="point-popup-actions">
+                    <button type="button" class="point-popup-action primary" data-action="confirm-buffer-waypoint" data-choice="poi">Create POI</button>
+                    <button type="button" class="point-popup-action" data-action="confirm-buffer-waypoint" data-choice="waypoint">Create waypoint</button>
+                    <button type="button" class="point-popup-action" data-action="confirm-buffer-waypoint" data-choice="cancel">Cancel</button>
+                  </div>
                 </div>
               </article>
             `)
@@ -2160,6 +2330,10 @@
         }
     
         map.on("click", event => {
+          if (shouldIgnoreMapClick(event)) {
+            return;
+          }
+
           if (activeSegmentIndex !== null && segmentBufferLayer) {
             const activeBuffer = segmentBufferGeometry(activeSegmentIndex);
             const clickedPoint = turf.point([event.latlng.lng, event.latlng.lat]);
@@ -2176,6 +2350,8 @@
         });
         map.on("moveend", updatePoiSearchRefreshButton);
         map.on("zoomend", updatePoiSearchRefreshButton);
+        mapElement.addEventListener("pointerdown", suppressPopupActionMapClick, true);
+        mapElement.addEventListener("click", suppressPopupActionMapClick, true);
     
         const documentKeydownHandler = event => {
           if (handleHistoryShortcut(event)) return;
@@ -2282,7 +2458,7 @@
           if (poiButton) {
             const lat = Number.parseFloat(poiButton.dataset.lat);
             const lng = Number.parseFloat(poiButton.dataset.lng);
-            const index = addPoint(lat, lng, poiButton.dataset.label || "", "manual", "poi", poiButton.dataset.poiId || null);
+            const index = addPoint(lat, lng, poiButton.dataset.label || "", "manual", "poi", poiButton.dataset.poiId || null, poiButton.dataset.poiEnabled !== "false");
             inputElement.value = "";
             clearSearchResults(resultsElement);
             fitRoute();
@@ -2329,26 +2505,14 @@
         }
     
         function handlePoiBrowserListClick(event) {
-          const centerButton = event.target.closest('button[data-action="center-displayed-poi"]');
-          if (centerButton) {
-            const poi = displayedPois.find(candidate => candidate.id === centerButton.dataset.poiKey);
-            if (poi) {
-              map.setView([poi.lat, poi.lng], Math.max(map.getZoom(), 15));
-              const marker = displayedPoiMarkers.get(poi.id);
-              if (marker && temporaryPoiLayer.zoomToShowLayer) {
-                temporaryPoiLayer.zoomToShowLayer(marker, () => marker.openPopup());
-              } else if (marker) {
-                marker.openPopup();
-              }
-            }
-            return;
-          }
-    
-          const expandButton = event.target.closest('button[data-action="expand-displayed-poi"]');
-          if (expandButton) {
-            const poi = displayedPois.find(candidate => candidate.id === expandButton.dataset.poiKey);
-            if (poi) {
-              openPoiDetailDialog(poi, displayedPoiSegmentIndex);
+          const openButton = event.target.closest('button[data-action="open-displayed-poi"]');
+          if (openButton) {
+            const poi = displayedPois.find(candidate => candidate.id === openButton.dataset.poiKey);
+            if (poi && editPoi) {
+              map.closePopup();
+              editPoi(String(poi.id), Number.isInteger(displayedPoiSegmentIndex) ? displayedPoiSegmentIndex : null);
+            } else if (poi) {
+              window.location.assign(`/pois/${encodeURIComponent(poi.id)}/edit`);
             }
             return;
           }
@@ -2480,36 +2644,102 @@
             map.setView([point.lat, point.lng], 13);
             markers[index].openPopup();
           }
+          if (action === "convert-waypoint-poi") {
+            const point = points[index];
+            if (point && pointType(point) === "waypoint" && createPoiAt) {
+              const segmentIndex = segmentIndexForPointIndex(index);
+              createPoiAt(point.lat, point.lng, segmentIndex, point.id, point.label || pointTitle(point, index));
+            }
+          }
+          if (action === "edit-card-poi") {
+            editPoiFromPointIndex(index);
+          }
         }
     
         function handleMapCanvasClick(event) {
           const confirmBufferWaypointButton = event.target.closest('button[data-action="confirm-buffer-waypoint"]');
           if (confirmBufferWaypointButton) {
-            confirmPendingBufferWaypoint(confirmBufferWaypointButton.dataset.choice === "yes");
+            event.preventDefault();
+            event.stopPropagation();
+            suppressNextMapClick();
+            confirmPendingBufferWaypoint(confirmBufferWaypointButton.dataset.choice);
             return;
           }
     
           const relabelButton = event.target.closest('button[data-action="relabel-map-point"]');
           if (relabelButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            suppressNextMapClick();
             const index = Number.parseInt(relabelButton.dataset.index, 10);
             relabelPointFromGeocoder(index);
+            return;
+          }
+
+          const confirmRemovePointButton = event.target.closest('button[data-action="confirm-remove-point"]');
+          if (confirmRemovePointButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            suppressNextMapClick();
+            const index = Number.parseInt(confirmRemovePointButton.dataset.index, 10);
+            if (!points[index]) {
+              map.closePopup();
+              return;
+            }
+            if (confirmRemovePointButton.dataset.choice === "remove") {
+              map.closePopup();
+              removePoint(index);
+            } else if (markers[index]) {
+              markers[index].setPopupContent(markerPopupContent(points[index], index));
+              markers[index].openPopup();
+            }
             return;
           }
     
           const deleteButton = event.target.closest('button[data-action="delete-map-point"]');
           if (deleteButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            suppressNextMapClick();
             const index = Number.parseInt(deleteButton.dataset.index, 10);
-            const label = labelForIndex(index);
-    
-            if (points[index] && window.confirm(`Delete point ${label}?`)) {
-              map.closePopup();
-              removePoint(index);
+            if (points[index] && markers[index]) {
+              markers[index].setPopupContent(pointRemovalConfirmContent(index));
+              markers[index].openPopup();
             }
+            return;
+          }
+
+          const convertWaypointButton = event.target.closest('button[data-action="convert-map-waypoint-poi"]');
+          if (convertWaypointButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            suppressNextMapClick();
+            const index = Number.parseInt(convertWaypointButton.dataset.index, 10);
+            const point = points[index];
+            if (point && pointType(point) === "waypoint" && createPoiAt) {
+              const segmentIndex = segmentIndexForPointIndex(index);
+              map.closePopup();
+              createPoiAt(point.lat, point.lng, segmentIndex, point.id, point.label || pointTitle(point, index));
+            }
+            return;
+          }
+
+          const editMapPoiButton = event.target.closest('button[data-action="edit-map-poi"]');
+          if (editMapPoiButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            suppressNextMapClick();
+            const index = Number.parseInt(editMapPoiButton.dataset.index, 10);
+            map.closePopup();
+            editPoiFromPointIndex(index);
             return;
           }
     
           const expandPoiButton = event.target.closest('button[data-action="expand-poi"]');
           if (expandPoiButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            suppressNextMapClick();
             const segmentIndex = Number.parseInt(expandPoiButton.dataset.segment, 10);
             const poi = displayedPois.find(candidate => candidate.id === expandPoiButton.dataset.poiKey);
             if (poi) {
@@ -2517,16 +2747,33 @@
             }
             return;
           }
+
+          const editDisplayedPoiButton = event.target.closest('button[data-action="edit-poi"]');
+          if (editDisplayedPoiButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            suppressNextMapClick();
+            const segmentIndex = Number.parseInt(editDisplayedPoiButton.dataset.segment, 10);
+            if (editPoi && editDisplayedPoiButton.dataset.poiKey) {
+              map.closePopup();
+              editPoi(editDisplayedPoiButton.dataset.poiKey, Number.isInteger(segmentIndex) ? segmentIndex : null);
+            }
+            return;
+          }
     
           const button = event.target.closest('button[data-action="add-poi"]');
           if (!button) return;
+          event.preventDefault();
+          event.stopPropagation();
+          suppressNextMapClick();
     
           const segmentIndex = Number.parseInt(button.dataset.segment, 10);
           addPoiToItinerary({
             id: button.dataset.poiKey || null,
             label: button.dataset.label || "",
             lat: Number.parseFloat(button.dataset.lat),
-            lng: Number.parseFloat(button.dataset.lng)
+            lng: Number.parseFloat(button.dataset.lng),
+            enabled: button.dataset.poiEnabled !== "false"
           }, segmentIndex);
         }
     
@@ -2553,6 +2800,7 @@
           if (markers[index]) {
             markers[index].setPopupContent(markerPopupContent(points[index], index));
           }
+          notifyDirtyState();
         }
     
         function handlePointListChange(event) {
@@ -2645,8 +2893,24 @@
     
         const initialItineraryId = options.itineraryId || new URLSearchParams(window.location.search).get("itinerary");
         if (initialItineraryId) {
-          loadItineraryForEditing(initialItineraryId);
+          loadItineraryForEditing(initialItineraryId, initialSegmentIndex);
         }
+
+        const poiSaveMessageHandler = event => {
+          const data = event?.data || event;
+          if (!data || data.editorToken !== editorSessionToken || !data.pointId || !data.poi) return;
+          replaceWaypointWithPoi(data.pointId, data.poi);
+        };
+        const poiSaveStorageHandler = event => {
+          if (event.key !== poiSaveChannelName || !event.newValue) return;
+          try {
+            poiSaveMessageHandler({ data: JSON.parse(event.newValue) });
+          } catch {
+            // Ignore malformed cross-tab messages.
+          }
+        };
+        poiSaveChannel?.addEventListener("message", poiSaveMessageHandler);
+        window.addEventListener("storage", poiSaveStorageHandler);
     
         let resizeObserver = null;
         if ("ResizeObserver" in window) {
@@ -2661,24 +2925,24 @@
             document.removeEventListener("keydown", documentKeydownHandler);
             window.removeEventListener("load", windowLoadHandler);
             window.clearTimeout(poiLookupTimer);
-            if (itineraryJsonUrl) {
-              URL.revokeObjectURL(itineraryJsonUrl);
-            }
             if (resizeObserver) {
               resizeObserver.disconnect();
             }
+            poiSaveChannel?.removeEventListener("message", poiSaveMessageHandler);
+            poiSaveChannel?.close();
+            window.removeEventListener("storage", poiSaveStorageHandler);
+            mapElement.removeEventListener("pointerdown", suppressPopupActionMapClick, true);
+            mapElement.removeEventListener("click", suppressPopupActionMapClick, true);
             map.remove();
           },
           clearAll,
           fitRoute,
           showRouteSummary,
           saveItinerary,
-          saveItineraryToServer: saveItineraryRecordToServer,
           revertItinerary,
           undoItinerary,
           redoItinerary,
           closeRouteDialog: () => routeDialog.close(),
-          closeItineraryJsonDialog: () => itineraryJsonDialog.close(),
           closePoiDetailDialog: () => poiDetailDialog.close(),
           addPoiFromDetail: addDetailedPoiToItinerary,
           activateTab,

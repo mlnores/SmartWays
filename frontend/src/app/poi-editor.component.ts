@@ -1,6 +1,6 @@
 import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 
 import { ApiService, Category, Poi, PoiMedia, Translation } from './api.service';
@@ -31,24 +31,31 @@ declare const L: any;
   template: `
     <section class="page poi-editor-page">
       <header class="page-header">
-        <div>
-          <h1>{{ isNewPoi ? 'New POI' : (poi?.title || 'POI editor') }}</h1>
-          <p>{{ isNewPoi ? 'Create a draft point of interest.' : 'Edit metadata, translations, and linked media.' }}</p>
+        <div class="poi-editor-heading">
+          <div>
+            <h1>{{ isNewPoi ? 'New POI' : (poi?.title || 'POI editor') }}</h1>
+            <p>{{ isNewPoi ? 'Create a draft point of interest.' : 'View/edit metadata, translations, and linked media.' }}</p>
+          </div>
         </div>
-        <div class="list-actions">
+        <div class="publication-switch">
+          <span>State</span>
+          <div class="view-toggle publication-toggle" aria-label="Publication state">
+            <button type="button" [class.active]="!enabled" (click)="enabled = false">Draft</button>
+            <button type="button" [class.active]="enabled" (click)="enabled = true">Public (read-only)</button>
+          </div>
+        </div>
+        <div class="list-actions poi-save-actions">
           <a class="secondary" [routerLink]="backLink">{{ backLabel }}</a>
-          @if (isEditableDraft()) {
-            <button type="button" class="secondary" [disabled]="saving || loading" (click)="savePoi(false)">
-              {{ saving ? 'Saving...' : 'Save draft' }}
-            </button>
-            <button type="button" class="primary" [disabled]="saving || loading" (click)="savePoi(true)">
-              {{ saving ? 'Saving...' : 'Save and make public' }}
-            </button>
+          <button type="button" class="primary" [disabled]="saving || loading || !canSave()" (click)="savePoi()">
+            {{ saving ? 'Saving...' : 'Save' }}
+          </button>
+          @if (statusMessage && !statusIsError) {
+            <p class="inline-save-status">{{ statusMessage }}</p>
           }
         </div>
       </header>
 
-      @if (statusMessage) {
+      @if (statusMessage && statusIsError) {
         <p class="status" [class.error]="statusIsError">{{ statusMessage }}</p>
       }
 
@@ -67,45 +74,64 @@ declare const L: any;
               <div class="basic-layout">
                 <div class="basic-form-panel">
                   <div class="section-heading">
-                    <h2>Reference language</h2>
-                    @if (referenceTranslation(); as reference) {
-                      <span class="reference-pill"><span aria-hidden="true">★</span> {{ reference.language_code || 'Reference' }}</span>
-                    }
+                    <h2>Basic info in reference language</h2>
                   </div>
 
                   @if (referenceTranslation(); as reference) {
                     <div class="form-grid compact-form-grid">
                       <label>
                         <span>Language</span>
-                        <input type="text" [(ngModel)]="reference.language_code" name="referenceLanguage" />
+                        <input type="text" [(ngModel)]="reference.language_code" name="referenceLanguage" [disabled]="!canEditContent()" />
                       </label>
-                      <label>
+                      <label class="metadata-full-row">
                         <span>Title</span>
-                        <input type="text" [(ngModel)]="reference.title" name="referenceTitle" />
+                        <span class="title-refresh-row">
+                          <input
+                            type="text"
+                            [class.stale-title]="titleNeedsRefresh"
+                            [(ngModel)]="reference.title"
+                            (ngModelChange)="referenceTitleChanged()"
+                            name="referenceTitle"
+                            [disabled]="!canEditContent()"
+                          />
+                          <button
+                            type="button"
+                            class="secondary title-refresh-button"
+                            title="Use place name from geocoder"
+                            aria-label="Use place name from geocoder"
+                            [disabled]="!canEditContent() || geocodingTitle || !hasValidCoordinates()"
+                            (click)="refreshTitleFromGeocoder()"
+                          >
+                            {{ geocodingTitle ? '...' : '↻' }}
+                          </button>
+                        </span>
                       </label>
                       <label class="metadata-full-row">
                         <span>Description</span>
-                        <textarea rows="6" [(ngModel)]="reference.description" name="referenceDescription"></textarea>
+                        <textarea rows="6" [(ngModel)]="reference.description" name="referenceDescription" [disabled]="!canEditContent()"></textarea>
                       </label>
                     </div>
                   }
 
                   <div class="section-heading">
                     <h2>Location</h2>
-                    <span class="country-label">{{ countryCode ? 'Country: ' + countryCode : 'Country pending location' }}</span>
                   </div>
-                  <div class="form-grid compact-form-grid">
+                  <div class="form-grid location-form-grid">
                     <label>
                       <span>Latitude</span>
-                      <input type="number" step="any" [(ngModel)]="latitude" (ngModelChange)="coordinatesChanged()" name="latitude" />
+                      <input type="number" step="any" [(ngModel)]="latitude" (ngModelChange)="coordinatesChanged()" name="latitude" [disabled]="!canEditContent()" />
                     </label>
                     <label>
                       <span>Longitude</span>
-                      <input type="number" step="any" [(ngModel)]="longitude" (ngModelChange)="coordinatesChanged()" name="longitude" />
+                      <input type="number" step="any" [(ngModel)]="longitude" (ngModelChange)="coordinatesChanged()" name="longitude" [disabled]="!canEditContent()" />
+                    </label>
+                    <label>
+                      <span>Country</span>
+                      <span class="country-value">{{ countryCode || 'Pending location' }}</span>
                     </label>
                     <label class="metadata-full-row">
                       <span>Website</span>
-                      <input type="url" [(ngModel)]="website" name="website" />
+                      <input type="url" [(ngModel)]="website" name="website" [disabled]="!canEditContent()" />
                     </label>
                     <div class="metadata-full-row category-picker">
                       <span>Categories</span>
@@ -117,25 +143,27 @@ declare const L: any;
                             placeholder="Filter"
                             [(ngModel)]="categoryAvailableFilter"
                             name="categoryAvailableFilter"
+                            [disabled]="!canEditContent()"
                           />
                           <div class="category-options" aria-label="Available categories">
                             @for (category of availableCategoryOptions(); track category.id) {
-                              <button type="button" (click)="addCategory(category.id)">
+                              <button type="button" [disabled]="!canEditContent()" (click)="addCategory(category.id)">
                                 {{ categoryDisplayName(category) }}
                               </button>
                             } @empty {
                               <p class="muted">No available categories.</p>
                             }
                           </div>
-                          <button type="button" class="secondary category-wide-action" (click)="chooseAllFilteredCategories()">Choose all</button>
+                          <button type="button" class="secondary category-wide-action" [disabled]="!canEditContent()" (click)="chooseAllFilteredCategories()">Choose all</button>
                           <div class="new-category-row">
                             <input
                               type="text"
                               placeholder="New category"
                               [(ngModel)]="newCategoryName"
                               name="newCategoryName"
+                              [disabled]="!canEditContent()"
                             />
-                            <button type="button" class="primary" title="Create category" aria-label="Create category" (click)="createCategoryFromEditor()">+</button>
+                            <button type="button" class="primary" title="Create category" aria-label="Create category" [disabled]="!canEditContent()" (click)="createCategoryFromEditor()">+</button>
                           </div>
                         </section>
 
@@ -151,10 +179,11 @@ declare const L: any;
                             placeholder="Filter"
                             [(ngModel)]="categoryChosenFilter"
                             name="categoryChosenFilter"
+                            [disabled]="!canEditContent()"
                           />
                           <div class="category-options" aria-label="Chosen categories">
                             @for (category of chosenCategoryOptions(); track category.id) {
-                              <button type="button" (click)="removeCategory(category.id)">
+                              <button type="button" [disabled]="!canEditContent()" (click)="removeCategory(category.id)">
                                 {{ categoryDisplayName(category) }}
                               </button>
                             } @empty {
@@ -163,7 +192,7 @@ declare const L: any;
                           </div>
                           <div class="category-action-spacer"></div>
                           <div class="category-bottom-action">
-                            <button type="button" class="secondary category-wide-action" (click)="removeAllFilteredCategories()">Remove all</button>
+                            <button type="button" class="secondary category-wide-action" [disabled]="!canEditContent()" (click)="removeAllFilteredCategories()">Remove all</button>
                           </div>
                         </section>
                       </div>
@@ -196,7 +225,9 @@ declare const L: any;
                       <span>{{ translation.language_code || 'New language' }}</span>
                     </button>
                   }
-                  <button type="button" class="translation-tab add-tab" (click)="addTranslation()">+</button>
+                  @if (canEditContent()) {
+                    <button type="button" class="translation-tab add-tab" (click)="addTranslation()">+</button>
+                  }
                 </div>
 
                 @if (activeTranslation(); as translation) {
@@ -204,12 +235,14 @@ declare const L: any;
                     <div class="translation-tab-header">
                       <label>
                         <span>Language</span>
-                        <input type="text" [(ngModel)]="translation.language_code" [name]="'language' + activeTranslationIndex" />
+                        <input type="text" [(ngModel)]="translation.language_code" [name]="'language' + activeTranslationIndex" [disabled]="!canEditContent()" />
                       </label>
                       @if (translation.is_reference) {
                         <span class="reference-pill"><span aria-hidden="true">★</span> Reference language</span>
                       } @else {
-                        <button type="button" class="secondary" (click)="setReferenceTranslation(activeTranslationIndex)">Make reference</button>
+                        @if (canEditContent()) {
+                          <button type="button" class="secondary" (click)="setReferenceTranslation(activeTranslationIndex)">Make reference</button>
+                        }
                       }
                     </div>
 
@@ -217,11 +250,11 @@ declare const L: any;
                       <div class="translation-single-column">
                         <label>
                           <span>Title</span>
-                          <input type="text" [(ngModel)]="translation.title" [name]="'title' + activeTranslationIndex" />
+                          <input type="text" [(ngModel)]="translation.title" [name]="'title' + activeTranslationIndex" [disabled]="!canEditContent()" />
                         </label>
                         <label>
                           <span>Description</span>
-                          <textarea rows="8" [(ngModel)]="translation.description" [name]="'description' + activeTranslationIndex"></textarea>
+                          <textarea rows="8" [(ngModel)]="translation.description" [name]="'description' + activeTranslationIndex" [disabled]="!canEditContent()"></textarea>
                         </label>
                       </div>
                     } @else {
@@ -241,16 +274,16 @@ declare const L: any;
                           <h3>{{ translation.language_code || 'Translation' }}</h3>
                           <label>
                             <span>Title</span>
-                            <input type="text" [(ngModel)]="translation.title" [name]="'title' + activeTranslationIndex" />
+                            <input type="text" [(ngModel)]="translation.title" [name]="'title' + activeTranslationIndex" [disabled]="!canEditContent()" />
                           </label>
                           <label>
                             <span>Description</span>
-                            <textarea rows="8" [(ngModel)]="translation.description" [name]="'description' + activeTranslationIndex"></textarea>
+                            <textarea rows="8" [(ngModel)]="translation.description" [name]="'description' + activeTranslationIndex" [disabled]="!canEditContent()"></textarea>
                           </label>
                         </section>
                       </div>
                     }
-                    @if (translations.length > 1) {
+                    @if (canEditContent() && translations.length > 1) {
                       <button type="button" class="secondary danger-action" (click)="removeTranslation(activeTranslationIndex)">
                         Remove this translation
                       </button>
@@ -265,7 +298,9 @@ declare const L: any;
             <section class="editor-panel">
               <div class="section-heading">
                 <h2>Linked media</h2>
-                <button type="button" class="secondary" (click)="addMedia()">Add media</button>
+                @if (canEditContent()) {
+                  <button type="button" class="secondary" (click)="addMedia()">Add media</button>
+                }
               </div>
 
               <div class="media-list">
@@ -281,7 +316,7 @@ declare const L: any;
                     <div class="media-fields">
                       <label>
                         <span>Type</span>
-                        <select [(ngModel)]="item.media_type" [name]="'mediaType' + $index">
+                        <select [(ngModel)]="item.media_type" [name]="'mediaType' + $index" [disabled]="!canEditContent()">
                           @for (type of mediaTypes; track type) {
                             <option [value]="type">{{ mediaTypeLabel(type) }}</option>
                           }
@@ -289,18 +324,20 @@ declare const L: any;
                       </label>
                       <label>
                         <span>Position</span>
-                        <input type="number" min="0" [(ngModel)]="item.position" [name]="'mediaPosition' + $index" />
+                        <input type="number" min="0" [(ngModel)]="item.position" [name]="'mediaPosition' + $index" [disabled]="!canEditContent()" />
                       </label>
                       <label class="metadata-full-row">
                         <span>URL</span>
-                        <input type="url" [(ngModel)]="item.url" [name]="'mediaUrl' + $index" />
+                        <input type="url" [(ngModel)]="item.url" [name]="'mediaUrl' + $index" [disabled]="!canEditContent()" />
                       </label>
                       <label class="checkbox-label">
-                        <input type="checkbox" [checked]="item.is_primary" (change)="setPrimaryMedia($index, $any($event.target).checked)" />
+                        <input type="checkbox" [checked]="item.is_primary" [disabled]="!canEditContent()" (change)="setPrimaryMedia($index, $any($event.target).checked)" />
                         <span>Primary media</span>
                       </label>
                     </div>
-                    <button type="button" class="secondary danger-action" (click)="removeMedia($index)">Remove</button>
+                    @if (canEditContent()) {
+                      <button type="button" class="secondary danger-action" (click)="removeMedia($index)">Remove</button>
+                    }
                   </article>
                 } @empty {
                   <p class="muted">No media linked to this POI yet.</p>
@@ -324,6 +361,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   private locationMarker: any = null;
   private locationResizeObserver: ResizeObserver | null = null;
   private countryRequestId = 0;
+  private readonly poiSaveChannelName = 'smartways-poi-editor-saved';
 
   poi: Poi | null = null;
   isNewPoi = false;
@@ -333,9 +371,11 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   saving = false;
   statusMessage = '';
   statusIsError = false;
+  titleNeedsRefresh = false;
+  geocodingTitle = false;
   activeTab: EditorTab = 'basic';
   activeTranslationIndex = 0;
-  backLink = '/pois';
+  backLink: string | UrlTree = '/pois';
   backLabel = 'Back to POIs';
 
   enabled = false;
@@ -349,6 +389,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   newCategoryName = '';
   translations: TranslationDraft[] = [];
   media: MediaDraft[] = [];
+  private savedSnapshot = '';
 
   readonly mediaTypes: PoiMedia['media_type'][] = ['image', 'video', 'audio', 'document', 'link', 'other'];
 
@@ -356,7 +397,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     const returnTo = this.route.snapshot.queryParamMap.get('returnTo');
     const returnLabel = this.route.snapshot.queryParamMap.get('returnLabel');
     if (returnTo?.startsWith('/')) {
-      this.backLink = returnTo;
+      this.backLink = this.router.parseUrl(returnTo);
     }
     if (returnLabel) {
       this.backLabel = returnLabel;
@@ -419,6 +460,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   addTranslation(): void {
+    if (!this.canEditContent()) return;
     this.translations.push({
       language_code: '',
       title: '',
@@ -430,6 +472,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   removeTranslation(index: number): void {
+    if (!this.canEditContent()) return;
     if (this.translations.length <= 1) return;
     const wasReference = this.translations[index]?.is_reference;
     this.translations.splice(index, 1);
@@ -440,6 +483,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   setReferenceTranslation(index: number): void {
+    if (!this.canEditContent()) return;
     const current = this.referenceTranslation();
     const target = this.translations[index];
     if (!target) return;
@@ -456,6 +500,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   addMedia(): void {
+    if (!this.canEditContent()) return;
     this.media.push({
       media_type: 'image',
       url: '',
@@ -465,6 +510,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   removeMedia(index: number): void {
+    if (!this.canEditContent()) return;
     const wasPrimary = this.media[index]?.is_primary;
     this.media.splice(index, 1);
     if (wasPrimary && this.media.length > 0) {
@@ -473,6 +519,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   setPrimaryMedia(index: number, checked: boolean): void {
+    if (!this.canEditContent()) return;
     if (!checked) {
       this.media[index].is_primary = false;
       return;
@@ -502,27 +549,32 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   addCategory(categoryId: number): void {
+    if (!this.canEditContent()) return;
     if (!this.categoryIds.includes(categoryId)) {
       this.categoryIds = [...this.categoryIds, categoryId];
     }
   }
 
   removeCategory(categoryId: number): void {
+    if (!this.canEditContent()) return;
     this.categoryIds = this.categoryIds.filter(id => id !== categoryId);
   }
 
   chooseAllFilteredCategories(): void {
+    if (!this.canEditContent()) return;
     const ids = new Set(this.categoryIds);
     this.availableCategoryOptions().forEach(category => ids.add(category.id));
     this.categoryIds = [...ids];
   }
 
   removeAllFilteredCategories(): void {
+    if (!this.canEditContent()) return;
     const filteredIds = new Set(this.chosenCategoryOptions().map(category => category.id));
     this.categoryIds = this.categoryIds.filter(id => !filteredIds.has(id));
   }
 
   async createCategoryFromEditor(): Promise<void> {
+    if (!this.canEditContent()) return;
     const name = this.newCategoryName.trim();
     if (!name) {
       this.showStatus('Enter a category name before creating it.', true);
@@ -547,11 +599,27 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  async savePoi(makePublic: boolean): Promise<void> {
-    if (!this.isEditableDraft()) {
-      this.showStatus('Public POIs cannot be edited.', true);
+  async savePoi(): Promise<void> {
+    if (!this.canSave()) {
+      this.showStatus('There are no editable changes to save.', true);
       return;
     }
+
+    if (this.poi?.enabled && !this.enabled) {
+      this.saving = true;
+      try {
+        const updated = await firstValueFrom(this.api.updatePoi(this.poi.id, { enabled: false }));
+        this.loadPoi(updated);
+        this.notifyItineraryEditorPoiSaved(updated);
+        this.showStatus('POI saved as draft.', false);
+      } catch (error) {
+        this.showStatus(`Could not save POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      } finally {
+        this.saving = false;
+      }
+      return;
+    }
+
     const translations = this.normalizedTranslations();
     if (translations.length === 0 || translations.some(translation => !translation.language_code || !translation.title)) {
       this.showStatus('Every POI translation needs a language and title.', true);
@@ -571,7 +639,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.saving = true;
     try {
       const payload = {
-        enabled: makePublic,
+        enabled: this.enabled,
         country_code: this.countryCode.trim().toUpperCase(),
         gps_latitude: Number(this.latitude),
         gps_longitude: Number(this.longitude),
@@ -584,11 +652,18 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         ? await firstValueFrom(this.api.updatePoi(this.poi.id, payload))
         : await firstValueFrom(this.api.createPoi(payload));
       this.loadPoi(updated);
+      this.notifyItineraryEditorPoiSaved(updated);
       if (this.isNewPoi) {
         this.isNewPoi = false;
-        void this.router.navigate(['/pois', updated.id, 'edit'], { replaceUrl: true });
+        const highlightedReturnTo = this.returnToWithHighlight(updated.id);
+        void this.router.navigate(['/pois', updated.id, 'edit'], {
+          replaceUrl: true,
+          queryParams: highlightedReturnTo
+            ? { ...this.route.snapshot.queryParams, returnTo: highlightedReturnTo }
+            : this.route.snapshot.queryParams
+        });
       }
-      this.showStatus(makePublic ? 'POI saved and made public.' : 'Draft saved.', false);
+      this.showStatus(this.enabled ? 'POI saved as public.' : 'POI saved as draft.', false);
     } catch (error) {
       this.showStatus(`Could not save POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     } finally {
@@ -596,8 +671,26 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  isEditableDraft(): boolean {
-    return this.isNewPoi || !this.poi || !this.poi.enabled;
+  canEditContent(): boolean {
+    return this.isNewPoi || !this.poi || !this.poi.enabled || !this.enabled;
+  }
+
+  canSave(): boolean {
+    return this.currentSnapshot() !== this.savedSnapshot
+      && (this.canEditContent() || Boolean(this.poi && this.poi.enabled !== this.enabled));
+  }
+
+  private returnToWithHighlight(poiId: number): string | null {
+    const returnTo = this.route.snapshot.queryParamMap.get('returnTo');
+    if (!returnTo?.startsWith('/pois')) return null;
+
+    const returnUrl = this.router.parseUrl(returnTo);
+    returnUrl.queryParams = {
+      ...returnUrl.queryParams,
+      highlight: String(poiId)
+    };
+    this.backLink = returnUrl;
+    return this.router.serializeUrl(returnUrl);
   }
 
   private loadPoi(poi: Poi): void {
@@ -611,33 +704,131 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.translations = this.translationDraftsFrom(poi.translations, poi.title, poi.description, poi.slug);
     this.activeTranslationIndex = Math.max(0, this.translations.findIndex(translation => translation.is_reference));
     this.media = this.mediaDraftsFrom(poi.media || [], poi.images || []);
+    this.titleNeedsRefresh = false;
     this.editorReady = true;
+    this.savedSnapshot = this.currentSnapshot();
     window.setTimeout(() => this.updateLocationMarker(true), 0);
   }
 
   private loadBlankPoi(): void {
+    const latitude = this.queryNumber('latitude') ?? this.queryNumber('lat');
+    const longitude = this.queryNumber('longitude') ?? this.queryNumber('lng') ?? this.queryNumber('lon');
     this.poi = null;
     this.enabled = false;
     this.countryCode = '';
-    this.latitude = null;
-    this.longitude = null;
+    this.latitude = latitude;
+    this.longitude = longitude;
     this.website = '';
     this.categoryIds = [];
     this.translations = [{
       language_code: 'en',
-      title: '',
+      title: this.route.snapshot.queryParamMap.get('title') || '',
       description: '',
       slug: '',
       is_reference: true
     }];
     this.activeTranslationIndex = 0;
     this.media = [];
+    this.titleNeedsRefresh = false;
     this.editorReady = true;
+    this.savedSnapshot = (Number.isFinite(this.latitude) && Number.isFinite(this.longitude)) || Boolean(this.translations[0].title)
+      ? ''
+      : this.currentSnapshot();
+    if (Number.isFinite(this.latitude) && Number.isFinite(this.longitude)) {
+      void this.updateCountryFromCoordinates();
+    }
+  }
+
+  private queryNumber(name: string): number | null {
+    const rawValue = this.route.snapshot.queryParamMap.get(name);
+    if (rawValue === null) return null;
+    const value = Number(rawValue);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  private notifyItineraryEditorPoiSaved(poi: Poi): void {
+    const editorToken = this.route.snapshot.queryParamMap.get('itineraryEditorToken');
+    const pointId = this.route.snapshot.queryParamMap.get('convertPointId');
+    if (!editorToken || !pointId) return;
+
+    const message = {
+      editorToken,
+      pointId,
+      poi: {
+        id: poi.id,
+        label: poi.title || `POI ${poi.id}`,
+        lat: poi.gps_latitude,
+        lng: poi.gps_longitude,
+        enabled: poi.enabled
+      }
+    };
+
+    if ('BroadcastChannel' in window) {
+      const channel = new BroadcastChannel(this.poiSaveChannelName);
+      channel.postMessage(message);
+      channel.close();
+    }
+    localStorage.setItem(this.poiSaveChannelName, JSON.stringify({
+      ...message,
+      sentAt: Date.now()
+    }));
+  }
+
+  private featureProperties(feature: unknown): Record<string, string> | null {
+    if (!feature || typeof feature !== 'object' || !('properties' in feature)) return null;
+    const properties = (feature as { properties?: unknown }).properties;
+    if (!properties || typeof properties !== 'object') return null;
+    return properties as Record<string, string>;
+  }
+
+  private placeTitle(properties: Record<string, string>): string {
+    return properties['name'] || properties['street'] || properties['city'] || properties['country'] || 'Unnamed place';
   }
 
   coordinatesChanged(): void {
+    if (!this.canEditContent()) return;
     this.updateLocationMarker(false);
     void this.updateCountryFromCoordinates();
+    if (!this.referenceTranslation()?.title.trim()) {
+      void this.refreshTitleFromGeocoder();
+      return;
+    }
+    this.titleNeedsRefresh = true;
+  }
+
+  referenceTitleChanged(): void {
+    this.titleNeedsRefresh = false;
+  }
+
+  hasValidCoordinates(): boolean {
+    return Number.isFinite(this.latitude) && Number.isFinite(this.longitude);
+  }
+
+  async refreshTitleFromGeocoder(): Promise<void> {
+    if (!this.hasValidCoordinates()) {
+      this.showStatus('Latitude and longitude are required before using the geocoder.', true);
+      return;
+    }
+    const reference = this.referenceTranslation();
+    if (!reference) return;
+
+    this.geocodingTitle = true;
+    try {
+      const data = await firstValueFrom(this.api.reverseGeocode(Number(this.latitude), Number(this.longitude)));
+      const feature = Array.isArray(data.features) ? data.features[0] : null;
+      const properties = this.featureProperties(feature);
+      if (!properties) {
+        this.showStatus('No place name found for these coordinates.', true);
+        return;
+      }
+      reference.title = this.placeTitle(properties);
+      this.titleNeedsRefresh = false;
+      this.clearStatus();
+    } catch (error) {
+      this.showStatus(`Could not get place name. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    } finally {
+      this.geocodingTitle = false;
+    }
   }
 
   private initializeLocationMap(): void {
@@ -655,10 +846,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(this.locationMap);
     this.locationMap.on('click', (event: any) => {
+      if (!this.canEditContent()) return;
       this.latitude = Number(event.latlng.lat.toFixed(7));
       this.longitude = Number(event.latlng.lng.toFixed(7));
-      this.updateLocationMarker(false);
-      void this.updateCountryFromCoordinates();
+      this.coordinatesChanged();
     });
     this.locationResizeObserver = new ResizeObserver(() => this.locationMap?.invalidateSize(false));
     this.locationResizeObserver.observe(this.locationMapElement.nativeElement);
@@ -786,6 +977,19 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       media[0].is_primary = true;
     }
     return media;
+  }
+
+  private currentSnapshot(): string {
+    return JSON.stringify({
+      enabled: Boolean(this.enabled),
+      country_code: this.countryCode.trim().toUpperCase(),
+      gps_latitude: Number.isFinite(Number(this.latitude)) ? Number(this.latitude) : null,
+      gps_longitude: Number.isFinite(Number(this.longitude)) ? Number(this.longitude) : null,
+      website: this.website.trim(),
+      category_ids: [...this.categoryIds].sort((left, right) => left - right),
+      translations: this.normalizedTranslations(),
+      media: this.normalizedMedia()
+    });
   }
 
   private filterCategories(categories: Category[], filter: string): Category[] {

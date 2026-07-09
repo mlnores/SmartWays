@@ -32,4 +32,10 @@ export class ItineraryEditorSidebarComponent {
   @Output() readonly clearAll = new EventEmitter<void>();
   @Output() readonly fitRoute = new EventEmitter<void>();
   @Output() readonly showRouteSummary = new EventEmitter<void>();
+
+  confirmClearAll(): void {
+    if (window.confirm('Clear all points from this itinerary?')) {
+      this.clearAll.emit();
+    }
+  }
 }

@@ -5,17 +5,16 @@
         <h1>Itinerary Editor</h1>
       </div>
       <div class="panel-header-actions" aria-label="Itinerary state actions">
-        <button class="editor-help" type="button" aria-label="Editor help">
-          ?
-          <span class="editor-help-tooltip" role="tooltip">
-            Click the map to add points, or search for a place below.
-            The sequence is drawn in the order 1 → 2 → 3 → … Drag points to reorder them.
+        <span class="header-action-stack">
+          <span class="header-action-row">
+            <button id="revertItinerary" type="button" title="Revert to last saved itinerary" (click)="revertItinerary.emit()">Revert</button>
+            <button id="saveItinerary" type="button" class="primary" title="Save current itinerary" (click)="saveItinerary.emit()">Save</button>
           </span>
-        </button>
-        <button id="revertItinerary" type="button" title="Revert to last saved itinerary" (click)="revertItinerary.emit()">Revert</button>
-        <button id="undoItinerary" type="button" aria-label="Undo last itinerary change" title="Undo last itinerary change (Cmd/Ctrl+Z)" (click)="undoItinerary.emit()">↶</button>
-        <button id="redoItinerary" type="button" aria-label="Redo last undone itinerary change" title="Redo last undone itinerary change (Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)" (click)="redoItinerary.emit()">↷</button>
-        <button id="saveItinerary" type="button" class="primary" title="Save current itinerary" (click)="saveItinerary.emit()">Save</button>
+          <span class="header-action-row">
+            <button id="undoItinerary" type="button" aria-label="Undo last itinerary change" title="Undo last itinerary change (Cmd/Ctrl+Z)" (click)="undoItinerary.emit()">↶</button>
+            <button id="redoItinerary" type="button" aria-label="Redo last undone itinerary change" title="Redo last undone itinerary change (Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)" (click)="redoItinerary.emit()">↷</button>
+          </span>
+        </span>
       </div>
     </div>
     <div class="tabs" role="tablist" aria-label="Add itinerary items">
@@ -102,8 +101,8 @@
   </div>
 
   <div class="panel-footer">
-    <button class="danger" id="clearAll" (click)="clearAll.emit()">Clear all</button>
+    <button class="danger" id="clearAll" (click)="confirmClearAll()">Clear all</button>
     <button id="fitRoute" (click)="fitRoute.emit()">Fit points</button>
-    <button id="showRoute" (click)="showRouteSummary.emit()">Route summary</button>
+    <button id="showRoute" (click)="showRouteSummary.emit()">Itinerary summary</button>
   </div>
 </aside>

@@ -8,12 +8,10 @@ export interface ItineraryEditorRuntime {
   fitRoute: () => void;
   showRouteSummary: () => void;
   saveItinerary: () => void;
-  saveItineraryToServer: () => void;
   revertItinerary: () => void;
   undoItinerary: () => void;
   redoItinerary: () => void;
   closeRouteDialog: () => void;
-  closeItineraryJsonDialog: () => void;
   closePoiDetailDialog: () => void;
   addPoiFromDetail: () => void;
   activateTab: (tabName: SearchType) => void;
