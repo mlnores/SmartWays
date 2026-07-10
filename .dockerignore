@@ -12,4 +12,6 @@ POI_data
 routes_data
 POI_data.zip
 routes_data.zip
+geoboundaries_adm0.geojson
+backend/pois/data/geoboundaries_adm0.geojson
 docker-data

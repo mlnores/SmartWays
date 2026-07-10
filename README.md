@@ -222,7 +222,14 @@ DJANGO_ALLOWED_HOSTS
 DJANGO_CSRF_TRUSTED_ORIGINS
 ```
 
-If the app is served from a public domain, `DJANGO_ALLOWED_HOSTS` must include that domain. If using the Django admin through that domain, add the full origin to `DJANGO_CSRF_TRUSTED_ORIGINS`, for example:
+If the app is served directly from a server IP address, `DJANGO_ALLOWED_HOSTS` must include that IP address. If using the Django admin or API through the frontend proxy, add the frontend origin to `DJANGO_CSRF_TRUSTED_ORIGINS`, for example:
+
+```text
+DJANGO_ALLOWED_HOSTS=203.0.113.10,localhost,127.0.0.1,backend
+DJANGO_CSRF_TRUSTED_ORIGINS=http://203.0.113.10:4200
+```
+
+If the app is served from a public domain, `DJANGO_ALLOWED_HOSTS` must include that domain:
 
 ```text
 DJANGO_ALLOWED_HOSTS=smartways.example.org,backend
