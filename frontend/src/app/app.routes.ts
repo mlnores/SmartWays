@@ -5,17 +5,18 @@ import { ItineraryListComponent } from './itinerary-list.component';
 import { PoiEditorComponent } from './poi-editor.component';
 import { PoiListComponent } from './poi-list.component';
 import { RouteListComponent } from './route-list.component';
+import { unsavedChangesGuard } from './unsaved-changes.guard';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'itineraries' },
   { path: 'itineraries', component: ItineraryListComponent },
-  { path: 'itineraries/new', component: ItineraryEditorComponent },
-  { path: 'itineraries/:id/edit', component: ItineraryEditorComponent },
+  { path: 'itineraries/new', component: ItineraryEditorComponent, canDeactivate: [unsavedChangesGuard] },
+  { path: 'itineraries/:id/edit', component: ItineraryEditorComponent, canDeactivate: [unsavedChangesGuard] },
   { path: 'itineraries/:id/pois', component: PoiListComponent },
   { path: 'routes', component: RouteListComponent },
   { path: 'route/:slug', component: ItineraryListComponent },
   { path: 'pois', component: PoiListComponent },
-  { path: 'pois/new', component: PoiEditorComponent },
-  { path: 'pois/:id/edit', component: PoiEditorComponent },
+  { path: 'pois/new', component: PoiEditorComponent, canDeactivate: [unsavedChangesGuard] },
+  { path: 'pois/:id/edit', component: PoiEditorComponent, canDeactivate: [unsavedChangesGuard] },
   { path: '**', redirectTo: 'itineraries' }
 ];

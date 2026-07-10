@@ -16,6 +16,7 @@
         const initialSegmentIndex = Number.isInteger(options.initialSegmentIndex) && options.initialSegmentIndex >= 0
           ? options.initialSegmentIndex
           : null;
+        const initialDraftState = options.initialDraftState || null;
         const getElementById = id => editorRoot.querySelector('#' + id) || document.getElementById(id);
         const mapElement = getElementById("mapCanvas");
         const map = L.map(mapElement, {
@@ -863,6 +864,10 @@
             nextPointId
           };
         }
+
+        function draftSnapshot() {
+          return currentItineraryState();
+        }
     
         function selectedRouteFromState(state, segmentIndex) {
           const segmentRoutes = state.segmentWalkingRoutes[segmentIndex];
@@ -1122,8 +1127,17 @@
             render();
             updateHistoryButtons();
             notifyDirtyState(true);
+            if (initialDraftState?.points) {
+              restoreItineraryState(initialDraftState);
+              undoStack = [];
+              redoStack = [];
+              updateHistoryButtons();
+              notifyDirtyState(true);
+            }
             if (segmentToActivate !== null && segmentToActivate >= 0 && segmentToActivate < points.length - 1) {
               activateSegment(segmentToActivate, true, true);
+            } else if (activeSegmentIndex !== null && activeSegmentIndex >= 0 && activeSegmentIndex < points.length - 1) {
+              activateSegment(activeSegmentIndex, true, true);
             } else if (points.length > 0) {
               fitRoute();
             }
@@ -2897,6 +2911,12 @@
         const initialItineraryId = options.itineraryId || new URLSearchParams(window.location.search).get("itinerary");
         if (initialItineraryId) {
           loadItineraryForEditing(initialItineraryId, initialSegmentIndex);
+        } else if (initialDraftState?.points) {
+          restoreItineraryState(initialDraftState);
+          undoStack = [];
+          redoStack = [];
+          updateHistoryButtons();
+          notifyDirtyState(true);
         }
 
         const poiSaveMessageHandler = event => {
@@ -2938,6 +2958,7 @@
             mapElement.removeEventListener("click", suppressPopupActionMapClick, true);
             map.remove();
           },
+          draftSnapshot,
           clearAll,
           fitRoute,
           showRouteSummary,

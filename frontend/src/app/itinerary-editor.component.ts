@@ -1,4 +1,4 @@
-import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, ViewChild, ViewEncapsulation, inject } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, ViewChild, ViewEncapsulation, inject } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { EditorApiService } from './editor-api.service';
 import { ItineraryEditorDialogsComponent } from './itinerary-editor-dialogs.component';
@@ -14,8 +14,10 @@ declare global {
       api: ItineraryEditorApi;
       initialSegmentIndex?: number | null;
       editorSessionToken?: string;
+      initialDraftState?: unknown;
       createPoiAt?: (lat: number, lng: number, segmentIndex: number | null, pointId?: string | null, label?: string) => void;
       editPoi?: (poiId: string, segmentIndex: number | null) => void;
+      dirtyStateChanged?: (isDirty: boolean) => void;
       saveStatusChanged?: (status: { message: string; type: 'info' | 'success' | 'error' } | null) => void;
     }) => ItineraryEditorRuntime;
   }
@@ -48,6 +50,7 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   private readonly editorSessionToken = globalThis.crypto?.randomUUID?.() || `editor-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   private editor: ItineraryEditorRuntime | null = null;
   private saveFeedbackTimer: number | null = null;
+  private dirty = false;
   saveFeedback: { message: string; type: 'info' | 'success' | 'error' } | null = null;
 
   ngAfterViewInit(): void {
@@ -70,8 +73,13 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
       },
       initialSegmentIndex: this.requestedSegmentIndex(),
       editorSessionToken: this.editorSessionToken,
+      initialDraftState: this.loadEditorDraft(),
       createPoiAt: (lat, lng, segmentIndex, pointId, label) => this.openPoiEditorAt(lat, lng, segmentIndex, pointId, label),
       editPoi: (poiId, segmentIndex) => this.openPoiEditorForExistingPoi(poiId, segmentIndex),
+      dirtyStateChanged: isDirty => {
+        this.dirty = isDirty;
+        this.changeDetector.detectChanges();
+      },
       saveStatusChanged: status => {
         this.saveFeedback = status;
         if (this.saveFeedbackTimer !== null) {
@@ -79,6 +87,9 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
           this.saveFeedbackTimer = null;
         }
         if (status && status.type !== 'info') {
+          if (status.type === 'success') {
+            this.clearEditorDraft();
+          }
           this.saveFeedbackTimer = window.setTimeout(() => {
             this.saveFeedback = null;
             this.saveFeedbackTimer = null;
@@ -111,6 +122,7 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   private openPoiEditorAt(lat: number, lng: number, segmentIndex: number | null, pointId: string | null = null, label = ''): void {
+    this.saveEditorDraft();
     const returnTo = this.router.serializeUrl(this.router.createUrlTree([], {
       relativeTo: this.route,
       queryParams: segmentIndex === null ? {} : { segment: segmentIndex },
@@ -131,6 +143,7 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   private openPoiEditorForExistingPoi(poiId: string, segmentIndex: number | null): void {
+    this.saveEditorDraft();
     const returnTo = this.router.serializeUrl(this.router.createUrlTree([], {
       relativeTo: this.route,
       queryParams: segmentIndex === null ? {} : { segment: segmentIndex },
@@ -143,6 +156,53 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
       }
     }));
     void this.router.navigateByUrl(poiEditorUrl);
+  }
+
+  private editorDraftKey(): string {
+    return `smartways-itinerary-editor-draft:${this.route.snapshot.paramMap.get('id') || 'new'}`;
+  }
+
+  private saveEditorDraft(): void {
+    const snapshot = this.editor?.draftSnapshot();
+    if (!snapshot) return;
+    try {
+      sessionStorage.setItem(this.editorDraftKey(), JSON.stringify({
+        savedAt: new Date().toISOString(),
+        snapshot
+      }));
+    } catch {
+      // Losing the temporary draft is better than blocking navigation to the POI editor.
+    }
+  }
+
+  private loadEditorDraft(): unknown {
+    try {
+      const rawValue = sessionStorage.getItem(this.editorDraftKey());
+      if (!rawValue) return null;
+      const parsed = JSON.parse(rawValue) as { snapshot?: unknown };
+      return parsed.snapshot || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private clearEditorDraft(): void {
+    try {
+      sessionStorage.removeItem(this.editorDraftKey());
+    } catch {
+      // Ignore storage failures.
+    }
+  }
+
+  hasUnsavedChanges(): boolean {
+    return this.dirty;
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  handleBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!this.hasUnsavedChanges()) return;
+    event.preventDefault();
+    event.returnValue = '';
   }
 
   clearAll(): void { this.editor?.clearAll(); }

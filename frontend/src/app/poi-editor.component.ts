@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
@@ -692,6 +692,17 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   canSave(): boolean {
     return this.currentSnapshot() !== this.savedSnapshot
       && (this.canEditContent() || Boolean(this.poi && this.poi.enabled !== this.enabled));
+  }
+
+  hasUnsavedChanges(): boolean {
+    return !this.loading && !this.saving && this.canSave();
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  handleBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!this.hasUnsavedChanges()) return;
+    event.preventDefault();
+    event.returnValue = '';
   }
 
   private returnToWithHighlight(poiId: number): string | null {

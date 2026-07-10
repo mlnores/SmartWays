@@ -4,6 +4,7 @@ export type SearchType = 'poi' | 'waypoint';
 
 export interface ItineraryEditorRuntime {
   destroy: () => void;
+  draftSnapshot: () => unknown;
   clearAll: () => void;
   fitRoute: () => void;
   showRouteSummary: () => void;
