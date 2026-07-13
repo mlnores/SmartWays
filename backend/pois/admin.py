@@ -7,6 +7,7 @@ from .models import (
     ItineraryTranslation,
     POI,
     POIMedia,
+    POIMediaTranslation,
     POITranslation,
     Route,
     RouteStage,
@@ -22,6 +23,12 @@ class POITranslationInline(admin.TabularInline):
 
 class POIMediaInline(admin.TabularInline):
     model = POIMedia
+    extra = 1
+
+
+class POIMediaTranslationInline(admin.TabularInline):
+    model = POIMediaTranslation
+    fields = ["language_code", "caption"]
     extra = 1
 
 
@@ -64,7 +71,15 @@ class CategoryTranslationAdmin(admin.ModelAdmin):
 class POIMediaAdmin(admin.ModelAdmin):
     list_display = ["id", "poi", "media_type", "position", "is_primary", "url"]
     list_filter = ["media_type", "is_primary"]
-    search_fields = ["url"]
+    search_fields = ["url", "translations__caption"]
+    inlines = [POIMediaTranslationInline]
+
+
+@admin.register(POIMediaTranslation)
+class POIMediaTranslationAdmin(admin.ModelAdmin):
+    list_display = ["id", "media", "language_code", "caption"]
+    list_filter = ["language_code"]
+    search_fields = ["caption"]
 
 
 class ItineraryTranslationInline(admin.TabularInline):

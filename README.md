@@ -218,6 +218,7 @@ For a real deployment, change at least:
 ```text
 DJANGO_SECRET_KEY
 POSTGRES_PASSWORD
+SMARTWAYS_MEDIA_SECRET_KEY
 DJANGO_ALLOWED_HOSTS
 DJANGO_CSRF_TRUSTED_ORIGINS
 ```
@@ -274,7 +275,30 @@ Default local URLs:
 http://localhost:4200/        Angular frontend
 http://localhost:8000/api/    Backend API exposed directly
 http://localhost:4200/admin/  Django admin through frontend Nginx
+http://localhost:9000/        MinIO S3-compatible media API
+http://localhost:9001/        MinIO admin console
 ```
+
+### POI Media Storage
+
+The Docker deployment includes MinIO, an S3-compatible object storage service, for files uploaded through the POI editor. Django stores media metadata in PostgreSQL and uploads the actual files to the MinIO bucket.
+
+The relevant `.env` settings are:
+
+```text
+SMARTWAYS_MEDIA_STORAGE=s3
+SMARTWAYS_MEDIA_BUCKET=smartways-media
+SMARTWAYS_MEDIA_ENDPOINT=http://minio:9000
+SMARTWAYS_MEDIA_PUBLIC_URL=http://localhost:9000/smartways-media
+SMARTWAYS_MEDIA_ACCESS_KEY=smartways
+SMARTWAYS_MEDIA_SECRET_KEY=change-this
+```
+
+`SMARTWAYS_MEDIA_ENDPOINT` is the internal URL used by the backend container. `SMARTWAYS_MEDIA_PUBLIC_URL` is the URL browsers use to load uploaded media. If MinIO runs on another machine, point `SMARTWAYS_MEDIA_ENDPOINT` to that server from Docker and set `SMARTWAYS_MEDIA_PUBLIC_URL` to the public media URL.
+
+The Docker MinIO service uses `SMARTWAYS_MEDIA_ACCESS_KEY`, `SMARTWAYS_MEDIA_SECRET_KEY`, and `SMARTWAYS_MEDIA_BUCKET` to create the local object-storage bucket. Use the same access key and secret to log into the MinIO console.
+
+Uploaded media is stored in the Docker volume `smartways_minio_data`, so it survives container rebuilds. Remove that volume only when you intentionally want to delete uploaded files.
 
 ### Create An Admin User
 

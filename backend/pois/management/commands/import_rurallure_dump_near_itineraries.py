@@ -1,5 +1,7 @@
 import math
 from pathlib import Path
+import sys
+import time
 
 from django.core.management.base import CommandError
 from django.db import transaction
@@ -9,6 +11,54 @@ from pois.models import Category, CategoryTranslation, Itinerary, POI, POIMedia,
 
 
 EARTH_RADIUS_METERS = 6371000
+
+
+class ProgressReporter:
+    def __init__(self, stdout, label, total, every_seconds=2):
+        self.stdout = stdout
+        self.label = label
+        self.total = total
+        self.every_seconds = every_seconds
+        self.started_at = time.monotonic()
+        self.last_report_at = 0
+        self.finished = False
+        self.last_reported_current = None
+
+    def update(self, current):
+        if self.total <= 0:
+            return
+        if current == self.last_reported_current:
+            return
+        now = time.monotonic()
+        if current < self.total and now - self.last_report_at < self.every_seconds:
+            return
+        self.last_report_at = now
+        self.last_reported_current = current
+        percent = current / self.total
+        bar_width = 28
+        filled = min(bar_width, int(percent * bar_width))
+        bar = "#" * filled + "-" * (bar_width - filled)
+        elapsed = max(now - self.started_at, 0.001)
+        rate = current / elapsed
+        remaining = (self.total - current) / rate if rate > 0 else 0
+        message = (
+            f"\r{self.label}: [{bar}] {current}/{self.total} "
+            f"({percent:.0%}) elapsed {elapsed:.0f}s"
+        )
+        if current < self.total:
+            message += f", eta {remaining:.0f}s"
+        self.stdout.write(message, ending="")
+        try:
+            self.stdout.flush()
+        except AttributeError:
+            sys.stdout.flush()
+
+    def finish(self):
+        if not self.finished:
+            self.last_report_at = 0
+            self.update(self.total)
+            self.finished = True
+        self.stdout.write("")
 
 
 def finite_float(value):
@@ -212,16 +262,25 @@ class Command(RurallureDumpImportCommand):
         if not Itinerary.objects.exists():
             raise CommandError("No itineraries exist in the database.")
 
+        self.stdout.write("Building itinerary distance index...")
         distance_index = ItineraryDistanceIndex.from_database(max_distance_km)
         if not distance_index.segments and not distance_index.points:
             raise CommandError("No usable coordinates were found in the saved itineraries.")
+        self.stdout.write(
+            f"Distance index ready: {len(distance_index.segments)} path segments, "
+            f"{len(distance_index.points)} standalone points."
+        )
 
         dump_path = Path(options["dump_path"]).expanduser().resolve()
         if not dump_path.exists():
             raise CommandError(f"Dump file not found: {dump_path}")
 
+        self.stdout.write(f"Parsing {dump_path}...")
         data = self.load_dump_data(dump_path)
         self.stdout.write(f"Parsed {dump_path}")
+        self.stdout.write(
+            f"Filtering POIs within {min_distance_km:g}-{max_distance_km:g} km of saved itineraries..."
+        )
         filtered_data, filter_stats = self.filter_data_by_distance_range(
             data,
             distance_index,
@@ -250,12 +309,14 @@ class Command(RurallureDumpImportCommand):
 
         with transaction.atomic():
             if options["clear"]:
+                self.stdout.write("Clearing existing POI tables...")
                 POIMedia.objects.all().delete()
                 POITranslation.objects.all().delete()
                 POI.objects.all().delete()
                 CategoryTranslation.objects.all().delete()
                 Category.objects.all().delete()
 
+            self.stdout.write("Importing filtered POI data into the database...")
             stats = self.import_data(
                 filtered_data,
                 options["image_base_url"],
@@ -273,11 +334,14 @@ class Command(RurallureDumpImportCommand):
         skipped_without_coordinates = 0
         skipped_outside_distance_range = 0
 
-        for row in data["public.point_of_interest"]:
+        poi_rows = data["public.point_of_interest"]
+        progress = ProgressReporter(self.stdout, "Distance filter", len(poi_rows))
+        for index, row in enumerate(poi_rows, start=1):
             latitude = finite_float(row["gps_latitude"])
             longitude = finite_float(row["gps_longitude"])
             if latitude is None or longitude is None:
                 skipped_without_coordinates += 1
+                progress.update(index)
                 continue
 
             distance = distance_index.distance_meters((longitude, latitude))
@@ -285,6 +349,10 @@ class Command(RurallureDumpImportCommand):
                 matching_poi_ids.add(row["id"])
             else:
                 skipped_outside_distance_range += 1
+            progress.update(index)
+        progress.finish()
+
+        self.stdout.write(f"Distance filter matched {len(matching_poi_ids)} POIs.")
 
         filtered_data = {table_name: list(rows) for table_name, rows in data.items()}
         filtered_data["public.point_of_interest"] = [

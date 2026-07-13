@@ -126,9 +126,20 @@ export interface PoiMedia {
   id?: number;
   media_type: 'image' | 'video' | 'audio' | 'document' | 'link' | 'other';
   url: string;
+  file_url?: string;
   image_url?: string;
+  original_filename?: string;
+  content_type?: string;
+  size?: number | null;
   position: number;
   is_primary: boolean;
+  translations?: PoiMediaTranslation[];
+}
+
+export interface PoiMediaTranslation {
+  id?: number;
+  language_code: string;
+  caption: string;
 }
 
 export interface Poi {
@@ -337,6 +348,41 @@ export class ApiService {
 
   deletePoi(id: number): Observable<void> {
     return this.http.delete<void>(`${API_BASE_URL}/pois/${id}/`);
+  }
+
+  uploadPoiMedia(
+    poiId: number,
+    file: File,
+    mediaType: PoiMedia['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<PoiMedia> {
+    const formData = new FormData();
+    formData.append('poi', String(poiId));
+    formData.append('file', file);
+    formData.append('media_type', mediaType);
+    formData.append('position', String(position));
+    formData.append('is_primary', String(isPrimary));
+    formData.append('translations', JSON.stringify(translations));
+    return this.http.post<PoiMedia>(`${API_BASE_URL}/poi-media/`, formData);
+  }
+
+  updatePoiMedia(
+    mediaId: number,
+    file: File,
+    mediaType: PoiMedia['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<PoiMedia> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('media_type', mediaType);
+    formData.append('position', String(position));
+    formData.append('is_primary', String(isPrimary));
+    formData.append('translations', JSON.stringify(translations));
+    return this.http.patch<PoiMedia>(`${API_BASE_URL}/poi-media/${mediaId}/`, formData);
   }
 
   listPoiCountries(): Observable<string[]> {

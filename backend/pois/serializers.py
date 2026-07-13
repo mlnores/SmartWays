@@ -1,3 +1,5 @@
+import json
+
 from django.conf import settings
 from django.contrib.gis.geos import Point
 from django.utils.text import slugify
@@ -10,6 +12,7 @@ from .models import (
     ItineraryTranslation,
     POI,
     POIMedia,
+    POIMediaTranslation,
     POITranslation,
     Route,
     RouteStage,
@@ -94,13 +97,119 @@ class NestedCategoryTranslationSerializer(serializers.ModelSerializer):
         read_only_fields = ["id"]
 
 
+class POIMediaTranslationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = POIMediaTranslation
+        fields = ["id", "language_code", "caption"]
+        read_only_fields = ["id"]
+
+
+def sync_media_translations(media, translations):
+    if translations is None:
+        return
+    media.translations.all().delete()
+    for translation in translations:
+        language_code = (translation.get("language_code") or "").strip()
+        caption = (translation.get("caption") or "").strip()
+        if language_code and caption:
+            POIMediaTranslation.objects.create(
+                media=media,
+                language_code=language_code,
+                caption=caption,
+            )
+
+
 class POIMediaSerializer(serializers.ModelSerializer):
-    image_url = serializers.URLField(source="url", required=False)
+    file_url = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
+    translations = POIMediaTranslationSerializer(many=True, required=False)
 
     class Meta:
         model = POIMedia
-        fields = ["id", "poi", "media_type", "url", "image_url", "position", "is_primary"]
-        read_only_fields = ["id"]
+        fields = [
+            "id",
+            "poi",
+            "media_type",
+            "url",
+            "file",
+            "file_url",
+            "image_url",
+            "original_filename",
+            "content_type",
+            "size",
+            "position",
+            "is_primary",
+            "translations",
+        ]
+        read_only_fields = ["id", "file_url", "image_url", "original_filename", "content_type", "size"]
+        extra_kwargs = {
+            "url": {"required": False, "allow_blank": True},
+            "file": {"required": False, "write_only": True},
+        }
+
+    def to_internal_value(self, data):
+        mutable = data.copy() if hasattr(data, "copy") else dict(data)
+        translations = mutable.get("translations")
+        if isinstance(translations, str):
+            try:
+                mutable["translations"] = json.loads(translations)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError({"translations": "Expected valid JSON."})
+        return super().to_internal_value(mutable)
+
+    def get_file_url(self, obj):
+        return obj.public_url
+
+    def get_image_url(self, obj):
+        return obj.public_url
+
+    def validate(self, attrs):
+        if not attrs.get("url") and not attrs.get("file") and self.instance is None:
+            raise serializers.ValidationError({"file": "Upload a file or provide a URL."})
+        return attrs
+
+    def _apply_file_metadata(self, instance, uploaded_file):
+        if not uploaded_file:
+            return
+        instance.original_filename = uploaded_file.name[:255]
+        instance.content_type = getattr(uploaded_file, "content_type", "")[:120]
+        instance.size = getattr(uploaded_file, "size", None)
+
+    def _translations_from_initial_data(self, translations):
+        if translations is not None:
+            return translations
+        raw = getattr(self, "initial_data", {}).get("translations") if hasattr(self, "initial_data") else None
+        if not isinstance(raw, str):
+            return translations
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            raise serializers.ValidationError({"translations": "Expected valid JSON."})
+        if not isinstance(parsed, list):
+            raise serializers.ValidationError({"translations": "Expected a list."})
+        return parsed
+
+    def create(self, validated_data):
+        translations = validated_data.pop("translations", None)
+        translations = self._translations_from_initial_data(translations)
+        uploaded_file = validated_data.get("file")
+        instance = super().create(validated_data)
+        self._apply_file_metadata(instance, uploaded_file)
+        if uploaded_file:
+            instance.save(update_fields=["original_filename", "content_type", "size"])
+        sync_media_translations(instance, translations)
+        return instance
+
+    def update(self, instance, validated_data):
+        translations = validated_data.pop("translations", None)
+        translations = self._translations_from_initial_data(translations)
+        uploaded_file = validated_data.get("file")
+        instance = super().update(instance, validated_data)
+        self._apply_file_metadata(instance, uploaded_file)
+        if uploaded_file:
+            instance.save(update_fields=["original_filename", "content_type", "size"])
+        sync_media_translations(instance, translations)
+        return instance
 
 
 class NestedPOITranslationSerializer(serializers.ModelSerializer):
@@ -114,12 +223,36 @@ class NestedPOITranslationSerializer(serializers.ModelSerializer):
 
 
 class NestedPOIMediaSerializer(serializers.ModelSerializer):
-    image_url = serializers.URLField(source="url", required=False)
+    id = serializers.IntegerField(required=False)
+    file_url = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
+    translations = POIMediaTranslationSerializer(many=True, required=False)
 
     class Meta:
         model = POIMedia
-        fields = ["id", "media_type", "url", "image_url", "position", "is_primary"]
-        read_only_fields = ["id"]
+        fields = [
+            "id",
+            "media_type",
+            "url",
+            "file_url",
+            "image_url",
+            "original_filename",
+            "content_type",
+            "size",
+            "position",
+            "is_primary",
+            "translations",
+        ]
+        read_only_fields = ["file_url", "image_url", "original_filename", "content_type", "size"]
+        extra_kwargs = {
+            "url": {"required": False, "allow_blank": True},
+        }
+
+    def get_file_url(self, obj):
+        return obj.public_url
+
+    def get_image_url(self, obj):
+        return obj.public_url
 
 
 class NestedPOIImageSerializer(NestedPOIMediaSerializer):
@@ -366,7 +499,9 @@ class POISerializer(serializers.ModelSerializer):
         for translation_data in translations:
             POITranslation.objects.create(poi=poi, **translation_data)
         for media_data in self._media_payload(media, images):
-            POIMedia.objects.create(poi=poi, **media_data)
+            media_translations = media_data.pop("translations", None)
+            poi_media = POIMedia.objects.create(poi=poi, **media_data)
+            sync_media_translations(poi_media, media_translations)
 
         return poi
 
@@ -387,9 +522,7 @@ class POISerializer(serializers.ModelSerializer):
             for translation_data in translations:
                 POITranslation.objects.create(poi=instance, **translation_data)
         if media is not None or images is not None:
-            instance.media.all().delete()
-            for media_data in self._media_payload(media, images):
-                POIMedia.objects.create(poi=instance, **media_data)
+            self._sync_media(instance, self._media_payload(media, images))
 
         return instance
 
@@ -398,6 +531,28 @@ class POISerializer(serializers.ModelSerializer):
         for item in payload:
             item.setdefault("media_type", POIMedia.MediaType.IMAGE)
         return payload
+
+    def _sync_media(self, poi, media_payload):
+        kept_ids = set()
+        existing = {item.id: item for item in poi.media.all()}
+        if any(media_data.get("is_primary") for media_data in media_payload):
+            poi.media.filter(is_primary=True).update(is_primary=False)
+        for media_data in media_payload:
+            media_id = media_data.pop("id", None)
+            translations = media_data.pop("translations", None)
+            if media_id and media_id in existing:
+                media = existing[media_id]
+                for field, value in media_data.items():
+                    setattr(media, field, value)
+                media.save()
+                sync_media_translations(media, translations)
+                kept_ids.add(media.id)
+            else:
+                media = POIMedia.objects.create(poi=poi, **media_data)
+                sync_media_translations(media, translations)
+                kept_ids.add(media.id)
+
+        poi.media.exclude(id__in=kept_ids).delete()
 
 
 class ItinerarySerializer(serializers.ModelSerializer):

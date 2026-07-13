@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ParseError, ValidationError
-from rest_framework.parsers import JSONParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from .country_codes import alpha3_to_alpha2
@@ -193,7 +193,7 @@ def buffer_poi_lookup(request):
 
     queryset = (
         POI.objects.filter(location__within=buffer_geometry)
-        .prefetch_related("translations", "media", "categories", "categories__translations")
+        .prefetch_related("translations", "media", "media__translations", "categories", "categories__translations")
         .order_by("id")[:limit]
     )
     pois = [poi_for_buffer_response(poi, language) for poi in queryset]
@@ -209,19 +209,19 @@ def poi_for_buffer_response(poi, language_code):
     categories = list(poi.categories.all())
     primary_image = next((image for image in images if image.is_primary), None)
     image = primary_image or (images[0] if images else None)
-    image_urls = [image.url for image in images]
+    image_urls = [image.public_url for image in images]
 
     return {
         "id": str(poi.pk),
         "enabled": poi.enabled,
         "label": translation.title if translation else f"POI {poi.pk}",
         "snippet": translation.description if translation else "",
-        "imageUrl": image.url if image else "",
+        "imageUrl": image.public_url if image else "",
         "imageUrls": image_urls,
         "media": [
             {
                 "type": media.media_type,
-                "url": media.url,
+                "url": media.public_url,
                 "position": media.position,
                 "isPrimary": media.is_primary,
             }
@@ -424,6 +424,7 @@ class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelVie
             .prefetch_related(
                 "translations",
                 "media",
+                "media__translations",
                 "categories",
                 "categories__translations",
             )
@@ -886,7 +887,8 @@ class POIMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
     draft_label = "POI"
     parent_attribute = "poi"
     serializer_class = POIMediaSerializer
-    queryset = POIMedia.objects.select_related("poi").all()
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    queryset = POIMedia.objects.select_related("poi").prefetch_related("translations").all()
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -896,3 +898,13 @@ class POIMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(poi_id=poi_id)
 
         return queryset
+
+    def perform_create(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            POIMedia.objects.filter(poi=media.poi, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+    def perform_update(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            POIMedia.objects.filter(poi=media.poi, is_primary=True).exclude(pk=media.pk).update(is_primary=False)

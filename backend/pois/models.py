@@ -153,7 +153,11 @@ class POIMedia(models.Model):
         on_delete=models.CASCADE,
     )
     media_type = models.CharField(max_length=20, choices=MediaType.choices, default=MediaType.IMAGE)
-    url = models.URLField(max_length=1000)
+    url = models.URLField(max_length=1000, blank=True)
+    file = models.FileField(upload_to="poi-media/%Y/%m/", blank=True)
+    original_filename = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=120, blank=True)
+    size = models.PositiveBigIntegerField(null=True, blank=True)
     position = models.PositiveIntegerField(default=0)
     is_primary = models.BooleanField(default=False)
 
@@ -174,6 +178,39 @@ class POIMedia(models.Model):
 
     def __str__(self):
         return f"{self.get_media_type_display()} for POI {self.poi_id}"
+
+    @property
+    def public_url(self):
+        if self.url:
+            return self.url
+        if self.file:
+            return self.file.url
+        return ""
+
+
+class POIMediaTranslation(models.Model):
+    media = models.ForeignKey(
+        POIMedia,
+        related_name="translations",
+        on_delete=models.CASCADE,
+    )
+    language_code = models.CharField(max_length=8, validators=[language_code_validator])
+    caption = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["language_code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["media", "language_code"],
+                name="unique_poi_media_translation_language",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["language_code"], name="pois_poimtr_languag_12b70f_idx"),
+        ]
+
+    def __str__(self):
+        return f"Caption for media {self.media_id} ({self.language_code})"
 
 
 class Route(models.Model):
