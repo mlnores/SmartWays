@@ -14,15 +14,30 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from .country_codes import alpha3_to_alpha2
-from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIMedia, POITranslation, Route, RouteStage, RouteTranslation
+from .models import (
+    Category,
+    CategoryTranslation,
+    Itinerary,
+    ItineraryMedia,
+    ItineraryTranslation,
+    POI,
+    POIMedia,
+    POITranslation,
+    Route,
+    RouteMedia,
+    RouteStage,
+    RouteTranslation,
+)
 from .serializers import (
     CategorySerializer,
     CategoryTranslationSerializer,
+    ItineraryMediaSerializer,
     ItinerarySerializer,
     ItineraryTranslationSerializer,
     POIMediaSerializer,
     POISerializer,
     POITranslationSerializer,
+    RouteMediaSerializer,
     RouteSerializer,
     RouteTranslationSerializer,
     select_translation,
@@ -574,6 +589,8 @@ class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.Mo
     def get_queryset(self):
         queryset = Itinerary.objects.prefetch_related(
             "translations",
+            "media",
+            "media__translations",
             "route_stages",
             "route_stages__route",
             "route_stages__route__translations",
@@ -625,6 +642,8 @@ class RouteViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelV
     def get_queryset(self):
         queryset = Route.objects.prefetch_related(
             "translations",
+            "media",
+            "media__translations",
             "stages",
             "stages__itinerary",
             "stages__itinerary__translations",
@@ -908,3 +927,53 @@ class POIMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
         media = serializer.save()
         if media.is_primary:
             POIMedia.objects.filter(poi=media.poi, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+
+class RouteMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+    draft_label = "route"
+    parent_attribute = "route"
+    serializer_class = RouteMediaSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    queryset = RouteMedia.objects.select_related("route").prefetch_related("translations").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        route_id = self.request.query_params.get("route")
+        if route_id:
+            queryset = queryset.filter(route_id=route_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            RouteMedia.objects.filter(route=media.route, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+    def perform_update(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            RouteMedia.objects.filter(route=media.route, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+
+class ItineraryMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+    draft_label = "itinerary"
+    parent_attribute = "itinerary"
+    serializer_class = ItineraryMediaSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    queryset = ItineraryMedia.objects.select_related("itinerary").prefetch_related("translations").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        itinerary_id = self.request.query_params.get("itinerary")
+        if itinerary_id:
+            queryset = queryset.filter(itinerary_id=itinerary_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            ItineraryMedia.objects.filter(itinerary=media.itinerary, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+    def perform_update(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            ItineraryMedia.objects.filter(itinerary=media.itinerary, is_primary=True).exclude(pk=media.pk).update(is_primary=False)

@@ -4,12 +4,16 @@ from .models import (
     Category,
     CategoryTranslation,
     Itinerary,
+    ItineraryMedia,
+    ItineraryMediaTranslation,
     ItineraryTranslation,
     POI,
     POIMedia,
     POIMediaTranslation,
     POITranslation,
     Route,
+    RouteMedia,
+    RouteMediaTranslation,
     RouteStage,
     RouteTranslation,
 )
@@ -94,6 +98,28 @@ class RouteTranslationInline(admin.TabularInline):
     extra = 1
 
 
+class RouteMediaInline(admin.TabularInline):
+    model = RouteMedia
+    extra = 1
+
+
+class ItineraryMediaInline(admin.TabularInline):
+    model = ItineraryMedia
+    extra = 1
+
+
+class RouteMediaTranslationInline(admin.TabularInline):
+    model = RouteMediaTranslation
+    fields = ["language_code", "caption"]
+    extra = 1
+
+
+class ItineraryMediaTranslationInline(admin.TabularInline):
+    model = ItineraryMediaTranslation
+    fields = ["language_code", "caption"]
+    extra = 1
+
+
 class RouteStageInline(admin.TabularInline):
     model = RouteStage
     fields = ["stage_number", "itinerary"]
@@ -105,7 +131,7 @@ class RouteAdmin(admin.ModelAdmin):
     list_display = ["id", "title", "slug", "enabled", "updated_at", "created_at"]
     list_filter = ["enabled"]
     search_fields = ["translations__title", "translations__description", "translations__slug"]
-    inlines = [RouteTranslationInline, RouteStageInline]
+    inlines = [RouteTranslationInline, RouteStageInline, RouteMediaInline]
 
     @admin.display(description="title")
     def title(self, obj):
@@ -127,7 +153,7 @@ class ItineraryAdmin(admin.ModelAdmin):
     list_display = ["id", "slug", "route_memberships", "enabled", "updated_at", "created_at"]
     list_filter = ["enabled", "routes"]
     search_fields = ["translations__title", "translations__description", "translations__slug"]
-    inlines = [ItineraryTranslationInline]
+    inlines = [ItineraryTranslationInline, ItineraryMediaInline]
 
     @admin.display(description="slug")
     def slug(self, obj):
@@ -149,6 +175,36 @@ class RouteStageAdmin(admin.ModelAdmin):
     list_display = ["id", "route", "itinerary", "stage_number", "updated_at", "created_at"]
     list_filter = ["route"]
     search_fields = ["route__translations__title", "itinerary__translations__title"]
+
+
+@admin.register(RouteMedia)
+class RouteMediaAdmin(admin.ModelAdmin):
+    list_display = ["id", "route", "media_type", "position", "is_primary", "url"]
+    list_filter = ["media_type", "is_primary"]
+    search_fields = ["url", "translations__caption", "route__translations__title"]
+    inlines = [RouteMediaTranslationInline]
+
+
+@admin.register(RouteMediaTranslation)
+class RouteMediaTranslationAdmin(admin.ModelAdmin):
+    list_display = ["id", "media", "language_code", "caption"]
+    list_filter = ["language_code"]
+    search_fields = ["caption"]
+
+
+@admin.register(ItineraryMedia)
+class ItineraryMediaAdmin(admin.ModelAdmin):
+    list_display = ["id", "itinerary", "media_type", "position", "is_primary", "url"]
+    list_filter = ["media_type", "is_primary"]
+    search_fields = ["url", "translations__caption", "itinerary__translations__title"]
+    inlines = [ItineraryMediaTranslationInline]
+
+
+@admin.register(ItineraryMediaTranslation)
+class ItineraryMediaTranslationAdmin(admin.ModelAdmin):
+    list_display = ["id", "media", "language_code", "caption"]
+    list_filter = ["language_code"]
+    search_fields = ["caption"]
 
 
 @admin.register(ItineraryTranslation)

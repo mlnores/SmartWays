@@ -213,6 +213,156 @@ class POIMediaTranslation(models.Model):
         return f"Caption for media {self.media_id} ({self.language_code})"
 
 
+class RouteMedia(models.Model):
+    class MediaType(models.TextChoices):
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+        AUDIO = "audio", "Audio"
+        DOCUMENT = "document", "Document"
+        LINK = "link", "Link"
+        OTHER = "other", "Other"
+
+    route = models.ForeignKey(
+        "Route",
+        related_name="media",
+        on_delete=models.CASCADE,
+    )
+    media_type = models.CharField(max_length=20, choices=MediaType.choices, default=MediaType.IMAGE)
+    url = models.URLField(max_length=1000, blank=True)
+    file = models.FileField(upload_to="route-media/%Y/%m/", blank=True)
+    original_filename = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=120, blank=True)
+    size = models.PositiveBigIntegerField(null=True, blank=True)
+    position = models.PositiveIntegerField(default=0)
+    is_primary = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["route"],
+                condition=models.Q(is_primary=True),
+                name="unique_primary_media_per_route",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["media_type"], name="pois_routem_media_t_983cab_idx"),
+            models.Index(fields=["position"], name="pois_routem_positio_102b54_idx"),
+            models.Index(fields=["is_primary"], name="pois_routem_is_prim_481f2c_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.get_media_type_display()} for route {self.route_id}"
+
+    @property
+    def public_url(self):
+        if self.url:
+            return self.url
+        if self.file:
+            return self.file.url
+        return ""
+
+
+class RouteMediaTranslation(models.Model):
+    media = models.ForeignKey(
+        RouteMedia,
+        related_name="translations",
+        on_delete=models.CASCADE,
+    )
+    language_code = models.CharField(max_length=8, validators=[language_code_validator])
+    caption = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["language_code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["media", "language_code"],
+                name="unique_route_media_translation_language",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["language_code"], name="pois_routmt_languag_68e5c1_idx"),
+        ]
+
+    def __str__(self):
+        return f"Caption for route media {self.media_id} ({self.language_code})"
+
+
+class ItineraryMedia(models.Model):
+    class MediaType(models.TextChoices):
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+        AUDIO = "audio", "Audio"
+        DOCUMENT = "document", "Document"
+        LINK = "link", "Link"
+        OTHER = "other", "Other"
+
+    itinerary = models.ForeignKey(
+        "Itinerary",
+        related_name="media",
+        on_delete=models.CASCADE,
+    )
+    media_type = models.CharField(max_length=20, choices=MediaType.choices, default=MediaType.IMAGE)
+    url = models.URLField(max_length=1000, blank=True)
+    file = models.FileField(upload_to="itinerary-media/%Y/%m/", blank=True)
+    original_filename = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=120, blank=True)
+    size = models.PositiveBigIntegerField(null=True, blank=True)
+    position = models.PositiveIntegerField(default=0)
+    is_primary = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["itinerary"],
+                condition=models.Q(is_primary=True),
+                name="unique_primary_media_per_itinerary",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["media_type"], name="pois_itinme_media_t_d2f5fb_idx"),
+            models.Index(fields=["position"], name="pois_itinme_positio_40b1f4_idx"),
+            models.Index(fields=["is_primary"], name="pois_itinme_is_prim_0d5744_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.get_media_type_display()} for itinerary {self.itinerary_id}"
+
+    @property
+    def public_url(self):
+        if self.url:
+            return self.url
+        if self.file:
+            return self.file.url
+        return ""
+
+
+class ItineraryMediaTranslation(models.Model):
+    media = models.ForeignKey(
+        ItineraryMedia,
+        related_name="translations",
+        on_delete=models.CASCADE,
+    )
+    language_code = models.CharField(max_length=8, validators=[language_code_validator])
+    caption = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["language_code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["media", "language_code"],
+                name="unique_itinerary_media_translation_language",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["language_code"], name="pois_itinmt_languag_ae9e60_idx"),
+        ]
+
+    def __str__(self):
+        return f"Caption for itinerary media {self.media_id} ({self.language_code})"
+
+
 class Route(models.Model):
     enabled = models.BooleanField(default=True)
     itineraries = models.ManyToManyField(

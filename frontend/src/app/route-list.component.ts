@@ -5,6 +5,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Itinerary, Route, Translation } from './api.service';
+import { MediaManagerDialogComponent } from './media-manager-dialog.component';
 
 interface RouteDraft {
   language_code: string;
@@ -67,7 +68,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
 @Component({
   selector: 'app-route-list',
   standalone: true,
-  imports: [AsyncPipe, FormsModule, RouterLink],
+  imports: [AsyncPipe, FormsModule, RouterLink, MediaManagerDialogComponent],
   template: `
     <section class="page">
       <header class="page-header">
@@ -212,6 +213,10 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                     <span>View itineraries</span>
                   </a>
                   @if (!previewRoute.enabled) {
+                    <button type="button" class="secondary preview-action" (click)="openSelectedRouteMediaDialog(previewRoute)">
+                      <span class="preview-action-icon" aria-hidden="true">🖼️</span>
+                      <span>Manage media</span>
+                    </button>
                     <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewRoute)">
                       <span class="preview-action-icon" aria-hidden="true">📝</span>
                       <span>Edit metadata and translations</span>
@@ -227,6 +232,8 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
           </div>
         }
       }
+
+      <app-media-manager-dialog #mediaManagerDialog (saved)="refreshList()"></app-media-manager-dialog>
 
       <dialog class="metadata-dialog" #newRouteDialog>
         <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault(); createRoute()">
@@ -367,6 +374,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('newRouteDialog') private readonly newRouteDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('deleteRouteDialog') private readonly deleteRouteDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('translationDialog') private readonly translationDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('mediaManagerDialog') private readonly mediaManagerDialog?: MediaManagerDialogComponent;
   @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
 
   private readonly activatedRoute = inject(ActivatedRoute);
@@ -696,6 +704,18 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   closeNewRouteDialog(): void {
     this.newRouteDialog?.nativeElement.close();
+  }
+
+  openSelectedRouteMediaDialog(route: Route): void {
+    if (route.enabled) {
+      this.showStatus('Public routes cannot be edited.', true);
+      return;
+    }
+    this.mediaManagerDialog?.open('route', route);
+  }
+
+  refreshList(): void {
+    this.refresh$.next(this.refresh$.value + 1);
   }
 
   openTranslationDialog(route: Route): void {

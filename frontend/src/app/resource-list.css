@@ -10,6 +10,7 @@
 
 .page-header {
   flex: 0 0 auto;
+  position: relative;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -125,7 +126,8 @@ label span {
 
 .secondary:disabled {
   color: #98a2b3;
-  cursor: wait;
+  background: #f8fafc;
+  cursor: not-allowed;
 }
 
 .danger-action {
@@ -171,9 +173,54 @@ label span {
 
 .list-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.publication-inline-switch {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: #475467;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.publication-inline-toggle {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid #cfd6e3;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.publication-inline-toggle button {
+  min-height: 34px;
+  padding: 7px 13px;
+  border: 0;
+  border-radius: 7px;
+  color: #475467;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.publication-inline-toggle button.active {
+  color: #ffffff;
+  background: #1f6feb;
+}
+
+.centered-publication-switch {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+}
+
+.header-end-actions {
+  margin-left: auto;
 }
 
 .assignment-row {

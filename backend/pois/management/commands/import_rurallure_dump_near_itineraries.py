@@ -317,11 +317,22 @@ class Command(RurallureDumpImportCommand):
                 Category.objects.all().delete()
 
             self.stdout.write("Importing filtered POI data into the database...")
+            import_progress = ProgressReporter(self.stdout, "Database import", 6)
+
+            import_progress_current = 0
+
+            def update_import_progress(_label):
+                nonlocal import_progress_current
+                import_progress_current += 1
+                import_progress.update(import_progress_current)
+
             stats = self.import_data(
                 filtered_data,
                 options["image_base_url"],
                 country_boundaries_path=None if options["skip_country_annotation"] else country_boundaries_path,
+                progress_callback=update_import_progress,
             )
+            import_progress.finish()
 
         self.stdout.write(self.style.SUCCESS("Import completed."))
         for key, value in {**filter_stats, **stats}.items():

@@ -5,6 +5,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Itinerary, ItineraryRouteMembership, Route, Translation } from './api.service';
+import { MediaManagerDialogComponent } from './media-manager-dialog.component';
 
 interface ItineraryGroup {
   routeId: number | null;
@@ -113,7 +114,7 @@ declare const L: any;
 @Component({
   selector: 'app-itinerary-list',
   standalone: true,
-  imports: [AsyncPipe, DatePipe, FormsModule, NgTemplateOutlet, RouterLink],
+  imports: [AsyncPipe, DatePipe, FormsModule, NgTemplateOutlet, RouterLink, MediaManagerDialogComponent],
   template: `
     <section class="page">
       <header class="page-header">
@@ -122,21 +123,28 @@ declare const L: any;
           <p>{{ routeSlug ? (currentRouteIsDraft ? 'Browse the constituent itineraries of this route. Drag rows up or down to define their order.' : 'Browse the constituent itineraries of this public route.') : 'Browse saved itinerary definitions and open the editor.' }}</p>
         </div>
         @if (routeSlug) {
-          <div class="list-actions">
+          @if (currentRoute) {
+            <div class="publication-inline-switch centered-publication-switch" aria-label="Route state">
+              <span>State</span>
+              <div class="publication-inline-toggle">
+                <button type="button" [class.active]="!currentRoute.enabled" (click)="setCurrentRouteState(false)">Draft</button>
+                <button type="button" [class.active]="currentRoute.enabled" (click)="setCurrentRouteState(true)">Public (read-only)</button>
+              </div>
+            </div>
+          }
+          <div class="list-actions header-end-actions">
             <a class="secondary" [routerLink]="['/routes']" [queryParams]="currentRouteId ? { highlight: currentRouteId } : null">Back to routes</a>
-            @if (currentRouteIsDraft) {
-              <button type="button" class="primary" title="New itinerary for this route" aria-label="New itinerary for this route" (click)="openNewItineraryForCurrentRoute()">New itinerary</button>
-            }
           </div>
         } @else {
           <button type="button" class="primary" title="New itinerary" aria-label="New itinerary" (click)="openNewItineraryDialog()">New itinerary</button>
         }
       </header>
+      <app-media-manager-dialog #mediaManagerDialog (saved)="refreshList()"></app-media-manager-dialog>
 
       <div class="toolbar">
         <input
           type="search"
-          placeholder="Search title or description"
+          placeholder="Search itineraries by title or description"
           [ngModel]="query"
           (ngModelChange)="query = $event; query$.next($event)"
         />
@@ -155,9 +163,11 @@ declare const L: any;
               <span aria-hidden="true">×</span>
             </button>
           }
-        } @else if (currentRouteIsDraft) {
-          <button type="button" class="secondary toolbar-action" (click)="openAddExistingItinerariesDialog()">Add</button>
-          <button type="button" class="secondary toolbar-action" (click)="openImportItinerariesDialog()">Import from other routes</button>
+        } @else {
+          <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openNewItineraryForCurrentRoute()">Create new itinerary</button>
+          <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openAddExistingItinerariesDialog()">Add existing itinerary</button>
+          <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openImportItinerariesDialog()">Import itineraries from other routes</button>
+          <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openRouteMediaDialog()">Manage route media</button>
         }
       </div>
       @if (statusMessage) {
@@ -301,6 +311,10 @@ declare const L: any;
                   </button>
                 } @else if (previewItinerary) {
                   @if (!previewItinerary.enabled) {
+                    <button type="button" class="secondary preview-action" (click)="openSelectedItineraryMediaDialog(previewItinerary)">
+                      <span class="preview-action-icon" aria-hidden="true">🖼️</span>
+                      <span>Manage media</span>
+                    </button>
                     <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewItinerary)">
                       <span class="preview-action-icon" aria-hidden="true">📝</span>
                       <span>Edit metadata and translations</span>
@@ -786,6 +800,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('translationDialog') private readonly translationDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('addExistingItinerariesDialog') private readonly addExistingItinerariesDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('importItinerariesDialog') private readonly importItinerariesDialog?: ElementRef<HTMLDialogElement>;
+  @ViewChild('mediaManagerDialog') private readonly mediaManagerDialog?: MediaManagerDialogComponent;
   @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
 
   private readonly api = inject(ApiService);
@@ -797,6 +812,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   query = '';
   routeSlug: string | null = null;
   routeTitle: string | null = null;
+  currentRoute: Route | null = null;
   currentRouteId: number | null = null;
   currentRouteIsDraft = false;
   viewMode: 'flat' | 'grouped' = 'flat';
@@ -860,6 +876,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       ]).pipe(
         switchMap(([routes, selectedRoute]) => {
           this.availableRoutes = routes;
+          this.currentRoute = selectedRoute;
           this.currentRouteId = selectedRoute?.id || null;
           this.routeTitle = selectedRoute?.title || null;
           this.currentRouteIsDraft = selectedRoute ? !selectedRoute.enabled : false;
@@ -941,6 +958,38 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       this.selectedPreviewFitLocked = false;
     }
     this.renderPreviewItinerary();
+  }
+
+  openRouteMediaDialog(): void {
+    if (!this.currentRoute || this.currentRoute.enabled) return;
+    this.mediaManagerDialog?.open('route', this.currentRoute);
+  }
+
+  openSelectedItineraryMediaDialog(itinerary: Itinerary): void {
+    if (itinerary.enabled) {
+      this.showStatus('Public itineraries cannot be edited.', true);
+      return;
+    }
+    this.mediaManagerDialog?.open('itinerary', itinerary);
+  }
+
+  async setCurrentRouteState(enabled: boolean): Promise<void> {
+    if (!this.currentRoute || this.currentRoute.enabled === enabled) return;
+    if (!this.confirmRouteStateChange(this.currentRoute, enabled)) return;
+
+    try {
+      const route = await firstValueFrom(this.api.updateRoute(this.currentRoute.id, { enabled }));
+      this.currentRoute = route;
+      this.currentRouteIsDraft = !route.enabled;
+      this.clearStatus();
+      this.refreshList();
+    } catch (error) {
+      this.showStatus(`Could not update route. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  refreshList(): void {
+    this.refresh$.next(this.refresh$.value + 1);
   }
 
   setItinerarySelected(itinerary: Itinerary, selected: boolean): void {
@@ -2375,6 +2424,17 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       message += '\n\nRoutes containing the selected itinerary/itineraries can also be turned to draft.';
     } else {
       message += '\n\nDraft POIs included in the selected itinerary/itineraries can also be made public.';
+    }
+    return window.confirm(message);
+  }
+
+  private confirmRouteStateChange(route: Route, enabled: boolean): boolean {
+    const action = enabled ? 'make public' : 'turn to draft';
+    let message = `Really ${action} route "${route.title || 'Untitled route'}"?`;
+    if (enabled) {
+      message += '\n\nDraft itineraries in this route, and draft POIs included in those itineraries, can also be made public.';
+    } else {
+      message += '\n\nOnly draft routes can have their media edited.';
     }
     return window.confirm(message);
   }

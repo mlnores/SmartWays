@@ -9,12 +9,16 @@ from .models import (
     Category,
     CategoryTranslation,
     Itinerary,
+    ItineraryMedia,
+    ItineraryMediaTranslation,
     ItineraryTranslation,
     POI,
     POIMedia,
     POIMediaTranslation,
     POITranslation,
     Route,
+    RouteMedia,
+    RouteMediaTranslation,
     RouteStage,
     RouteTranslation,
 )
@@ -104,7 +108,7 @@ class POIMediaTranslationSerializer(serializers.ModelSerializer):
         read_only_fields = ["id"]
 
 
-def sync_media_translations(media, translations):
+def sync_media_translations(media, translations, translation_model=POIMediaTranslation):
     if translations is None:
         return
     media.translations.all().delete()
@@ -112,7 +116,7 @@ def sync_media_translations(media, translations):
         language_code = (translation.get("language_code") or "").strip()
         caption = (translation.get("caption") or "").strip()
         if language_code and caption:
-            POIMediaTranslation.objects.create(
+            translation_model.objects.create(
                 media=media,
                 language_code=language_code,
                 caption=caption,
@@ -258,6 +262,166 @@ class NestedPOIMediaSerializer(serializers.ModelSerializer):
 class NestedPOIImageSerializer(NestedPOIMediaSerializer):
     class Meta(NestedPOIMediaSerializer.Meta):
         fields = ["id", "image_url", "position", "is_primary"]
+
+
+class RouteMediaTranslationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RouteMediaTranslation
+        fields = ["id", "language_code", "caption"]
+        read_only_fields = ["id"]
+
+
+class ItineraryMediaTranslationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ItineraryMediaTranslation
+        fields = ["id", "language_code", "caption"]
+        read_only_fields = ["id"]
+
+
+class ParentMediaSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        fields = [
+            "id",
+            "media_type",
+            "url",
+            "file",
+            "file_url",
+            "image_url",
+            "original_filename",
+            "content_type",
+            "size",
+            "position",
+            "is_primary",
+            "translations",
+        ]
+        read_only_fields = ["id", "file_url", "image_url", "original_filename", "content_type", "size"]
+        extra_kwargs = {
+            "url": {"required": False, "allow_blank": True},
+            "file": {"required": False, "write_only": True},
+        }
+
+    def to_internal_value(self, data):
+        mutable = data.copy() if hasattr(data, "copy") else dict(data)
+        translations = mutable.get("translations")
+        if isinstance(translations, str):
+            try:
+                mutable["translations"] = json.loads(translations)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError({"translations": "Expected valid JSON."})
+        return super().to_internal_value(mutable)
+
+    def get_file_url(self, obj):
+        return obj.public_url
+
+    def get_image_url(self, obj):
+        return obj.public_url
+
+    def validate(self, attrs):
+        if not attrs.get("url") and not attrs.get("file") and self.instance is None:
+            raise serializers.ValidationError({"file": "Upload a file or provide a URL."})
+        return attrs
+
+    def _apply_file_metadata(self, instance, uploaded_file):
+        if not uploaded_file:
+            return
+        instance.original_filename = uploaded_file.name[:255]
+        instance.content_type = getattr(uploaded_file, "content_type", "")[:120]
+        instance.size = getattr(uploaded_file, "size", None)
+
+    def _translations_from_initial_data(self, translations):
+        if translations is not None:
+            return translations
+        raw = getattr(self, "initial_data", {}).get("translations") if hasattr(self, "initial_data") else None
+        if not isinstance(raw, str):
+            return translations
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            raise serializers.ValidationError({"translations": "Expected valid JSON."})
+        if not isinstance(parsed, list):
+            raise serializers.ValidationError({"translations": "Expected a list."})
+        return parsed
+
+    def create(self, validated_data):
+        translations = self._translations_from_initial_data(validated_data.pop("translations", None))
+        uploaded_file = validated_data.get("file")
+        instance = super().create(validated_data)
+        self._apply_file_metadata(instance, uploaded_file)
+        if uploaded_file:
+            instance.save(update_fields=["original_filename", "content_type", "size"])
+        sync_media_translations(instance, translations, self.translation_model)
+        return instance
+
+    def update(self, instance, validated_data):
+        translations = self._translations_from_initial_data(validated_data.pop("translations", None))
+        uploaded_file = validated_data.get("file")
+        instance = super().update(instance, validated_data)
+        self._apply_file_metadata(instance, uploaded_file)
+        if uploaded_file:
+            instance.save(update_fields=["original_filename", "content_type", "size"])
+        sync_media_translations(instance, translations, self.translation_model)
+        return instance
+
+
+class RouteMediaSerializer(ParentMediaSerializer):
+    translations = RouteMediaTranslationSerializer(many=True, required=False)
+
+    class Meta(ParentMediaSerializer.Meta):
+        model = RouteMedia
+        fields = [
+            "id",
+            "route",
+            "media_type",
+            "url",
+            "file",
+            "file_url",
+            "image_url",
+            "original_filename",
+            "content_type",
+            "size",
+            "position",
+            "is_primary",
+            "translations",
+        ]
+
+    translation_model = RouteMediaTranslation
+
+
+class NestedRouteMediaSerializer(RouteMediaSerializer):
+    class Meta(RouteMediaSerializer.Meta):
+        fields = ParentMediaSerializer.Meta.fields
+
+
+class ItineraryMediaSerializer(ParentMediaSerializer):
+    translations = ItineraryMediaTranslationSerializer(many=True, required=False)
+
+    class Meta(ParentMediaSerializer.Meta):
+        model = ItineraryMedia
+        fields = [
+            "id",
+            "itinerary",
+            "media_type",
+            "url",
+            "file",
+            "file_url",
+            "image_url",
+            "original_filename",
+            "content_type",
+            "size",
+            "position",
+            "is_primary",
+            "translations",
+        ]
+
+    translation_model = ItineraryMediaTranslation
+
+
+class NestedItineraryMediaSerializer(ItineraryMediaSerializer):
+    class Meta(ItineraryMediaSerializer.Meta):
+        fields = ParentMediaSerializer.Meta.fields
 
 
 class ItineraryTranslationSerializer(serializers.ModelSerializer):
@@ -565,6 +729,7 @@ class ItinerarySerializer(serializers.ModelSerializer):
     stage_number = serializers.SerializerMethodField()
     route_memberships = serializers.SerializerMethodField()
     translations = NestedItineraryTranslationSerializer(many=True, required=False)
+    media = NestedItineraryMediaSerializer(many=True, required=False)
 
     class Meta:
         model = Itinerary
@@ -583,6 +748,7 @@ class ItinerarySerializer(serializers.ModelSerializer):
             "description",
             "slug",
             "translations",
+            "media",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
@@ -696,17 +862,20 @@ class ItinerarySerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         translations = validated_data.pop("translations", [])
+        media = validated_data.pop("media", [])
         route_id = validated_data.pop("route", None)
         stage_number = self.initial_data.get("stage_number")
         itinerary = Itinerary.objects.create(**validated_data)
         for translation_data in translations:
             ItineraryTranslation.objects.create(itinerary=itinerary, **translation_data)
+        self._sync_media(itinerary, media)
         if route_id is not None:
             RouteStage.objects.create(route_id=route_id, itinerary=itinerary, stage_number=stage_number)
         return itinerary
 
     def update(self, instance, validated_data):
         translations = validated_data.pop("translations", None)
+        media = validated_data.pop("media", None)
         route_id = validated_data.pop("route", serializers.empty)
         stage_number = self.initial_data.get("stage_number", serializers.empty)
 
@@ -733,8 +902,31 @@ class ItinerarySerializer(serializers.ModelSerializer):
             instance.translations.all().delete()
             for translation_data in translations:
                 ItineraryTranslation.objects.create(itinerary=instance, **translation_data)
+        if media is not None:
+            self._sync_media(instance, media)
 
         return instance
+
+    def _sync_media(self, itinerary, media_payload):
+        kept_ids = set()
+        existing = {item.id: item for item in itinerary.media.all()}
+        if any(media_data.get("is_primary") for media_data in media_payload):
+            itinerary.media.filter(is_primary=True).update(is_primary=False)
+        for media_data in media_payload:
+            media_id = media_data.pop("id", None)
+            translations = media_data.pop("translations", None)
+            if media_id and media_id in existing:
+                media = existing[media_id]
+                for field, value in media_data.items():
+                    setattr(media, field, value)
+                media.save()
+                sync_media_translations(media, translations, ItineraryMediaTranslation)
+                kept_ids.add(media.id)
+            else:
+                media = ItineraryMedia.objects.create(itinerary=itinerary, **media_data)
+                sync_media_translations(media, translations, ItineraryMediaTranslation)
+                kept_ids.add(media.id)
+        itinerary.media.exclude(id__in=kept_ids).delete()
 
 
 class RouteSerializer(serializers.ModelSerializer):
@@ -743,6 +935,7 @@ class RouteSerializer(serializers.ModelSerializer):
     slug = serializers.SerializerMethodField()
     itinerary_count = serializers.SerializerMethodField()
     translations = NestedRouteTranslationSerializer(many=True, required=False)
+    media = NestedRouteMediaSerializer(many=True, required=False)
 
     class Meta:
         model = Route
@@ -756,6 +949,7 @@ class RouteSerializer(serializers.ModelSerializer):
             "slug",
             "itinerary_count",
             "translations",
+            "media",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
@@ -796,13 +990,16 @@ class RouteSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         translations = validated_data.pop("translations", [])
+        media = validated_data.pop("media", [])
         route = Route.objects.create(**validated_data)
         for translation_data in translations:
             RouteTranslation.objects.create(route=route, **translation_data)
+        self._sync_media(route, media)
         return route
 
     def update(self, instance, validated_data):
         translations = validated_data.pop("translations", None)
+        media = validated_data.pop("media", None)
 
         for field, value in validated_data.items():
             setattr(instance, field, value)
@@ -812,5 +1009,28 @@ class RouteSerializer(serializers.ModelSerializer):
             instance.translations.all().delete()
             for translation_data in translations:
                 RouteTranslation.objects.create(route=instance, **translation_data)
+        if media is not None:
+            self._sync_media(instance, media)
 
         return instance
+
+    def _sync_media(self, route, media_payload):
+        kept_ids = set()
+        existing = {item.id: item for item in route.media.all()}
+        if any(media_data.get("is_primary") for media_data in media_payload):
+            route.media.filter(is_primary=True).update(is_primary=False)
+        for media_data in media_payload:
+            media_id = media_data.pop("id", None)
+            translations = media_data.pop("translations", None)
+            if media_id and media_id in existing:
+                media = existing[media_id]
+                for field, value in media_data.items():
+                    setattr(media, field, value)
+                media.save()
+                sync_media_translations(media, translations, RouteMediaTranslation)
+                kept_ids.add(media.id)
+            else:
+                media = RouteMedia.objects.create(route=route, **media_data)
+                sync_media_translations(media, translations, RouteMediaTranslation)
+                kept_ids.add(media.id)
+        route.media.exclude(id__in=kept_ids).delete()
