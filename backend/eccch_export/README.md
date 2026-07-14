@@ -2,6 +2,13 @@
 
 `eccch_export` is a separate Django app that publishes SmartWays data for the ECCCH ecosystem. It deliberately does not replace or complicate the operational editor models in `pois`.
 
+The intended role is broader than producing a database dump. SmartWays should be understood as:
+
+- a **data provider**, exposing curated routes, itineraries, POIs, categories, translations, media, geometries, semantic mappings, and annotations;
+- a **vertical application / workflow**, supporting the actual work of cultural-route curation, multilingual enrichment, POI selection, media management, publication review, and route composition.
+
+This matches the way ECHOES frames the ECCCH: deliverable D3.1 describes integration in terms of datasets, tools, and workflows; D6.1-D6.3 focus on the federated semantic knowledge base, interoperability, and hybrid cloud architecture; and D8.1 is concerned with vertical applications that interact with and enrich the ECCCH.
+
 The app exports:
 
 - routes
@@ -25,6 +32,70 @@ That means:
 - export services translate them into interoperable forms;
 - CIDOC-CRM/SKOS/DCAT semantics are represented at export time;
 - inferred annotations are stored separately from curated content.
+
+## ECCCH Alignment
+
+The ECHOES reports are available at:
+
+```text
+https://www.echoes-eccch.eu/reports/
+```
+
+The technical rationale for this app is based primarily on these deliverables:
+
+```text
+D3.1  Integration strategy for datasets, tools, and workflows
+D6.1  Federated semantic data layer / knowledge-base foundations
+D6.2  Interoperability, including technical, semantic, and legal concerns
+D6.3  Hybrid federated cloud architecture
+D8.1  Vertical applications and interaction with Heritage Digital Twins
+```
+
+In that context, SmartWays contributes two complementary capabilities.
+
+### SmartWays as Data Provider
+
+As a data provider, SmartWays publishes cultural-route data in forms that can be ingested, indexed, transformed, or linked by ECCCH services:
+
+- routes as curated cultural-route resources;
+- itineraries as reusable route stages or path resources;
+- route-stage memberships with explicit ordering;
+- POIs as geolocated cultural or service places;
+- categories as local concept schemes that can be mapped to external vocabularies;
+- multilingual titles, descriptions, and media captions;
+- linked media for POIs, routes, and itineraries;
+- geometry as GeoJSON and JSON-LD geometry properties;
+- semantic annotations and vocabulary mappings with confidence and review status.
+
+The export layer therefore supports D3.1-style integration of data assets and D6.x-style semantic/federated interoperability.
+
+### SmartWays as Vertical Application / Workflow
+
+As a vertical application, SmartWays is not just a passive source of records. It provides a workflow where users:
+
+- import route and POI data;
+- compose routes from reusable itineraries;
+- split, merge, reorder, and reuse stages;
+- select POIs on or near a path;
+- create new draft POIs while editing itineraries;
+- attach and caption media;
+- curate multilingual metadata;
+- move content through draft/public states;
+- review and enrich vocabulary mappings and semantic annotations.
+
+That workflow is the part relevant to D8.1: the application is a route-curation environment that can feed and enrich Heritage Digital Twin data rather than merely exporting a snapshot of relational tables.
+
+### Why a Separate App
+
+The separation keeps the system honest:
+
+- `pois` stores what the editing UI needs to work reliably.
+- `eccch_export` transforms that operational state into publication-oriented representations.
+- Semantic annotations can evolve without destabilizing route/POI editing.
+- Export formats can change as ECCCH integration requirements become more concrete.
+- The same SmartWays data can be published as JSON-LD, GeoJSON, ZIP packages, or future ECCCH ingestion formats.
+
+This avoids overfitting the internal model to CIDOC-CRM too early while still allowing the exported data to carry CIDOC-CRM, SKOS, DCAT, Dublin Core, Schema.org, GeoJSON, and SmartWays-specific semantics.
 
 ## Models
 
@@ -241,4 +312,3 @@ Run with core tests before deployment:
 python manage.py test pois eccch_export
 python manage.py check
 ```
-
