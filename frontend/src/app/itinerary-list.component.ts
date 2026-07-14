@@ -167,7 +167,7 @@ declare const L: any;
           <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openNewItineraryForCurrentRoute()">Create new itinerary</button>
           <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openAddExistingItinerariesDialog()">Add existing itinerary</button>
           <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openImportItinerariesDialog()">Import itineraries from other routes</button>
-          <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openRouteMediaDialog()">Manage route media</button>
+          <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openRouteMediaDialog()">Manage route metadata, translations and media</button>
         }
       </div>
       @if (statusMessage) {
@@ -313,11 +313,7 @@ declare const L: any;
                   @if (!previewItinerary.enabled) {
                     <button type="button" class="secondary preview-action" (click)="openSelectedItineraryMediaDialog(previewItinerary)">
                       <span class="preview-action-icon" aria-hidden="true">🖼️</span>
-                      <span>Manage media</span>
-                    </button>
-                    <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewItinerary)">
-                      <span class="preview-action-icon" aria-hidden="true">📝</span>
-                      <span>Edit metadata and translations</span>
+                      <span>Manage metadata, media and translations</span>
                     </button>
                     <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'edit']" [queryParams]="backQueryParamsFor(previewItinerary)">
                       <span class="preview-action-icon" aria-hidden="true">🗺️</span>

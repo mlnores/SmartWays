@@ -5,7 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { ApiService, Itinerary, MediaAsset, PoiMediaTranslation, Route, Translation } from './api.service';
 
 type MediaOwner = 'route' | 'itinerary';
-type MediaTab = 'media' | 'translations';
+type MediaTab = 'metadata' | 'media' | 'translations';
 
 interface MediaDraft {
   id?: number;
@@ -24,16 +24,23 @@ interface MediaDraft {
   is_primary: boolean;
 }
 
+interface TranslationDraft {
+  language_code: string;
+  title: string;
+  description: string;
+  is_reference: boolean;
+}
+
 @Component({
   selector: 'app-media-manager-dialog',
   standalone: true,
   imports: [FormsModule],
   template: `
     <dialog #dialog class="metadata-dialog wide media-manager-dialog" (close)="reset()">
-      <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault()">
+  <form method="dialog" class="metadata-dialog-content" (submit)="$event.preventDefault()">
         <header class="metadata-dialog-header">
           <div>
-            <h2>Manage media</h2>
+            <h2>Manage {{ ownerLabelLower }} metadata, translations and media</h2>
             <p>{{ ownerLabel }}: {{ resourceTitle }}</p>
           </div>
           <button type="button" class="icon-button" aria-label="Close media dialog" (click)="close()">✖</button>
@@ -44,11 +51,29 @@ interface MediaDraft {
         }
 
         <div class="tabs">
+          <button type="button" [class.active]="activeTab === 'metadata'" (click)="activeTab = 'metadata'">Metadata</button>
           <button type="button" [class.active]="activeTab === 'media'" (click)="activeTab = 'media'">Media</button>
           <button type="button" [class.active]="activeTab === 'translations'" (click)="activeTab = 'translations'">Translations</button>
         </div>
 
-        @if (activeTab === 'media') {
+        @if (activeTab === 'metadata') {
+          <section class="editor-panel">
+            <div class="metadata-reference-panel">
+              <h3>{{ ownerLabel }} metadata in reference language</h3>
+              <p class="muted">Reference language: {{ referenceLanguageLabel() }}</p>
+              @if (referenceTranslationDraft(); as referenceTranslation) {
+                <label>
+                  <span>Title</span>
+                  <input type="text" [(ngModel)]="referenceTranslation.title" name="managedReferenceTitle" [disabled]="!canEdit" />
+                </label>
+                <label>
+                  <span>Description</span>
+                  <textarea rows="6" [(ngModel)]="referenceTranslation.description" name="managedReferenceDescription" [disabled]="!canEdit"></textarea>
+                </label>
+              }
+            </div>
+          </section>
+        } @else if (activeTab === 'media') {
           <section class="editor-panel">
             <div class="section-heading">
               <h3>Linked media</h3>
@@ -120,45 +145,125 @@ interface MediaDraft {
           </section>
         } @else {
           <section class="editor-panel">
-            <div class="translation-comparison">
-              <section class="reference-column">
-                <h3>Reference captions</h3>
-                @for (item of media; track $index) {
-                  <label>
-                    <div class="media-caption-header">
-                      <span class="media-caption-title">{{ mediaCaptionLabel(item, $index) }}</span>
-                      @if (mediaDisplayUrl(item)) {
-                        <a [href]="mediaDisplayUrl(item)" target="_blank" rel="noopener noreferrer">Show in new tab</a>
-                      }
-                    </div>
-                    <textarea rows="2" [value]="referenceMediaCaption(item)" readonly></textarea>
-                  </label>
-                } @empty {
-                  <p class="muted">Add media before editing captions.</p>
-                }
-              </section>
-              <section>
-                <h3>Translated captions</h3>
-                <label>
-                  <span>Language</span>
-                  <select [(ngModel)]="activeLanguage" name="mediaCaptionLanguage">
-                    @for (language of captionLanguages(); track language) {
-                      <option [value]="language">{{ language }}</option>
+            <div class="translation-tabs-panel">
+              <div class="translation-tabs" role="tablist" aria-label="Metadata translation languages">
+                @for (translation of translationDrafts; track $index) {
+                  <button type="button" class="translation-tab" [class.active]="activeTranslationIndex === $index" (click)="activeTranslationIndex = $index">
+                    @if (translation.is_reference) {
+                      <span class="reference-icon" title="Reference language" aria-label="Reference language">★</span>
                     }
-                  </select>
-                </label>
-                @for (item of media; track $index) {
-                  <label>
-                    <div class="media-caption-header">
-                      <span class="media-caption-title">{{ mediaCaptionLabel(item, $index) }}</span>
-                      @if (mediaDisplayUrl(item)) {
-                        <a [href]="mediaDisplayUrl(item)" target="_blank" rel="noopener noreferrer">Show in new tab</a>
+                    <span>{{ translation.language_code || 'New language' }}</span>
+                  </button>
+                }
+                @if (canEdit) {
+                  <button type="button" class="translation-tab add-tab" (click)="addTranslationDraft()">+</button>
+                }
+              </div>
+
+              @if (activeTranslation(); as translation) {
+                <section class="translation-tab-content">
+                  <div class="translation-tab-header">
+                    <label>
+                      <span>Language</span>
+                      <input type="text" [(ngModel)]="translation.language_code" [name]="'managedTranslationLanguage' + activeTranslationIndex" [disabled]="!canEdit" />
+                    </label>
+                    @if (translation.is_reference) {
+                      <span class="reference-pill"><span aria-hidden="true">★</span> Reference language</span>
+                    } @else if (canEdit) {
+                      <button type="button" class="secondary" (click)="setReferenceTranslation(activeTranslationIndex)">Make reference</button>
+                    }
+                  </div>
+
+                  @if (translation.is_reference) {
+                    <div class="translation-single-column">
+                      <label>
+                        <span>Title</span>
+                        <input type="text" [(ngModel)]="translation.title" [name]="'managedTranslationTitle' + activeTranslationIndex" [disabled]="!canEdit" />
+                      </label>
+                      <label>
+                        <span>Description</span>
+                        <textarea rows="8" [(ngModel)]="translation.description" [name]="'managedTranslationDescription' + activeTranslationIndex" [disabled]="!canEdit"></textarea>
+                      </label>
+                      @if (media.length > 0) {
+                        <section class="media-caption-section">
+                          <h3>Media captions</h3>
+                          @for (item of media; track $index) {
+                            <label>
+                              <div class="media-caption-header">
+                                <span class="media-caption-title">{{ mediaCaptionLabel(item, $index) }}</span>
+                                @if (mediaDisplayUrl(item)) {
+                                  <a [href]="mediaDisplayUrl(item)" target="_blank" rel="noopener noreferrer">Show in new tab</a>
+                                }
+                              </div>
+                              <textarea rows="2" [ngModel]="mediaCaption(item, translation.language_code)" (ngModelChange)="setMediaCaption(item, translation.language_code, $event)" [name]="'managedReferenceCaption' + activeTranslationIndex + '-' + $index" [disabled]="!canEdit" placeholder="Optional caption"></textarea>
+                            </label>
+                          }
+                        </section>
                       }
                     </div>
-                    <textarea rows="2" [ngModel]="mediaCaption(item, activeLanguage)" (ngModelChange)="setMediaCaption(item, activeLanguage, $event)" [name]="'managedMediaCaption' + activeLanguage + '-' + $index" [disabled]="!canEdit" placeholder="Optional translated caption"></textarea>
-                  </label>
-                }
-              </section>
+                  } @else {
+                    <div class="translation-comparison">
+                      <section class="reference-column">
+                        <h3>Reference</h3>
+                        <label>
+                          <span>Title</span>
+                          <input type="text" [value]="referenceTranslationDraft()?.title || ''" readonly />
+                        </label>
+                        <label>
+                          <span>Description</span>
+                          <textarea rows="8" [value]="referenceTranslationDraft()?.description || ''" readonly></textarea>
+                        </label>
+                        @if (media.length > 0) {
+                          <section class="media-caption-section">
+                            <h3>Media captions</h3>
+                            @for (item of media; track $index) {
+                              <label>
+                                <div class="media-caption-header">
+                                  <span class="media-caption-title">{{ mediaCaptionLabel(item, $index) }}</span>
+                                  @if (mediaDisplayUrl(item)) {
+                                    <a [href]="mediaDisplayUrl(item)" target="_blank" rel="noopener noreferrer">Show in new tab</a>
+                                  }
+                                </div>
+                                <textarea rows="2" [value]="referenceMediaCaption(item)" readonly></textarea>
+                              </label>
+                            }
+                          </section>
+                        }
+                      </section>
+                      <section>
+                        <h3>{{ translation.language_code || 'Translation' }}</h3>
+                        <label>
+                          <span>Title</span>
+                          <input type="text" [(ngModel)]="translation.title" [name]="'managedTranslationTitle' + activeTranslationIndex" [disabled]="!canEdit" />
+                        </label>
+                        <label>
+                          <span>Description</span>
+                          <textarea rows="8" [(ngModel)]="translation.description" [name]="'managedTranslationDescription' + activeTranslationIndex" [disabled]="!canEdit"></textarea>
+                        </label>
+                        @if (media.length > 0) {
+                          <section class="media-caption-section">
+                            <h3>Media captions</h3>
+                            @for (item of media; track $index) {
+                              <label>
+                                <div class="media-caption-header">
+                                  <span class="media-caption-title">{{ mediaCaptionLabel(item, $index) }}</span>
+                                  @if (mediaDisplayUrl(item)) {
+                                    <a [href]="mediaDisplayUrl(item)" target="_blank" rel="noopener noreferrer">Show in new tab</a>
+                                  }
+                                </div>
+                                <textarea rows="2" [ngModel]="mediaCaption(item, translation.language_code)" (ngModelChange)="setMediaCaption(item, translation.language_code, $event)" [name]="'managedMediaCaption' + activeTranslationIndex + '-' + $index" [disabled]="!canEdit" placeholder="Optional translated caption"></textarea>
+                              </label>
+                            }
+                          </section>
+                        }
+                      </section>
+                    </div>
+                  }
+                  @if (canEdit && translationDrafts.length > 1) {
+                    <button type="button" class="secondary danger-action" (click)="removeTranslationDraft(activeTranslationIndex)">Remove this translation</button>
+                  }
+                </section>
+              }
             </div>
           </section>
         }
@@ -166,7 +271,7 @@ interface MediaDraft {
         <footer class="metadata-dialog-footer">
           <button type="button" class="secondary" (click)="close()">Close</button>
           @if (canEdit) {
-            <button type="button" class="primary" [disabled]="saving" (click)="save()">{{ saving ? 'Saving...' : 'Save media' }}</button>
+            <button type="button" class="primary" [disabled]="saving" (click)="save()">{{ saving ? 'Saving...' : 'Save changes' }}</button>
           }
         </footer>
       </form>
@@ -250,11 +355,26 @@ interface MediaDraft {
     }
 
     .section-heading h3,
-    .translation-comparison h3 {
+    .translation-comparison h3,
+    .metadata-reference-panel h3 {
       margin: 0;
       color: #111827;
       font-size: 1rem;
       font-weight: 700;
+    }
+
+    .metadata-reference-panel {
+      display: grid;
+      gap: 14px;
+      max-width: 760px;
+      padding: 14px;
+      border: 1px solid #d7deea;
+      border-radius: 10px;
+      background: #ffffff;
+    }
+
+    .metadata-reference-panel textarea {
+      min-height: 160px;
     }
 
     .media-list {
@@ -433,6 +553,86 @@ interface MediaDraft {
       color: #667085;
     }
 
+    .translation-tabs-panel {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 18px;
+    }
+
+    .translation-tabs {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+
+    .translation-tab {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 8px;
+      min-height: 36px;
+      padding: 8px 12px;
+      border: 1px solid #d7deea;
+      border-radius: 8px;
+      color: #475467;
+      background: #ffffff;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .translation-tab.active {
+      color: #111827;
+      border-color: #1f6feb;
+      background: #eff6ff;
+      font-weight: 700;
+    }
+
+    .translation-tab.add-tab {
+      justify-content: center;
+      color: #1f6feb;
+      font-weight: 700;
+    }
+
+    .reference-icon {
+      color: #155eef;
+    }
+
+    .reference-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 34px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      color: #155eef;
+      background: #eff6ff;
+      font-size: 0.86rem;
+      font-weight: 700;
+    }
+
+    .translation-tab-content {
+      display: grid;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .translation-tab-header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .translation-tab-header label {
+      width: min(220px, 100%);
+    }
+
+    .translation-single-column {
+      display: grid;
+      gap: 14px;
+    }
+
     .translation-comparison {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -454,12 +654,32 @@ interface MediaDraft {
       background: #f8fafc !important;
     }
 
+    .reference-column input,
+    .reference-column textarea {
+      color: #667085;
+      background: #eef2f7;
+    }
+
+    .media-caption-section {
+      display: grid;
+      gap: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #e5eaf2;
+    }
+
+    .media-caption-section h3 {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
     .media-caption-header {
       display: flex;
-      align-items: baseline;
+      align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 8px;
+      width: 100%;
       min-width: 0;
+      margin-bottom: 5px;
     }
 
     .media-caption-title,
@@ -481,6 +701,7 @@ interface MediaDraft {
 
     @media (max-width: 760px) {
       .media-list,
+      .translation-tabs-panel,
       .translation-comparison {
         grid-template-columns: 1fr;
       }
@@ -499,8 +720,9 @@ export class MediaManagerDialogComponent {
   owner: MediaOwner = 'route';
   resource: Route | Itinerary | null = null;
   media: MediaDraft[] = [];
-  activeTab: MediaTab = 'media';
-  activeLanguage = 'en';
+  translationDrafts: TranslationDraft[] = [];
+  activeTranslationIndex = 0;
+  activeTab: MediaTab = 'metadata';
   statusMessage = '';
   statusIsError = false;
   saving = false;
@@ -508,6 +730,10 @@ export class MediaManagerDialogComponent {
 
   get ownerLabel(): string {
     return this.owner === 'route' ? 'Route' : 'Itinerary';
+  }
+
+  get ownerLabelLower(): string {
+    return this.owner === 'route' ? 'route' : 'itinerary';
   }
 
   get resourceTitle(): string {
@@ -522,9 +748,10 @@ export class MediaManagerDialogComponent {
     this.owner = owner;
     this.resource = resource;
     this.media = this.mediaDraftsFrom(resource.media || []);
-    this.activeLanguage = this.referenceLanguageLabel();
-    this.activeTab = 'media';
-    this.statusMessage = this.canEdit ? '' : `This public ${owner} is read-only. Turn it to draft before editing media.`;
+    this.translationDrafts = this.translationDraftsFrom(resource.translations || [], resource.title || '', resource.description || '');
+    this.activeTranslationIndex = Math.max(0, this.translationDrafts.findIndex(translation => translation.is_reference));
+    this.activeTab = 'metadata';
+    this.statusMessage = this.canEdit ? '' : `This public ${owner} is read-only. Turn it to draft before editing.`;
     this.statusIsError = !this.canEdit;
     this.dialog?.nativeElement.showModal();
   }
@@ -537,6 +764,8 @@ export class MediaManagerDialogComponent {
     this.revokeMediaPreviewUrls();
     this.resource = null;
     this.media = [];
+    this.translationDrafts = [];
+    this.activeTranslationIndex = 0;
     this.saving = false;
   }
 
@@ -637,22 +866,60 @@ export class MediaManagerDialogComponent {
   }
 
   referenceLanguageLabel(): string {
-    return this.referenceTranslation()?.language_code.trim() || 'en';
+    return this.referenceTranslationDraft()?.language_code.trim() || 'en';
+  }
+
+  activeTranslation(): TranslationDraft | null {
+    return this.translationDrafts[this.activeTranslationIndex] || null;
+  }
+
+  referenceTranslationDraft(): TranslationDraft | null {
+    return this.translationDrafts.find(translation => translation.is_reference) || this.translationDrafts[0] || null;
+  }
+
+  addTranslationDraft(): void {
+    if (!this.canEdit) return;
+    this.translationDrafts.push({
+      language_code: '',
+      title: '',
+      description: '',
+      is_reference: this.translationDrafts.length === 0
+    });
+    this.activeTranslationIndex = this.translationDrafts.length - 1;
+  }
+
+  removeTranslationDraft(index: number): void {
+    if (!this.canEdit || this.translationDrafts.length <= 1) return;
+    const removedReference = this.translationDrafts[index]?.is_reference;
+    this.translationDrafts.splice(index, 1);
+    if (removedReference && this.translationDrafts.length > 0) {
+      this.translationDrafts[0].is_reference = true;
+    }
+    this.activeTranslationIndex = Math.min(index, this.translationDrafts.length - 1);
+  }
+
+  setReferenceTranslation(index: number): void {
+    if (!this.canEdit || !this.translationDrafts[index]) return;
+    const nextLanguage = this.translationDrafts[index].language_code || 'this language';
+    if (!window.confirm(`Make ${nextLanguage} the reference language?`)) return;
+    this.translationDrafts = this.translationDrafts.map((translation, currentIndex) => ({
+      ...translation,
+      is_reference: currentIndex === index
+    }));
   }
 
   mediaCaptionLabel(item: MediaDraft, index: number): string {
     return item.original_filename || `${this.mediaTypeLabel(item.media_type)} ${index + 1}`;
   }
 
-  captionLanguages(): string[] {
-    const languages = (this.resource?.translations || [])
-      .map(translation => translation.language_code)
-      .filter(Boolean);
-    return languages.length ? languages : ['en'];
-  }
-
   async save(): Promise<void> {
     if (!this.resource || !this.canEdit) return;
+    const referenceTranslation = this.referenceTranslationDraft();
+    if (!referenceTranslation?.title.trim()) {
+      this.showStatus('The reference title is required.', true);
+      this.activeTab = 'metadata';
+      return;
+    }
     if (this.media.some(item => item.source === 'remote' && !item.url.trim())) {
       this.showStatus('Every remote media item needs a URL.', true);
       return;
@@ -664,16 +931,19 @@ export class MediaManagerDialogComponent {
 
     this.saving = true;
     try {
-      const payload = { media: this.normalizedMedia() };
+      const payload = {
+        translations: this.normalizedResourceTranslations(),
+        media: this.normalizedMedia()
+      };
       const updated = this.owner === 'route'
         ? await firstValueFrom(this.api.updateRoute(this.resource.id, payload))
         : await firstValueFrom(this.api.updateItinerary(this.resource.id, payload));
       await this.uploadPendingMedia(updated);
-      this.showStatus('Media saved.', false);
+      this.showStatus('Changes saved.', false);
       this.saved.emit();
       this.close();
     } catch (error) {
-      this.showStatus(`Could not save media. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showStatus(`Could not save changes. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     } finally {
       this.saving = false;
     }
@@ -740,6 +1010,36 @@ export class MediaManagerDialogComponent {
     );
   }
 
+  private translationDraftsFrom(translations: Translation[], fallbackTitle: string, fallbackDescription: string): TranslationDraft[] {
+    const drafts = translations.map(translation => ({
+      language_code: translation.language_code || '',
+      title: translation.title || '',
+      description: translation.description || '',
+      is_reference: Boolean(translation.is_reference)
+    }));
+    if (drafts.length === 0) {
+      drafts.push({
+        language_code: 'en',
+        title: fallbackTitle,
+        description: fallbackDescription,
+        is_reference: true
+      });
+    }
+    if (!drafts.some(translation => translation.is_reference)) {
+      drafts[0].is_reference = true;
+    }
+    return drafts;
+  }
+
+  private normalizedResourceTranslations(): Array<{ language_code: string; title: string; description?: string; is_reference?: boolean }> {
+    return this.translationDrafts.map(translation => ({
+      language_code: translation.language_code.trim(),
+      title: translation.title.trim(),
+      description: translation.description || '',
+      is_reference: translation.is_reference
+    })).filter(translation => translation.language_code && translation.title);
+  }
+
   private normalizedMedia(): MediaAsset[] {
     const media = this.media
       .map((item, index) => ({
@@ -776,10 +1076,6 @@ export class MediaManagerDialogComponent {
     if (file.type.startsWith('audio/')) return 'audio';
     if (file.type === 'application/pdf' || file.type.startsWith('text/')) return 'document';
     return 'other';
-  }
-
-  private referenceTranslation(): Translation | null {
-    return this.resource?.translations.find(translation => translation.is_reference) || this.resource?.translations[0] || null;
   }
 
   private revokeMediaPreviewUrl(item?: MediaDraft): void {

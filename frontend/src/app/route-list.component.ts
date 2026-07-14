@@ -215,11 +215,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                   @if (!previewRoute.enabled) {
                     <button type="button" class="secondary preview-action" (click)="openSelectedRouteMediaDialog(previewRoute)">
                       <span class="preview-action-icon" aria-hidden="true">🖼️</span>
-                      <span>Manage media</span>
-                    </button>
-                    <button type="button" class="secondary preview-action" (click)="openTranslationDialog(previewRoute)">
-                      <span class="preview-action-icon" aria-hidden="true">📝</span>
-                      <span>Edit metadata and translations</span>
+                      <span>Manage metadata, media and translations</span>
                     </button>
                     <button type="button" class="secondary preview-action danger-action" (click)="deleteRoute(previewRoute)">
                       <span class="preview-action-icon" aria-hidden="true">🗑️</span>

@@ -156,7 +156,7 @@ declare const turf: any;
           <span>Filter to map area</span>
         </button>
         @if (itineraryId) {
-          <button type="button" class="secondary toolbar-action" [disabled]="!currentItinerary || currentItinerary.enabled" (click)="openItineraryMediaDialog()">Manage itinerary media</button>
+          <button type="button" class="secondary toolbar-action" [disabled]="!currentItinerary || currentItinerary.enabled" (click)="openItineraryMediaDialog()">Manage itinerary metadata, translations and media</button>
         }
         @if (mapBoundsFilter) {
           <button type="button" class="secondary filter-chip" title="Remove map area filter" aria-label="Remove map area filter" (click)="clearMapAreaFilter()">
