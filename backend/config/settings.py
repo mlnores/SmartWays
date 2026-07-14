@@ -103,6 +103,7 @@ MEDIA_URL = os.environ.get("DJANGO_MEDIA_URL", "/media/")
 MEDIA_ROOT = os.environ.get("DJANGO_MEDIA_ROOT", BASE_DIR / "media")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 SMARTWAYS_PUBLIC_BASE_URL = os.environ.get("SMARTWAYS_PUBLIC_BASE_URL", "").rstrip("/")
+COUNTRY_BOUNDARIES_PATH = os.environ.get("COUNTRY_BOUNDARIES_PATH", "")
 
 if os.environ.get("SMARTWAYS_MEDIA_STORAGE", "local").lower() == "s3":
     AWS_STORAGE_BUCKET_NAME = os.environ.get("SMARTWAYS_MEDIA_BUCKET", "smartways-media")

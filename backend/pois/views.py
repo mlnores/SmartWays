@@ -2,6 +2,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from django.conf import settings
 from django.contrib.gis.geos import GEOSGeometry, Point, Polygon
 from django.db import transaction
 from django.http import JsonResponse
@@ -43,7 +44,7 @@ from .serializers import (
     select_translation,
 )
 
-COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parent / "data" / "geoboundaries_adm0.geojson"
+DEFAULT_COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parent / "data" / "geoboundaries_adm0.geojson"
 COUNTRY_CODE_PROPERTY_NAMES = (
     "ISO_A2",
     "iso_a2",
@@ -86,10 +87,11 @@ def country_code_from_boundary_properties(properties):
 
 @lru_cache(maxsize=1)
 def country_bounds_by_code():
-    if not COUNTRY_BOUNDARIES_PATH.exists():
+    country_boundaries_path = configured_country_boundaries_path()
+    if not country_boundaries_path.exists():
         return {}
 
-    with COUNTRY_BOUNDARIES_PATH.open(encoding="utf-8") as geojson_file:
+    with country_boundaries_path.open(encoding="utf-8") as geojson_file:
         payload = json.load(geojson_file)
 
     raw_features = payload.get("features") if payload.get("type") == "FeatureCollection" else [payload]
@@ -113,10 +115,11 @@ def country_bounds_by_code():
 
 @lru_cache(maxsize=1)
 def country_boundaries_by_code():
-    if not COUNTRY_BOUNDARIES_PATH.exists():
+    country_boundaries_path = configured_country_boundaries_path()
+    if not country_boundaries_path.exists():
         return {}
 
-    with COUNTRY_BOUNDARIES_PATH.open(encoding="utf-8") as geojson_file:
+    with country_boundaries_path.open(encoding="utf-8") as geojson_file:
         payload = json.load(geojson_file)
 
     raw_features = payload.get("features") if payload.get("type") == "FeatureCollection" else [payload]
@@ -133,6 +136,11 @@ def country_boundaries_by_code():
             continue
         boundaries.setdefault(country_code, []).append((boundary.extent, boundary))
     return boundaries
+
+
+def configured_country_boundaries_path():
+    configured_path = getattr(settings, "COUNTRY_BOUNDARIES_PATH", "")
+    return Path(configured_path) if configured_path else DEFAULT_COUNTRY_BOUNDARIES_PATH
 
 
 def country_code_for_point(latitude, longitude):

@@ -185,6 +185,24 @@ backend/pois/data/geoboundaries_adm0.geojson
 
 The file is intentionally not committed.
 
+The runtime lookup endpoint used by the POI editor also reads this boundary file. The path is configurable:
+
+```bash
+export COUNTRY_BOUNDARIES_PATH=/path/to/geoboundaries_adm0.geojson
+```
+
+If unset, the backend falls back to:
+
+```text
+backend/pois/data/geoboundaries_adm0.geojson
+```
+
+Docker deployments set:
+
+```text
+COUNTRY_BOUNDARIES_PATH=/data/geoboundaries_adm0.geojson
+```
+
 ## Import Commands
 
 ### Full RurAllure POI Dump
@@ -272,4 +290,3 @@ Keep `DJANGO_DEBUG=1` locally if admin CSS is missing.
 cd backend
 python manage.py test pois
 ```
-

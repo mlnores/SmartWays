@@ -261,6 +261,13 @@ docker-data/geoboundaries_adm0.geojson
 ```
 
 If the geoBoundaries file is missing, the provided import helper falls back to `--skip-country-annotation`.
+The running backend also uses this file for live country lookup in the POI editor. Docker sets:
+
+```text
+COUNTRY_BOUNDARIES_PATH=/data/geoboundaries_adm0.geojson
+```
+
+If you deploy with a different mount path, update `COUNTRY_BOUNDARIES_PATH` accordingly.
 
 ### Build And Start
 

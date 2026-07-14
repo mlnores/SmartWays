@@ -156,6 +156,13 @@ declare const turf: any;
           <span>Filter to map area</span>
         </button>
         @if (itineraryId) {
+          @if (currentItinerary && !currentItinerary.enabled) {
+            <a class="secondary toolbar-action" [routerLink]="['/itineraries', itineraryId, 'edit']" [queryParams]="itineraryEditorReturnQueryParams()">
+              Open in editor
+            </a>
+          } @else {
+            <button type="button" class="secondary toolbar-action" disabled>Open in editor</button>
+          }
           <button type="button" class="secondary toolbar-action" [disabled]="!currentItinerary || currentItinerary.enabled" (click)="openItineraryMediaDialog()">Manage itinerary metadata, translations and media</button>
         }
         @if (mapBoundsFilter) {
@@ -1929,6 +1936,13 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     };
   }
 
+  itineraryEditorReturnQueryParams(): Record<string, string> {
+    return {
+      returnTo: this.poiListReturnUrl(null),
+      returnLabel: 'Back to itinerary POIs'
+    };
+  }
+
   private restoreFiltersFromQueryParams(): void {
     const params = this.activatedRoute.snapshot.queryParamMap;
     this.query = params.get('q') || '';
@@ -1948,9 +1962,13 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   private poiListReturnUrl(highlightPoiId: number | null = null): string {
+    const existingReturnTo = this.activatedRoute.snapshot.queryParamMap.get('returnTo');
+    const existingReturnLabel = this.activatedRoute.snapshot.queryParamMap.get('returnLabel');
     return this.router.serializeUrl(this.router.createUrlTree([], {
       relativeTo: this.activatedRoute,
       queryParams: {
+        returnTo: existingReturnTo,
+        returnLabel: existingReturnLabel,
         ...this.poiListQueryParams(),
         highlight: highlightPoiId === null ? null : String(highlightPoiId)
       }

@@ -237,7 +237,7 @@ DATABASE_ENGINE
 POSTGRES_*
 SMARTWAYS_MEDIA_*
 SMARTWAYS_PUBLIC_BASE_URL
+COUNTRY_BOUNDARIES_PATH
 ```
 
 When deployed behind an IP address or domain, include that host in `DJANGO_ALLOWED_HOSTS`.
-
