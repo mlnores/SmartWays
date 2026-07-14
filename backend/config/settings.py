@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     "django.contrib.gis",
     "rest_framework",
     "pois",
+    "eccch_export",
 ]
 
 if os.environ.get("SMARTWAYS_MEDIA_STORAGE", "local").lower() == "s3":
@@ -101,6 +102,7 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 MEDIA_URL = os.environ.get("DJANGO_MEDIA_URL", "/media/")
 MEDIA_ROOT = os.environ.get("DJANGO_MEDIA_ROOT", BASE_DIR / "media")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+SMARTWAYS_PUBLIC_BASE_URL = os.environ.get("SMARTWAYS_PUBLIC_BASE_URL", "").rstrip("/")
 
 if os.environ.get("SMARTWAYS_MEDIA_STORAGE", "local").lower() == "s3":
     AWS_STORAGE_BUCKET_NAME = os.environ.get("SMARTWAYS_MEDIA_BUCKET", "smartways-media")
