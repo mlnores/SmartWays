@@ -339,7 +339,7 @@ declare const turf: any;
                   @if (singleSelectedPoi(); as selectedPoi) {
                     <a class="secondary preview-action" [routerLink]="['/pois', selectedPoi.id, 'edit']" [queryParams]="poiEditorReturnQueryParams(selectedPoi)">
                       <span class="preview-action-icon" aria-hidden="true">🗺️</span>
-                      <span>{{ selectedPoi.enabled ? 'View info and media' : 'View/edit info and media' }}</span>
+                      <span>{{ selectedPoi.enabled ? 'View info and media' : 'Manage metadata, media and translations' }}</span>
                     </a>
                     <button type="button" class="secondary preview-action" [disabled]="duplicatingPoiIds.has(selectedPoi.id)" (click)="duplicatePoi(selectedPoi)">
                       <span class="preview-action-icon" aria-hidden="true">📄</span>
