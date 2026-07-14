@@ -5,6 +5,7 @@ import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, forkJoin, map, Observable, of, startWith, switchMap } from 'rxjs';
 
 import { ApiPage, ApiService, Category, Itinerary, Poi, PoiMedia, Translation } from './api.service';
+import { MediaManagerDialogComponent } from './media-manager-dialog.component';
 
 interface TranslationDraft {
   language_code: string;
@@ -85,22 +86,33 @@ declare const turf: any;
 @Component({
   selector: 'app-poi-list',
   standalone: true,
-  imports: [AsyncPipe, FormsModule, NgTemplateOutlet, RouterLink],
+  imports: [AsyncPipe, FormsModule, NgTemplateOutlet, RouterLink, MediaManagerDialogComponent],
   template: `
     <section class="page">
       <header class="page-header">
         <div>
-          <h1>{{ itineraryId ? 'Itinerary POIs' : 'POIs' }}</h1>
+          <h1>{{ itineraryId ? itineraryTitle || 'Itinerary POIs' : 'POIs' }}</h1>
           <p>
             @if (itineraryId) {
-              POIs included in and near {{ itineraryTitle || 'this itinerary' }}.
+              Browse POIs included in the itinerary and nearby POIs in its segment buffer zones.
             } @else {
               Browse and manage points of interest from the backend API.
             }
           </p>
         </div>
         @if (itineraryId) {
-          <a class="secondary" [routerLink]="backLink">{{ backLabel }}</a>
+          @if (currentItinerary) {
+            <div class="publication-inline-switch centered-publication-switch" aria-label="Itinerary state">
+              <span>State</span>
+              <div class="publication-inline-toggle">
+                <button type="button" [class.active]="!currentItinerary.enabled" (click)="setCurrentItineraryState(false)">Draft</button>
+                <button type="button" [class.active]="currentItinerary.enabled" (click)="setCurrentItineraryState(true)">Public (read-only)</button>
+              </div>
+            </div>
+          }
+          <div class="list-actions header-end-actions">
+            <a class="secondary" [routerLink]="backLink">{{ backLabel }}</a>
+          </div>
         } @else {
           <div class="list-actions">
             <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
@@ -108,11 +120,12 @@ declare const turf: any;
           </div>
         }
       </header>
+      <app-media-manager-dialog #mediaManagerDialog (saved)="refreshList()"></app-media-manager-dialog>
 
       <div class="toolbar">
         <input
           type="search"
-          placeholder="Search title or category"
+          placeholder="Search POIs by title or category"
           [ngModel]="query"
           (ngModelChange)="updateQueryFilter($event)"
         />
@@ -142,6 +155,16 @@ declare const turf: any;
           <span aria-hidden="true">▣</span>
           <span>Filter to map area</span>
         </button>
+        @if (itineraryId) {
+          @if (currentItinerary && !currentItinerary.enabled) {
+            <a class="secondary toolbar-action" [routerLink]="['/itineraries', itineraryId, 'edit']" [queryParams]="itineraryEditorReturnQueryParams()">
+              Open in editor
+            </a>
+          } @else {
+            <button type="button" class="secondary toolbar-action" disabled>Open in editor</button>
+          }
+          <button type="button" class="secondary toolbar-action" [disabled]="!currentItinerary || currentItinerary.enabled" (click)="openItineraryMediaDialog()">Manage itinerary metadata, translations and media</button>
+        }
         @if (mapBoundsFilter) {
           <button type="button" class="secondary filter-chip" title="Remove map area filter" aria-label="Remove map area filter" (click)="clearMapAreaFilter()">
             <span>Map area filter</span>
@@ -323,7 +346,7 @@ declare const turf: any;
                   @if (singleSelectedPoi(); as selectedPoi) {
                     <a class="secondary preview-action" [routerLink]="['/pois', selectedPoi.id, 'edit']" [queryParams]="poiEditorReturnQueryParams(selectedPoi)">
                       <span class="preview-action-icon" aria-hidden="true">🗺️</span>
-                      <span>{{ selectedPoi.enabled ? 'View info and media' : 'View/edit info and media' }}</span>
+                      <span>{{ selectedPoi.enabled ? 'View info and media' : 'Manage metadata, media and translations' }}</span>
                     </a>
                     <button type="button" class="secondary preview-action" [disabled]="duplicatingPoiIds.has(selectedPoi.id)" (click)="duplicatePoi(selectedPoi)">
                       <span class="preview-action-icon" aria-hidden="true">📄</span>
@@ -506,6 +529,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   @ViewChild('metadataDialog') private readonly metadataDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('categoryManagerDialog') private readonly categoryManagerDialog?: ElementRef<HTMLDialogElement>;
   @ViewChild('previewMap') private readonly previewMapElement?: ElementRef<HTMLDivElement>;
+  @ViewChild('mediaManagerDialog') private readonly mediaManagerDialog?: MediaManagerDialogComponent;
 
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
@@ -851,6 +875,29 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     });
   }
 
+  openItineraryMediaDialog(): void {
+    if (!this.currentItinerary || this.currentItinerary.enabled) return;
+    this.mediaManagerDialog?.open('itinerary', this.currentItinerary);
+  }
+
+  async setCurrentItineraryState(enabled: boolean): Promise<void> {
+    if (!this.currentItinerary || this.currentItinerary.enabled === enabled) return;
+    if (!this.confirmItineraryStateChange(this.currentItinerary, enabled)) return;
+
+    try {
+      const itinerary = await firstValueFrom(this.api.updateItinerary(this.currentItinerary.id, { enabled }));
+      this.currentItinerary = itinerary;
+      this.clearStatus();
+      this.refreshList();
+    } catch (error) {
+      this.showStatus(`Could not update itinerary. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  refreshList(): void {
+    this.refresh$.next(this.refresh$.value + 1);
+  }
+
   updateQueryFilter(value: string): void {
     this.query = value;
     this.query$.next(value);
@@ -963,6 +1010,17 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     let message = `Really ${action} ${pois.length} selected ${itemLabel}?`;
     if (!enabled) {
       message += '\n\nItineraries containing the selected POI(s), and routes containing those itineraries, will also be turned to draft.';
+    }
+    return window.confirm(message);
+  }
+
+  private confirmItineraryStateChange(itinerary: Itinerary, enabled: boolean): boolean {
+    const action = enabled ? 'make public' : 'turn to draft';
+    let message = `Really ${action} itinerary "${itinerary.title || 'Untitled itinerary'}"?`;
+    if (enabled) {
+      message += '\n\nDraft POIs included in this itinerary can also be made public.';
+    } else {
+      message += '\n\nRoutes containing this itinerary can also be turned to draft.';
     }
     return window.confirm(message);
   }
@@ -1733,7 +1791,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
             const groups = [
               {
                 key: 'direct',
-                title: 'Included directly in the itinerary',
+                title: 'POIs included directly in the itinerary',
                 items: this.sortedPois(directPois)
               },
               {
@@ -1878,6 +1936,13 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     };
   }
 
+  itineraryEditorReturnQueryParams(): Record<string, string> {
+    return {
+      returnTo: this.poiListReturnUrl(null),
+      returnLabel: 'Back to itinerary POIs'
+    };
+  }
+
   private restoreFiltersFromQueryParams(): void {
     const params = this.activatedRoute.snapshot.queryParamMap;
     this.query = params.get('q') || '';
@@ -1897,9 +1962,13 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   private poiListReturnUrl(highlightPoiId: number | null = null): string {
+    const existingReturnTo = this.activatedRoute.snapshot.queryParamMap.get('returnTo');
+    const existingReturnLabel = this.activatedRoute.snapshot.queryParamMap.get('returnLabel');
     return this.router.serializeUrl(this.router.createUrlTree([], {
       relativeTo: this.activatedRoute,
       queryParams: {
+        returnTo: existingReturnTo,
+        returnLabel: existingReturnLabel,
         ...this.poiListQueryParams(),
         highlight: highlightPoiId === null ? null : String(highlightPoiId)
       }

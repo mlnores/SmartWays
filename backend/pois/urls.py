@@ -6,11 +6,13 @@ from .views import (
     CategoryTranslationViewSet,
     CategoryViewSet,
     ItineraryTranslationViewSet,
+    ItineraryMediaViewSet,
     ItineraryViewSet,
     POIMediaViewSet,
     POITranslationViewSet,
     POIViewSet,
     RouteTranslationViewSet,
+    RouteMediaViewSet,
     RouteViewSet,
     mock_poi_lookup,
 )
@@ -24,8 +26,10 @@ router.register("category-translations", CategoryTranslationViewSet, basename="c
 router.register("poi-media", POIMediaViewSet, basename="poi-media")
 router.register("poi-images", POIMediaViewSet, basename="poi-image")
 router.register("routes", RouteViewSet, basename="route")
+router.register("route-media", RouteMediaViewSet, basename="route-media")
 router.register("route-translations", RouteTranslationViewSet, basename="route-translation")
 router.register("itineraries", ItineraryViewSet, basename="itinerary")
+router.register("itinerary-media", ItineraryMediaViewSet, basename="itinerary-media")
 router.register("itinerary-translations", ItineraryTranslationViewSet, basename="itinerary-translation")
 
 urlpatterns = [

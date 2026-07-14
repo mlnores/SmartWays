@@ -2,6 +2,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from django.conf import settings
 from django.contrib.gis.geos import GEOSGeometry, Point, Polygon
 from django.db import transaction
 from django.http import JsonResponse
@@ -10,25 +11,40 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ParseError, ValidationError
-from rest_framework.parsers import JSONParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from .country_codes import alpha3_to_alpha2
-from .models import Category, CategoryTranslation, Itinerary, ItineraryTranslation, POI, POIMedia, POITranslation, Route, RouteStage, RouteTranslation
+from .models import (
+    Category,
+    CategoryTranslation,
+    Itinerary,
+    ItineraryMedia,
+    ItineraryTranslation,
+    POI,
+    POIMedia,
+    POITranslation,
+    Route,
+    RouteMedia,
+    RouteStage,
+    RouteTranslation,
+)
 from .serializers import (
     CategorySerializer,
     CategoryTranslationSerializer,
+    ItineraryMediaSerializer,
     ItinerarySerializer,
     ItineraryTranslationSerializer,
     POIMediaSerializer,
     POISerializer,
     POITranslationSerializer,
+    RouteMediaSerializer,
     RouteSerializer,
     RouteTranslationSerializer,
     select_translation,
 )
 
-COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parent / "data" / "geoboundaries_adm0.geojson"
+DEFAULT_COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parent / "data" / "geoboundaries_adm0.geojson"
 COUNTRY_CODE_PROPERTY_NAMES = (
     "ISO_A2",
     "iso_a2",
@@ -71,10 +87,11 @@ def country_code_from_boundary_properties(properties):
 
 @lru_cache(maxsize=1)
 def country_bounds_by_code():
-    if not COUNTRY_BOUNDARIES_PATH.exists():
+    country_boundaries_path = configured_country_boundaries_path()
+    if not country_boundaries_path.exists():
         return {}
 
-    with COUNTRY_BOUNDARIES_PATH.open(encoding="utf-8") as geojson_file:
+    with country_boundaries_path.open(encoding="utf-8") as geojson_file:
         payload = json.load(geojson_file)
 
     raw_features = payload.get("features") if payload.get("type") == "FeatureCollection" else [payload]
@@ -98,10 +115,11 @@ def country_bounds_by_code():
 
 @lru_cache(maxsize=1)
 def country_boundaries_by_code():
-    if not COUNTRY_BOUNDARIES_PATH.exists():
+    country_boundaries_path = configured_country_boundaries_path()
+    if not country_boundaries_path.exists():
         return {}
 
-    with COUNTRY_BOUNDARIES_PATH.open(encoding="utf-8") as geojson_file:
+    with country_boundaries_path.open(encoding="utf-8") as geojson_file:
         payload = json.load(geojson_file)
 
     raw_features = payload.get("features") if payload.get("type") == "FeatureCollection" else [payload]
@@ -118,6 +136,11 @@ def country_boundaries_by_code():
             continue
         boundaries.setdefault(country_code, []).append((boundary.extent, boundary))
     return boundaries
+
+
+def configured_country_boundaries_path():
+    configured_path = getattr(settings, "COUNTRY_BOUNDARIES_PATH", "")
+    return Path(configured_path) if configured_path else DEFAULT_COUNTRY_BOUNDARIES_PATH
 
 
 def country_code_for_point(latitude, longitude):
@@ -193,7 +216,7 @@ def buffer_poi_lookup(request):
 
     queryset = (
         POI.objects.filter(location__within=buffer_geometry)
-        .prefetch_related("translations", "media", "categories", "categories__translations")
+        .prefetch_related("translations", "media", "media__translations", "categories", "categories__translations")
         .order_by("id")[:limit]
     )
     pois = [poi_for_buffer_response(poi, language) for poi in queryset]
@@ -209,19 +232,19 @@ def poi_for_buffer_response(poi, language_code):
     categories = list(poi.categories.all())
     primary_image = next((image for image in images if image.is_primary), None)
     image = primary_image or (images[0] if images else None)
-    image_urls = [image.url for image in images]
+    image_urls = [image.public_url for image in images]
 
     return {
         "id": str(poi.pk),
         "enabled": poi.enabled,
         "label": translation.title if translation else f"POI {poi.pk}",
         "snippet": translation.description if translation else "",
-        "imageUrl": image.url if image else "",
+        "imageUrl": image.public_url if image else "",
         "imageUrls": image_urls,
         "media": [
             {
                 "type": media.media_type,
-                "url": media.url,
+                "url": media.public_url,
                 "position": media.position,
                 "isPrimary": media.is_primary,
             }
@@ -424,6 +447,7 @@ class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelVie
             .prefetch_related(
                 "translations",
                 "media",
+                "media__translations",
                 "categories",
                 "categories__translations",
             )
@@ -573,6 +597,8 @@ class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.Mo
     def get_queryset(self):
         queryset = Itinerary.objects.prefetch_related(
             "translations",
+            "media",
+            "media__translations",
             "route_stages",
             "route_stages__route",
             "route_stages__route__translations",
@@ -624,6 +650,8 @@ class RouteViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelV
     def get_queryset(self):
         queryset = Route.objects.prefetch_related(
             "translations",
+            "media",
+            "media__translations",
             "stages",
             "stages__itinerary",
             "stages__itinerary__translations",
@@ -886,7 +914,8 @@ class POIMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
     draft_label = "POI"
     parent_attribute = "poi"
     serializer_class = POIMediaSerializer
-    queryset = POIMedia.objects.select_related("poi").all()
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    queryset = POIMedia.objects.select_related("poi").prefetch_related("translations").all()
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -896,3 +925,63 @@ class POIMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(poi_id=poi_id)
 
         return queryset
+
+    def perform_create(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            POIMedia.objects.filter(poi=media.poi, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+    def perform_update(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            POIMedia.objects.filter(poi=media.poi, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+
+class RouteMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+    draft_label = "route"
+    parent_attribute = "route"
+    serializer_class = RouteMediaSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    queryset = RouteMedia.objects.select_related("route").prefetch_related("translations").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        route_id = self.request.query_params.get("route")
+        if route_id:
+            queryset = queryset.filter(route_id=route_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            RouteMedia.objects.filter(route=media.route, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+    def perform_update(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            RouteMedia.objects.filter(route=media.route, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+
+class ItineraryMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+    draft_label = "itinerary"
+    parent_attribute = "itinerary"
+    serializer_class = ItineraryMediaSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    queryset = ItineraryMedia.objects.select_related("itinerary").prefetch_related("translations").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        itinerary_id = self.request.query_params.get("itinerary")
+        if itinerary_id:
+            queryset = queryset.filter(itinerary_id=itinerary_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            ItineraryMedia.objects.filter(itinerary=media.itinerary, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+    def perform_update(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            ItineraryMedia.objects.filter(itinerary=media.itinerary, is_primary=True).exclude(pk=media.pk).update(is_primary=False)

@@ -23,7 +23,11 @@ INSTALLED_APPS = [
     "django.contrib.gis",
     "rest_framework",
     "pois",
+    "eccch_export",
 ]
+
+if os.environ.get("SMARTWAYS_MEDIA_STORAGE", "local").lower() == "s3":
+    INSTALLED_APPS.append("storages")
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -95,7 +99,33 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = os.environ.get("DJANGO_STATIC_ROOT", BASE_DIR / "staticfiles")
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+MEDIA_URL = os.environ.get("DJANGO_MEDIA_URL", "/media/")
+MEDIA_ROOT = os.environ.get("DJANGO_MEDIA_ROOT", BASE_DIR / "media")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+SMARTWAYS_PUBLIC_BASE_URL = os.environ.get("SMARTWAYS_PUBLIC_BASE_URL", "").rstrip("/")
+COUNTRY_BOUNDARIES_PATH = os.environ.get("COUNTRY_BOUNDARIES_PATH", "")
+
+if os.environ.get("SMARTWAYS_MEDIA_STORAGE", "local").lower() == "s3":
+    AWS_STORAGE_BUCKET_NAME = os.environ.get("SMARTWAYS_MEDIA_BUCKET", "smartways-media")
+    AWS_S3_ENDPOINT_URL = os.environ.get("SMARTWAYS_MEDIA_ENDPOINT", "")
+    AWS_ACCESS_KEY_ID = os.environ.get("SMARTWAYS_MEDIA_ACCESS_KEY", "")
+    AWS_SECRET_ACCESS_KEY = os.environ.get("SMARTWAYS_MEDIA_SECRET_KEY", "")
+    AWS_S3_REGION_NAME = os.environ.get("SMARTWAYS_MEDIA_REGION", "us-east-1")
+    AWS_S3_ADDRESSING_STYLE = os.environ.get("SMARTWAYS_MEDIA_ADDRESSING_STYLE", "path")
+    AWS_QUERYSTRING_AUTH = os.environ.get("SMARTWAYS_MEDIA_QUERYSTRING_AUTH", "0") == "1"
+    AWS_DEFAULT_ACL = os.environ.get("SMARTWAYS_MEDIA_DEFAULT_ACL", "public-read")
+    public_url = os.environ.get("SMARTWAYS_MEDIA_PUBLIC_URL", "").rstrip("/")
+    if public_url:
+        AWS_S3_CUSTOM_DOMAIN = public_url.replace("https://", "").replace("http://", "")
+        AWS_S3_URL_PROTOCOL = "https:" if public_url.startswith("https://") else "http:"
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
 
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()

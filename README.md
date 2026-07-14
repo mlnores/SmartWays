@@ -30,6 +30,7 @@ SmartWays is a Django + Angular application for managing routes, itineraries, an
 - Draft/public mutation rules enforced at the API layer.
 - Django admin for direct inspection and maintenance.
 - Import commands for RurAllure POIs and route/GPX datasets.
+- ECCCH export layer for JSON-LD, GeoJSON, ZIP packages, semantic annotations, and vocabulary mappings.
 - Default local database: SQLite + SpatiaLite.
 - Optional production-style database: PostgreSQL + PostGIS.
 
@@ -218,6 +219,7 @@ For a real deployment, change at least:
 ```text
 DJANGO_SECRET_KEY
 POSTGRES_PASSWORD
+SMARTWAYS_MEDIA_SECRET_KEY
 DJANGO_ALLOWED_HOSTS
 DJANGO_CSRF_TRUSTED_ORIGINS
 ```
@@ -259,6 +261,13 @@ docker-data/geoboundaries_adm0.geojson
 ```
 
 If the geoBoundaries file is missing, the provided import helper falls back to `--skip-country-annotation`.
+The running backend also uses this file for live country lookup in the POI editor. Docker sets:
+
+```text
+COUNTRY_BOUNDARIES_PATH=/data/geoboundaries_adm0.geojson
+```
+
+If you deploy with a different mount path, update `COUNTRY_BOUNDARIES_PATH` accordingly.
 
 ### Build And Start
 
@@ -274,7 +283,30 @@ Default local URLs:
 http://localhost:4200/        Angular frontend
 http://localhost:8000/api/    Backend API exposed directly
 http://localhost:4200/admin/  Django admin through frontend Nginx
+http://localhost:9000/        MinIO S3-compatible media API
+http://localhost:9001/        MinIO admin console
 ```
+
+### POI Media Storage
+
+The Docker deployment includes MinIO, an S3-compatible object storage service, for files uploaded through the POI editor. Django stores media metadata in PostgreSQL and uploads the actual files to the MinIO bucket.
+
+The relevant `.env` settings are:
+
+```text
+SMARTWAYS_MEDIA_STORAGE=s3
+SMARTWAYS_MEDIA_BUCKET=smartways-media
+SMARTWAYS_MEDIA_ENDPOINT=http://minio:9000
+SMARTWAYS_MEDIA_PUBLIC_URL=http://localhost:9000/smartways-media
+SMARTWAYS_MEDIA_ACCESS_KEY=smartways
+SMARTWAYS_MEDIA_SECRET_KEY=change-this
+```
+
+`SMARTWAYS_MEDIA_ENDPOINT` is the internal URL used by the backend container. `SMARTWAYS_MEDIA_PUBLIC_URL` is the URL browsers use to load uploaded media. If MinIO runs on another machine, point `SMARTWAYS_MEDIA_ENDPOINT` to that server from Docker and set `SMARTWAYS_MEDIA_PUBLIC_URL` to the public media URL.
+
+The Docker MinIO service uses `SMARTWAYS_MEDIA_ACCESS_KEY`, `SMARTWAYS_MEDIA_SECRET_KEY`, and `SMARTWAYS_MEDIA_BUCKET` to create the local object-storage bucket. Use the same access key and secret to log into the MinIO console.
+
+Uploaded media is stored in the Docker volume `smartways_minio_data`, so it survives container rebuilds. Remove that volume only when you intentionally want to delete uploaded files.
 
 ### Create An Admin User
 
@@ -397,6 +429,16 @@ GET|PUT|PATCH|DELETE  /api/itineraries/{id}/
 GET|POST              /api/itinerary-translations/
 
 POST                  /api/buffer-pois/
+
+GET                   /api/eccch/dataset.jsonld
+GET                   /api/eccch/graph.jsonld
+GET                   /api/eccch/package.zip
+GET                   /api/eccch/routes.geojson
+GET                   /api/eccch/itineraries.geojson
+GET                   /api/eccch/pois.geojson
+GET                   /api/eccch/routes/{id}.jsonld
+GET                   /api/eccch/itineraries/{id}.jsonld
+GET                   /api/eccch/pois/{id}.jsonld
 ```
 
 Common POI filters:
@@ -411,6 +453,26 @@ Common POI filters:
 ```
 
 The `POST /api/buffer-pois/` endpoint accepts a GeoJSON Polygon or MultiPolygon and returns POIs inside that buffer.
+
+### ECCCH Export
+
+The `eccch_export` Django app is a publication layer for the broader ECCCH ecosystem. It does not change the editor data model. Instead, it serializes existing SmartWays routes, itineraries, POIs, categories, translations, media, and geometry as interoperable JSON-LD and GeoJSON.
+
+By default, ECCCH export endpoints include only public content. Add `?include_drafts=true` when an internal export must include drafts:
+
+```text
+http://127.0.0.1:8000/api/eccch/graph.jsonld?include_drafts=true
+```
+
+The JSON-LD context uses a pragmatic mix of CIDOC CRM, SKOS, DCAT, Dublin Core, Schema.org, GeoJSON vocabulary, and SmartWays-specific extension terms. Category-to-vocabulary mappings and semantic annotations are stored separately in the Django admin under `ECCCH export`.
+
+For stable generated URIs, configure the public base URL:
+
+```bash
+export SMARTWAYS_PUBLIC_BASE_URL="https://smartways.example.org"
+```
+
+If unset, request-based URLs are used for API responses, and management commands fall back to `http://localhost:8000`.
 
 ## Importing POIs
 
@@ -548,6 +610,35 @@ Keep categories:
 python manage.py clear_content_data --yes --keep-categories
 ```
 
+## ECCCH Export Commands
+
+Generate a ZIP package containing JSON-LD and GeoJSON exports:
+
+```bash
+cd backend
+python manage.py export_eccch_dataset --output /path/to/smartways-eccch-export.zip
+```
+
+Include draft routes, itineraries, and POIs:
+
+```bash
+python manage.py export_eccch_dataset --include-drafts --output /path/to/smartways-eccch-export.zip
+```
+
+Generate baseline semantic annotations from curated vocabulary mappings:
+
+```bash
+python manage.py generate_semantic_annotations
+```
+
+Regenerate category-mapping annotations from scratch:
+
+```bash
+python manage.py generate_semantic_annotations --clear
+```
+
+The baseline annotation command currently derives POI type annotations from category vocabulary mappings and mirrors direct mappings for routes, itineraries, and categories. More advanced NLP or media-derived annotations should be added as separate reviewed pipelines.
+
 ## Verification
 
 Backend checks:
@@ -555,7 +646,7 @@ Backend checks:
 ```bash
 cd backend
 python manage.py check
-python manage.py test pois
+python manage.py test pois eccch_export
 ```
 
 Frontend checks:

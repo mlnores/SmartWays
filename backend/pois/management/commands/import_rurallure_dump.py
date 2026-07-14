@@ -323,19 +323,25 @@ class Command(BaseCommand):
         for table_name in sorted(data):
             self.stdout.write(f"{table_name}: {len(data[table_name])}")
 
-    def import_data(self, data, image_base_url, country_boundaries_path):
+    def import_data(self, data, image_base_url, country_boundaries_path, progress_callback=None):
+        def report_progress(label):
+            if progress_callback:
+                progress_callback(label)
+
         imported_at = timezone.now()
         language_codes = self.build_language_codes(data["public.languages"])
         country_codes_by_name = self.build_country_codes_by_name(data["public.countries"])
         country_lookup = None
         if country_boundaries_path:
             country_lookup = CountryBoundaryLookup.from_geojson(country_boundaries_path, country_codes_by_name)
+        report_progress("prepared")
         categories_by_source_id, category_stats = self.import_categories(
             data["public.category"],
             data["public.category_translation"],
             language_codes,
             imported_at,
         )
+        report_progress("categories")
         valid_translation_rows_by_poi = self.valid_poi_translation_rows_by_poi(
             data["public.point_of_interest_translation"],
             language_codes,
@@ -346,21 +352,25 @@ class Command(BaseCommand):
             imported_at,
             country_lookup,
         )
+        report_progress("pois")
         translation_stats = self.import_poi_translations(
             valid_translation_rows_by_poi,
             pois_by_source_id,
         )
+        report_progress("translations")
         relation_stats = self.import_category_relations(
             data["public.point_of_interest_category"],
             pois_by_source_id,
             categories_by_source_id,
         )
+        report_progress("category links")
         media_stats = self.import_media(
             data["public.file_uploaded"],
             data["public.image_point_of_interest"],
             pois_by_source_id,
             image_base_url,
         )
+        report_progress("media")
 
         return {
             **category_stats,

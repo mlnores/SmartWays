@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 
-import { ApiService, Category, Poi, PoiMedia, Translation } from './api.service';
+import { ApiService, Category, Poi, PoiMedia, PoiMediaTranslation, Translation } from './api.service';
 
 interface TranslationDraft {
   language_code: string;
@@ -14,8 +14,18 @@ interface TranslationDraft {
 }
 
 interface MediaDraft {
+  id?: number;
   media_type: PoiMedia['media_type'];
+  source: 'local' | 'remote';
   url: string;
+  file_url?: string;
+  original_filename?: string;
+  content_type?: string;
+  size?: number | null;
+  selectedFile?: File;
+  selectedPreviewUrl?: string;
+  uploading?: boolean;
+  captions: Record<string, string>;
   position: number;
   is_primary: boolean;
 }
@@ -256,6 +266,29 @@ declare const L: any;
                           <span>Description</span>
                           <textarea rows="8" [(ngModel)]="translation.description" [name]="'description' + activeTranslationIndex" [disabled]="!canEditContent()"></textarea>
                         </label>
+                        @if (media.length > 0) {
+                          <section class="media-caption-section">
+                            <h3>Media captions</h3>
+                            @for (item of media; track $index) {
+                              <label>
+                                <div class="media-caption-header">
+                                  <span class="media-caption-title">{{ mediaCaptionLabel(item, $index) }}</span>
+                                  @if (mediaDisplayUrl(item)) {
+                                    <a [href]="mediaDisplayUrl(item)" target="_blank" rel="noopener noreferrer">Show in new tab</a>
+                                  }
+                                </div>
+                                <textarea
+                                  rows="2"
+                                  [ngModel]="mediaCaption(item, translation.language_code)"
+                                  (ngModelChange)="setMediaCaption(item, translation.language_code, $event)"
+                                  [name]="'mediaCaption' + activeTranslationIndex + '-' + $index"
+                                  [disabled]="!canEditContent()"
+                                  placeholder="Optional caption"
+                                ></textarea>
+                              </label>
+                            }
+                          </section>
+                        }
                       </div>
                     } @else {
                       <div class="translation-comparison">
@@ -269,6 +302,22 @@ declare const L: any;
                             <span>Description</span>
                             <textarea rows="8" [value]="referenceTranslation()?.description || ''" readonly></textarea>
                           </label>
+                          @if (media.length > 0) {
+                            <section class="media-caption-section">
+                            <h3>Media captions</h3>
+                            @for (item of media; track $index) {
+                                <label>
+                                  <div class="media-caption-header">
+                                    <span class="media-caption-title">{{ mediaCaptionLabel(item, $index) }}</span>
+                                    @if (mediaDisplayUrl(item)) {
+                                      <a [href]="mediaDisplayUrl(item)" target="_blank" rel="noopener noreferrer">Show in new tab</a>
+                                    }
+                                  </div>
+                                  <textarea rows="2" [value]="referenceMediaCaption(item)" readonly></textarea>
+                                </label>
+                              }
+                            </section>
+                          }
                         </section>
                         <section>
                           <h3>{{ translation.language_code || 'Translation' }}</h3>
@@ -280,6 +329,29 @@ declare const L: any;
                             <span>Description</span>
                             <textarea rows="8" [(ngModel)]="translation.description" [name]="'description' + activeTranslationIndex" [disabled]="!canEditContent()"></textarea>
                           </label>
+                          @if (media.length > 0) {
+                            <section class="media-caption-section">
+                            <h3>Media captions</h3>
+                            @for (item of media; track $index) {
+                                <label>
+                                  <div class="media-caption-header">
+                                    <span class="media-caption-title">{{ mediaCaptionLabel(item, $index) }}</span>
+                                    @if (mediaDisplayUrl(item)) {
+                                      <a [href]="mediaDisplayUrl(item)" target="_blank" rel="noopener noreferrer">Show in new tab</a>
+                                    }
+                                  </div>
+                                  <textarea
+                                    rows="2"
+                                    [ngModel]="mediaCaption(item, translation.language_code)"
+                                    (ngModelChange)="setMediaCaption(item, translation.language_code, $event)"
+                                    [name]="'mediaCaption' + activeTranslationIndex + '-' + $index"
+                                    [disabled]="!canEditContent()"
+                                    placeholder="Optional translated caption"
+                                  ></textarea>
+                                </label>
+                              }
+                            </section>
+                          }
                         </section>
                       </div>
                     }
@@ -307,8 +379,8 @@ declare const L: any;
                 @for (item of media; track $index) {
                   <article class="media-row">
                     <div class="media-preview">
-                      @if (item.media_type === 'image' && item.url) {
-                        <img [src]="item.url" alt="" />
+                      @if (item.media_type === 'image' && mediaDisplayUrl(item)) {
+                        <img [src]="mediaDisplayUrl(item)" alt="" />
                       } @else {
                         <span>{{ mediaTypeLabel(item.media_type) }}</span>
                       }
@@ -326,13 +398,52 @@ declare const L: any;
                         <span>Position</span>
                         <input type="number" min="0" [(ngModel)]="item.position" [name]="'mediaPosition' + $index" [disabled]="!canEditContent()" />
                       </label>
-                      <label class="metadata-full-row">
-                        <span>URL</span>
-                        <input type="url" [(ngModel)]="item.url" [name]="'mediaUrl' + $index" [disabled]="!canEditContent()" />
-                      </label>
                       <label class="checkbox-label">
                         <input type="checkbox" [checked]="item.is_primary" [disabled]="!canEditContent()" (change)="setPrimaryMedia($index, $any($event.target).checked)" />
                         <span>Primary media</span>
+                      </label>
+                      <fieldset class="metadata-full-row media-source-fieldset">
+                        <legend>Media source</legend>
+                        <div class="view-toggle media-source-toggle" aria-label="Media source">
+                          <button type="button" [class.active]="item.source === 'local'" [disabled]="!canEditContent()" (click)="setMediaSource($index, 'local')">Local file</button>
+                          <button type="button" [class.active]="item.source === 'remote'" [disabled]="!canEditContent()" (click)="setMediaSource($index, 'remote')">Remote URL</button>
+                        </div>
+                        @if (item.source === 'remote') {
+                          <label>
+                            <span>URL</span>
+                            <input
+                              type="url"
+                              [(ngModel)]="item.url"
+                              [name]="'mediaUrl' + $index"
+                              [disabled]="!canEditContent()"
+                              placeholder="https://..."
+                            />
+                          </label>
+                        } @else {
+                          <div
+                            class="media-drop-zone"
+                            [class.disabled]="!canEditContent()"
+                            (dragover)="handleMediaDragOver($event)"
+                            (drop)="handleMediaDrop($index, $event)"
+                          >
+                            <p>Drag a file here, or choose one from your computer.</p>
+                            <input type="file" [name]="'mediaFile' + $index" [disabled]="!canEditContent()" (change)="selectMediaFile($index, $event)" />
+                          </div>
+                          @if (item.uploading) {
+                            <p class="media-file-note">Uploading...</p>
+                          }
+                        }
+                      </fieldset>
+                      <label class="metadata-full-row media-reference-caption">
+                        <span>Caption in {{ referenceLanguageLabel() }}</span>
+                        <textarea
+                          rows="2"
+                          [ngModel]="referenceMediaCaption(item)"
+                          (ngModelChange)="setReferenceMediaCaption(item, $event)"
+                          [name]="'mediaReferenceCaption' + $index"
+                          [disabled]="!canEditContent()"
+                          placeholder="Optional caption"
+                        ></textarea>
                       </label>
                     </div>
                     @if (canEditContent()) {
@@ -429,6 +540,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.destroyLocationMap();
+    this.revokeMediaPreviewUrls();
   }
 
   setActiveTab(tab: EditorTab): void {
@@ -503,15 +615,65 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     if (!this.canEditContent()) return;
     this.media.push({
       media_type: 'image',
+      source: 'local',
       url: '',
+      captions: {},
       position: this.media.length,
       is_primary: this.media.length === 0
     });
   }
 
+  setMediaSource(index: number, source: 'local' | 'remote'): void {
+    if (!this.canEditContent() || !this.media[index]) return;
+    this.media[index].source = source;
+    if (source === 'local') {
+      this.media[index].url = '';
+    } else {
+      this.revokeMediaPreviewUrl(this.media[index]);
+      this.media[index].selectedFile = undefined;
+      this.media[index].selectedPreviewUrl = undefined;
+    }
+  }
+
+  selectMediaFile(index: number, event: Event): void {
+    if (!this.canEditContent()) return;
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    this.applyMediaFile(index, file);
+  }
+
+  handleMediaDragOver(event: DragEvent): void {
+    event.preventDefault();
+  }
+
+  handleMediaDrop(index: number, event: DragEvent): void {
+    event.preventDefault();
+    if (!this.canEditContent()) return;
+    const files = event.dataTransfer?.files;
+    this.applyMediaFile(index, files?.[0]);
+    const input = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLInputElement>('input[type="file"]');
+    if (input && files && files.length > 0) {
+      input.files = files;
+    }
+  }
+
+  private applyMediaFile(index: number, file?: File): void {
+    if (!file || !this.media[index]) return;
+    this.revokeMediaPreviewUrl(this.media[index]);
+    this.media[index].source = 'local';
+    this.media[index].selectedFile = file;
+    this.media[index].original_filename = file.name;
+    this.media[index].content_type = file.type;
+    this.media[index].size = file.size;
+    this.media[index].media_type = this.mediaTypeFromFile(file);
+    this.media[index].selectedPreviewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined;
+    this.media[index].url = '';
+  }
+
   removeMedia(index: number): void {
     if (!this.canEditContent()) return;
     const wasPrimary = this.media[index]?.is_primary;
+    this.revokeMediaPreviewUrl(this.media[index]);
     this.media.splice(index, 1);
     if (wasPrimary && this.media.length > 0) {
       this.media[0].is_primary = true;
@@ -532,6 +694,42 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   mediaTypeLabel(type: PoiMedia['media_type']): string {
     return type.charAt(0).toUpperCase() + type.slice(1);
+  }
+
+  mediaDisplayUrl(item: MediaDraft): string {
+    return item.selectedPreviewUrl || item.url || item.file_url || '';
+  }
+
+  mediaCaption(item: MediaDraft, languageCode: string): string {
+    const language = languageCode.trim();
+    return language ? item.captions[language] || '' : '';
+  }
+
+  setMediaCaption(item: MediaDraft, languageCode: string, caption: string): void {
+    if (!this.canEditContent()) return;
+    const language = languageCode.trim();
+    if (!language) return;
+    item.captions[language] = caption;
+  }
+
+  referenceMediaCaption(item: MediaDraft): string {
+    const referenceLanguage = this.referenceTranslation()?.language_code.trim();
+    return referenceLanguage ? this.mediaCaption(item, referenceLanguage) : '';
+  }
+
+  setReferenceMediaCaption(item: MediaDraft, caption: string): void {
+    const referenceLanguage = this.referenceTranslation()?.language_code.trim();
+    if (referenceLanguage) {
+      this.setMediaCaption(item, referenceLanguage, caption);
+    }
+  }
+
+  referenceLanguageLabel(): string {
+    return this.referenceTranslation()?.language_code.trim() || 'reference language';
+  }
+
+  mediaCaptionLabel(item: MediaDraft, index: number): string {
+    return item.original_filename || `${this.mediaTypeLabel(item.media_type)} ${index + 1}`;
   }
 
   categoryDisplayName(category: Category): string {
@@ -635,8 +833,12 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     const media = this.normalizedMedia();
-    if (media.some(item => !item.url)) {
-      this.showStatus('Every media item needs a URL.', true);
+    if (this.media.some(item => item.source === 'remote' && !item.url.trim())) {
+      this.showStatus('Every remote media item needs a URL.', true);
+      return;
+    }
+    if (this.media.some(item => item.source === 'local' && !item.selectedFile)) {
+      this.showStatus('Every local media item needs a selected file.', true);
       return;
     }
 
@@ -655,12 +857,13 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       const updated = this.poi
         ? await firstValueFrom(this.api.updatePoi(this.poi.id, payload))
         : await firstValueFrom(this.api.createPoi(payload));
-      this.loadPoi(updated);
-      this.notifyItineraryEditorPoiSaved(updated);
+      const finalPoi = await this.uploadPendingMedia(updated);
+      this.loadPoi(finalPoi);
+      this.notifyItineraryEditorPoiSaved(finalPoi);
       if (this.isNewPoi) {
         this.isNewPoi = false;
-        const highlightedReturnTo = this.returnToWithHighlight(updated.id);
-        void this.router.navigate(['/pois', updated.id, 'edit'], {
+        const highlightedReturnTo = this.returnToWithHighlight(finalPoi.id);
+        void this.router.navigate(['/pois', finalPoi.id, 'edit'], {
           replaceUrl: true,
           queryParams: highlightedReturnTo
             ? { ...this.route.snapshot.queryParams, returnTo: highlightedReturnTo }
@@ -719,6 +922,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private loadPoi(poi: Poi): void {
+    this.revokeMediaPreviewUrls();
     this.poi = poi;
     this.enabled = poi.enabled;
     this.countryCode = poi.country_code || '';
@@ -964,13 +1168,83 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         url: image.image_url,
         position: image.position,
         is_primary: image.is_primary
-      }));
+    }));
     return source.map(item => ({
+      id: item.id,
       media_type: item.media_type || 'image',
-      url: item.url || item.image_url || '',
+      source: 'remote',
+      url: item.url || item.file_url || item.image_url || '',
+      file_url: item.file_url || item.image_url || '',
+      original_filename: item.original_filename || '',
+      content_type: item.content_type || '',
+      size: item.size ?? null,
+      captions: this.mediaCaptionsFrom(item.translations || []),
       position: item.position || 0,
       is_primary: Boolean(item.is_primary)
     }));
+  }
+
+  private mediaCaptionsFrom(translations: PoiMediaTranslation[]): Record<string, string> {
+    return Object.fromEntries(
+      translations
+        .filter(translation => translation.language_code)
+        .map(translation => [translation.language_code, translation.caption || ''])
+    );
+  }
+
+  private revokeMediaPreviewUrl(item?: MediaDraft): void {
+    if (item?.selectedPreviewUrl) {
+      URL.revokeObjectURL(item.selectedPreviewUrl);
+      item.selectedPreviewUrl = undefined;
+    }
+  }
+
+  private revokeMediaPreviewUrls(): void {
+    for (const item of this.media) {
+      this.revokeMediaPreviewUrl(item);
+    }
+  }
+
+  private async uploadPendingMedia(poi: Poi): Promise<Poi> {
+    const pending = this.media
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.selectedFile);
+    if (pending.length === 0) return poi;
+
+    for (const { item, index } of pending) {
+      if (!item.selectedFile) continue;
+      item.uploading = true;
+      if (item.id) {
+        await firstValueFrom(this.api.updatePoiMedia(
+          item.id,
+          item.selectedFile,
+          item.media_type,
+          Number.isFinite(Number(item.position)) ? Number(item.position) : index,
+          item.is_primary,
+          this.mediaTranslationsForPayload(item)
+        ));
+      } else {
+        await firstValueFrom(this.api.uploadPoiMedia(
+          poi.id,
+          item.selectedFile,
+          item.media_type,
+          Number.isFinite(Number(item.position)) ? Number(item.position) : index,
+          item.is_primary,
+          this.mediaTranslationsForPayload(item)
+        ));
+      }
+      item.uploading = false;
+    }
+
+    return firstValueFrom(this.api.getPoi(poi.id));
+  }
+
+  private mediaTypeFromFile(file: File): PoiMedia['media_type'] {
+    if (file.type.startsWith('image/')) return 'image';
+    if (file.type.startsWith('video/')) return 'video';
+    if (file.type.startsWith('audio/')) return 'audio';
+    if (file.type === 'application/pdf' || file.type.startsWith('text/')) return 'document';
+    return 'other';
   }
 
   private normalizedTranslations() {
@@ -992,12 +1266,18 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   private normalizedMedia(): PoiMedia[] {
     const media = this.media
       .map((item, index) => ({
+        id: item.id,
         media_type: item.media_type,
-        url: item.url.trim(),
+        url: item.source === 'remote' ? item.url.trim() : '',
+        file_url: item.source === 'remote' ? item.file_url : undefined,
+        original_filename: item.original_filename,
+        content_type: item.content_type,
+        size: item.size,
         position: Number.isFinite(Number(item.position)) ? Number(item.position) : index,
-        is_primary: item.is_primary
+        is_primary: item.is_primary,
+        translations: this.mediaTranslationsForPayload(item)
       }))
-      .filter(item => item.url);
+      .filter((item, index) => Boolean(item.url || (item.id && this.media[index].selectedFile)));
     if (!media.some(item => item.is_primary) && media.length > 0) {
       media[0].is_primary = true;
     }
@@ -1013,8 +1293,27 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       website: this.website.trim(),
       category_ids: [...this.categoryIds].sort((left, right) => left - right),
       translations: this.normalizedTranslations(),
-      media: this.normalizedMedia()
+      media: this.normalizedMedia(),
+      pending_media: this.media
+        .filter(item => item.selectedFile)
+        .map(item => ({
+          name: item.selectedFile?.name,
+          size: item.selectedFile?.size,
+          type: item.selectedFile?.type,
+          position: item.position,
+          is_primary: item.is_primary,
+          translations: this.mediaTranslationsForPayload(item)
+        }))
     });
+  }
+
+  private mediaTranslationsForPayload(item: MediaDraft): PoiMediaTranslation[] {
+    return Object.entries(item.captions)
+      .map(([language_code, caption]) => ({
+        language_code: language_code.trim(),
+        caption: caption.trim()
+      }))
+      .filter(translation => translation.language_code && translation.caption);
   }
 
   private filterCategories(categories: Category[], filter: string): Category[] {

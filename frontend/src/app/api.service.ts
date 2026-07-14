@@ -51,6 +51,7 @@ export interface Itinerary {
   description: string | null;
   slug: string | null;
   translations: Translation[];
+  media: MediaAsset[];
 }
 
 export interface ItineraryRouteMembership {
@@ -71,6 +72,7 @@ export interface ItineraryPayload {
     description?: string;
     is_reference?: boolean;
   }>;
+  media?: MediaAsset[];
 }
 
 export interface Route {
@@ -83,6 +85,7 @@ export interface Route {
   slug: string | null;
   itinerary_count: number;
   translations: Translation[];
+  media: MediaAsset[];
 }
 
 export interface RoutePayload {
@@ -93,6 +96,7 @@ export interface RoutePayload {
     description?: string;
     is_reference?: boolean;
   }>;
+  media?: MediaAsset[];
 }
 
 export interface ItineraryStageAssignment {
@@ -122,13 +126,26 @@ export interface PoiImage {
   is_primary: boolean;
 }
 
-export interface PoiMedia {
+export interface MediaAsset {
   id?: number;
   media_type: 'image' | 'video' | 'audio' | 'document' | 'link' | 'other';
   url: string;
+  file_url?: string;
   image_url?: string;
+  original_filename?: string;
+  content_type?: string;
+  size?: number | null;
   position: number;
   is_primary: boolean;
+  translations?: PoiMediaTranslation[];
+}
+
+export type PoiMedia = MediaAsset;
+
+export interface PoiMediaTranslation {
+  id?: number;
+  language_code: string;
+  caption: string;
 }
 
 export interface Poi {
@@ -208,6 +225,33 @@ export class ApiService {
     return this.http.patch<Itinerary>(`${API_BASE_URL}/itineraries/${id}/`, payload);
   }
 
+  uploadItineraryMedia(
+    itineraryId: number,
+    file: File,
+    mediaType: MediaAsset['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<MediaAsset> {
+    const formData = this.mediaFormData(file, mediaType, position, isPrimary, translations);
+    formData.append('itinerary', String(itineraryId));
+    return this.http.post<MediaAsset>(`${API_BASE_URL}/itinerary-media/`, formData);
+  }
+
+  updateItineraryMedia(
+    mediaId: number,
+    file: File,
+    mediaType: MediaAsset['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<MediaAsset> {
+    return this.http.patch<MediaAsset>(
+      `${API_BASE_URL}/itinerary-media/${mediaId}/`,
+      this.mediaFormData(file, mediaType, position, isPrimary, translations)
+    );
+  }
+
   getItinerary(id: number | string, language = ''): Observable<Itinerary> {
     let params = new HttpParams();
     if (language) {
@@ -241,6 +285,33 @@ export class ApiService {
 
   updateRoute(id: number, payload: Partial<RoutePayload>): Observable<Route> {
     return this.http.patch<Route>(`${API_BASE_URL}/routes/${id}/`, payload);
+  }
+
+  uploadRouteMedia(
+    routeId: number,
+    file: File,
+    mediaType: MediaAsset['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<MediaAsset> {
+    const formData = this.mediaFormData(file, mediaType, position, isPrimary, translations);
+    formData.append('route', String(routeId));
+    return this.http.post<MediaAsset>(`${API_BASE_URL}/route-media/`, formData);
+  }
+
+  updateRouteMedia(
+    mediaId: number,
+    file: File,
+    mediaType: MediaAsset['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<MediaAsset> {
+    return this.http.patch<MediaAsset>(
+      `${API_BASE_URL}/route-media/${mediaId}/`,
+      this.mediaFormData(file, mediaType, position, isPrimary, translations)
+    );
   }
 
   deleteRoute(id: number): Observable<void> {
@@ -339,6 +410,38 @@ export class ApiService {
     return this.http.delete<void>(`${API_BASE_URL}/pois/${id}/`);
   }
 
+  uploadPoiMedia(
+    poiId: number,
+    file: File,
+    mediaType: PoiMedia['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<PoiMedia> {
+    const formData = new FormData();
+    formData.append('poi', String(poiId));
+    formData.append('file', file);
+    formData.append('media_type', mediaType);
+    formData.append('position', String(position));
+    formData.append('is_primary', String(isPrimary));
+    formData.append('translations', JSON.stringify(translations));
+    return this.http.post<PoiMedia>(`${API_BASE_URL}/poi-media/`, formData);
+  }
+
+  updatePoiMedia(
+    mediaId: number,
+    file: File,
+    mediaType: PoiMedia['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<PoiMedia> {
+    return this.http.patch<PoiMedia>(
+      `${API_BASE_URL}/poi-media/${mediaId}/`,
+      this.mediaFormData(file, mediaType, position, isPrimary, translations)
+    );
+  }
+
   listPoiCountries(): Observable<string[]> {
     return this.http.get<{ results: string[] }>(`${API_BASE_URL}/pois/countries/`).pipe(
       map(response => response.results)
@@ -424,5 +527,21 @@ export class ApiService {
     } catch {
       return nextUrl;
     }
+  }
+
+  private mediaFormData(
+    file: File,
+    mediaType: MediaAsset['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[]
+  ): FormData {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('media_type', mediaType);
+    formData.append('position', String(position));
+    formData.append('is_primary', String(isPrimary));
+    formData.append('translations', JSON.stringify(translations));
+    return formData;
   }
 }

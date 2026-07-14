@@ -15,6 +15,40 @@ services:
       timeout: 5s
       retries: 20
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${SMARTWAYS_MEDIA_ACCESS_KEY:-smartways}
+      MINIO_ROOT_PASSWORD: ${SMARTWAYS_MEDIA_SECRET_KEY:-smartways-media-password}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - smartways_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${SMARTWAYS_MEDIA_ACCESS_KEY:-smartways}
+      MINIO_ROOT_PASSWORD: ${SMARTWAYS_MEDIA_SECRET_KEY:-smartways-media-password}
+      MINIO_BUCKET: ${SMARTWAYS_MEDIA_BUCKET:-smartways-media}
+    entrypoint: >
+      /bin/sh -c "
+      set -e;
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb --ignore-existing local/$${MINIO_BUCKET};
+      mc anonymous set download local/$${MINIO_BUCKET} || mc anonymous set public local/$${MINIO_BUCKET} || true;
+      "
+
   backend:
     build:
       context: .
@@ -30,6 +64,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartways}
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
+      SMARTWAYS_MEDIA_STORAGE: ${SMARTWAYS_MEDIA_STORAGE:-s3}
+      SMARTWAYS_MEDIA_BUCKET: ${SMARTWAYS_MEDIA_BUCKET:-smartways-media}
+      SMARTWAYS_MEDIA_ENDPOINT: ${SMARTWAYS_MEDIA_ENDPOINT:-http://minio:9000}
+      SMARTWAYS_MEDIA_PUBLIC_URL: ${SMARTWAYS_MEDIA_PUBLIC_URL:-http://localhost:9000/smartways-media}
+      SMARTWAYS_MEDIA_ACCESS_KEY: ${SMARTWAYS_MEDIA_ACCESS_KEY:-smartways}
+      SMARTWAYS_MEDIA_SECRET_KEY: ${SMARTWAYS_MEDIA_SECRET_KEY:-smartways-media-password}
+      COUNTRY_BOUNDARIES_PATH: ${COUNTRY_BOUNDARIES_PATH:-/data/geoboundaries_adm0.geojson}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -37,6 +78,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
   frontend:
     build:
@@ -51,3 +94,4 @@ services:
 
 volumes:
   smartways_postgres_data:
+  smartways_minio_data:

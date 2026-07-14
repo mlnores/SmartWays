@@ -3,8 +3,10 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 from django.contrib.gis.geos import Point
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.test import override_settings
 from django.utils import timezone
 from django.urls import reverse
 from rest_framework import status
@@ -15,7 +17,19 @@ from .management.commands.import_rurallure_dump_near_itineraries import (
     Command as NearbyPOIImportCommand,
     ItineraryDistanceIndex,
 )
-from .models import Category, CategoryTranslation, Itinerary, POI, POIMedia, POITranslation, Route, RouteStage, RouteTranslation
+from .models import (
+    Category,
+    CategoryTranslation,
+    Itinerary,
+    ItineraryMedia,
+    POI,
+    POIMedia,
+    POITranslation,
+    Route,
+    RouteMedia,
+    RouteStage,
+    RouteTranslation,
+)
 
 
 class POIAPITests(APITestCase):
@@ -248,11 +262,16 @@ class POIAPITests(APITestCase):
                     "slug": "viewpoint",
                 }
             ],
-            "images": [
+            "media": [
                 {
-                    "image_url": "https://example.com/viewpoint.jpg",
+                    "media_type": POIMedia.MediaType.IMAGE,
+                    "url": "https://example.com/viewpoint.jpg",
                     "position": 1,
                     "is_primary": True,
+                    "translations": [
+                        {"language_code": "en", "caption": "View from the ridge"},
+                        {"language_code": "es", "caption": "Vista desde la cresta"},
+                    ],
                 }
             ],
         }
@@ -266,8 +285,47 @@ class POIAPITests(APITestCase):
         self.assertEqual(poi.gps_longitude, -8.6)
         self.assertEqual(poi.translations.count(), 1)
         self.assertEqual(poi.media.count(), 1)
-        self.assertEqual(poi.media.get().media_type, POIMedia.MediaType.IMAGE)
+        media = poi.media.get()
+        self.assertEqual(media.media_type, POIMedia.MediaType.IMAGE)
+        self.assertEqual(media.translations.get(language_code="en").caption, "View from the ridge")
+        self.assertEqual(media.translations.get(language_code="es").caption, "Vista desde la cresta")
         self.assertTrue(poi.translations.get(language_code="en").is_reference)
+
+    def test_poi_media_accepts_uploaded_file(self):
+        self.poi.enabled = False
+        self.poi.save(update_fields=["enabled"])
+        upload = SimpleUploadedFile(
+            "castle.txt",
+            b"test file content",
+            content_type="text/plain",
+        )
+
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                response = self.client.post(
+                    reverse("poi-media-list"),
+                    {
+                        "poi": self.poi.id,
+                        "media_type": POIMedia.MediaType.DOCUMENT,
+                        "file": upload,
+                        "position": 2,
+                        "is_primary": False,
+                        "translations": json.dumps([
+                            {"language_code": "en", "caption": "Original document"},
+                        ]),
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        media = POIMedia.objects.get(id=response.data["id"])
+        self.assertEqual(media.original_filename, "castle.txt")
+        self.assertEqual(media.content_type, "text/plain")
+        self.assertEqual(media.size, len(b"test file content"))
+        self.assertTrue(media.file.name)
+        self.assertEqual(media.translations.get(language_code="en").caption, "Original document")
+        self.assertTrue(response.data["file_url"])
+        self.assertEqual(response.data["translations"][0]["caption"], "Original document")
 
     def test_poi_create_generates_slug_when_nested_slug_is_blank(self):
         payload = {
@@ -644,6 +702,49 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.data["title"], "Tappa italiana")
         self.assertEqual(response.data["description"], "Descrizione italiana.")
 
+    def test_itinerary_media_accepts_uploaded_file(self):
+        itinerary = Itinerary.objects.create(
+            enabled=False,
+            itinerary_json={
+                "points": [],
+                "segments": [],
+            },
+        )
+        itinerary.translations.create(
+            language_code="en",
+            title="Media itinerary",
+            description="Itinerary with media.",
+            slug="media-itinerary",
+            is_reference=True,
+        )
+        upload = SimpleUploadedFile("itinerary.pdf", b"itinerary document", content_type="application/pdf")
+
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                response = self.client.post(
+                    reverse("itinerary-media-list"),
+                    {
+                        "itinerary": itinerary.id,
+                        "media_type": ItineraryMedia.MediaType.DOCUMENT,
+                        "file": upload,
+                        "position": 2,
+                        "is_primary": False,
+                        "translations": json.dumps([
+                            {"language_code": "en", "caption": "Itinerary document"},
+                        ]),
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        media = ItineraryMedia.objects.get(id=response.data["id"])
+        self.assertEqual(media.itinerary, itinerary)
+        self.assertEqual(media.original_filename, "itinerary.pdf")
+        self.assertEqual(media.content_type, "application/pdf")
+        self.assertTrue(media.file.name)
+        self.assertEqual(media.translations.get(language_code="en").caption, "Itinerary document")
+        self.assertTrue(response.data["file_url"])
+
     def test_itinerary_create_requires_translation_title(self):
         response = self.client.post(
             reverse("itinerary-list"),
@@ -687,6 +788,44 @@ class POIAPITests(APITestCase):
         route = Route.objects.get(id=response.data["id"])
         self.assertEqual(route.translations.get(language_code="en").slug, "camino-route")
         self.assertTrue(route.translations.get(language_code="en").is_reference)
+
+    def test_route_media_accepts_uploaded_file(self):
+        route = Route.objects.create(enabled=False)
+        RouteTranslation.objects.create(
+            route=route,
+            language_code="en",
+            title="Media route",
+            description="Route with media.",
+            slug="media-route",
+            is_reference=True,
+        )
+        upload = SimpleUploadedFile("route.jpg", b"route image", content_type="image/jpeg")
+
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                response = self.client.post(
+                    reverse("route-media-list"),
+                    {
+                        "route": route.id,
+                        "media_type": RouteMedia.MediaType.IMAGE,
+                        "file": upload,
+                        "position": 1,
+                        "is_primary": True,
+                        "translations": json.dumps([
+                            {"language_code": "en", "caption": "Route cover"},
+                        ]),
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        media = RouteMedia.objects.get(id=response.data["id"])
+        self.assertEqual(media.route, route)
+        self.assertEqual(media.original_filename, "route.jpg")
+        self.assertEqual(media.content_type, "image/jpeg")
+        self.assertTrue(media.file.name)
+        self.assertEqual(media.translations.get(language_code="en").caption, "Route cover")
+        self.assertTrue(response.data["file_url"])
 
     def test_route_list_uses_reference_translation_without_language_filter(self):
         route = Route.objects.create(enabled=False)
