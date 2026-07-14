@@ -155,6 +155,8 @@ export interface Poi {
   gps_latitude: number;
   gps_longitude: number;
   website: string;
+  phone: string;
+  email: string;
   created_at: string;
   updated_at: string;
   title: string | null;
@@ -181,6 +183,8 @@ export interface PoiPayload {
   gps_latitude?: number;
   gps_longitude?: number;
   website?: string;
+  phone?: string;
+  email?: string;
   category_ids?: number[];
   translations?: Array<{
     language_code: string;

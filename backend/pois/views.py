@@ -253,6 +253,8 @@ def poi_for_buffer_response(poi, language_code):
         "lat": poi.gps_latitude,
         "lng": poi.gps_longitude,
         "website": poi.website,
+        "phone": poi.phone,
+        "email": poi.email,
         "categories": [
             {
                 "slug": category.slug,

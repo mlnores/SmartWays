@@ -51,6 +51,8 @@ class POIAPITests(APITestCase):
             country_code="ES",
             location=Point(-8.7207, 42.2406, srid=4326),
             website="https://example.com/poi",
+            phone="+34 000 000 000",
+            email="info@example.com",
         )
         self.poi.categories.add(self.category)
         POITranslation.objects.create(
@@ -243,6 +245,8 @@ class POIAPITests(APITestCase):
         self.assertEqual(result["media"][0]["url"], "https://example.com/castle.jpg")
         self.assertEqual(result["lat"], self.poi.gps_latitude)
         self.assertEqual(result["lng"], self.poi.gps_longitude)
+        self.assertEqual(result["phone"], "+34 000 000 000")
+        self.assertEqual(result["email"], "info@example.com")
         self.assertFalse(results_by_id[str(disabled_poi.id)]["enabled"])
         self.assertEqual(result["categories"], [{"slug": "heritage", "name": "Heritage"}])
 
@@ -253,6 +257,8 @@ class POIAPITests(APITestCase):
             "gps_latitude": 42.1,
             "gps_longitude": -8.6,
             "website": "https://example.com/new",
+            "phone": "+351 000 000 000",
+            "email": "hello@example.com",
             "category_ids": [self.category.id],
             "translations": [
                 {
@@ -283,6 +289,8 @@ class POIAPITests(APITestCase):
         self.assertEqual(poi.country_code, "PT")
         self.assertEqual(poi.gps_latitude, 42.1)
         self.assertEqual(poi.gps_longitude, -8.6)
+        self.assertEqual(poi.phone, "+351 000 000 000")
+        self.assertEqual(poi.email, "hello@example.com")
         self.assertEqual(poi.translations.count(), 1)
         self.assertEqual(poi.media.count(), 1)
         media = poi.media.get()
@@ -362,6 +370,8 @@ class POIAPITests(APITestCase):
             "gps_latitude": self.poi.gps_latitude,
             "gps_longitude": self.poi.gps_longitude,
             "website": self.poi.website,
+            "phone": self.poi.phone,
+            "email": self.poi.email,
             "category_ids": [self.category.id],
             "translations": [
                 {

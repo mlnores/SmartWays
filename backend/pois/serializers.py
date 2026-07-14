@@ -535,6 +535,8 @@ class POISerializer(serializers.ModelSerializer):
             "gps_latitude",
             "gps_longitude",
             "website",
+            "phone",
+            "email",
             "created_at",
             "updated_at",
             "title",

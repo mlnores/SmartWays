@@ -19,6 +19,8 @@ interface PoiDraft {
   enabled: boolean;
   country_code: string;
   website: string;
+  phone: string;
+  email: string;
   gps_latitude: number | null;
   gps_longitude: number | null;
   category_ids: number[];
@@ -396,6 +398,14 @@ declare const turf: any;
             <label class="metadata-full-row">
               <span>Website</span>
               <input type="url" [(ngModel)]="poiDraft.website" name="poiWebsite" placeholder="https://example.com" />
+            </label>
+            <label>
+              <span>Phone</span>
+              <input type="tel" [(ngModel)]="poiDraft.phone" name="poiPhone" placeholder="+34 000 000 000" />
+            </label>
+            <label>
+              <span>Email</span>
+              <input type="email" [(ngModel)]="poiDraft.email" name="poiEmail" placeholder="info@example.com" />
             </label>
 
             <label class="metadata-full-row">
@@ -1039,6 +1049,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         gps_latitude: poi.gps_latitude,
         gps_longitude: poi.gps_longitude,
         website: poi.website || '',
+        phone: poi.phone || '',
+        email: poi.email || '',
         category_ids: poi.categories.map(category => category.id),
         translations: this.duplicatePoiTranslations(poi, title),
         media: this.duplicatePoiMedia(poi.media || [], poi.images || [])
@@ -1075,6 +1087,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       enabled: poi.enabled,
       country_code: poi.country_code || '',
       website: poi.website || '',
+      phone: poi.phone || '',
+      email: poi.email || '',
       gps_latitude: poi.gps_latitude,
       gps_longitude: poi.gps_longitude,
       category_ids: poi.categories.map(category => category.id)
@@ -1125,6 +1139,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         gps_latitude: Number(this.poiDraft.gps_latitude),
         gps_longitude: Number(this.poiDraft.gps_longitude),
         website: this.poiDraft.website.trim(),
+        phone: this.poiDraft.phone.trim(),
+        email: this.poiDraft.email.trim(),
         category_ids: this.poiDraft.category_ids,
         translations
       };
@@ -1692,6 +1708,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       enabled: true,
       country_code: '',
       website: '',
+      phone: '',
+      email: '',
       gps_latitude: null,
       gps_longitude: null,
       category_ids: []

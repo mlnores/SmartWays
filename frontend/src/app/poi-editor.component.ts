@@ -143,6 +143,14 @@ declare const L: any;
                       <span>Website</span>
                       <input type="url" [(ngModel)]="website" name="website" [disabled]="!canEditContent()" />
                     </label>
+                    <label>
+                      <span>Phone</span>
+                      <input type="tel" [(ngModel)]="phone" name="phone" [disabled]="!canEditContent()" />
+                    </label>
+                    <label>
+                      <span>Email</span>
+                      <input type="email" [(ngModel)]="email" name="email" [disabled]="!canEditContent()" />
+                    </label>
                     <div class="metadata-full-row category-picker">
                       <span>Categories</span>
                       <div class="category-picker-grid">
@@ -494,6 +502,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   latitude: number | null = null;
   longitude: number | null = null;
   website = '';
+  phone = '';
+  email = '';
   categoryIds: number[] = [];
   categoryAvailableFilter = '';
   categoryChosenFilter = '';
@@ -850,6 +860,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         gps_latitude: Number(this.latitude),
         gps_longitude: Number(this.longitude),
         website: this.website.trim(),
+        phone: this.phone.trim(),
+        email: this.email.trim(),
         category_ids: this.categoryIds,
         translations,
         media
@@ -929,6 +941,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.latitude = poi.gps_latitude;
     this.longitude = poi.gps_longitude;
     this.website = poi.website || '';
+    this.phone = poi.phone || '';
+    this.email = poi.email || '';
     this.categoryIds = poi.categories.map(category => category.id);
     this.translations = this.translationDraftsFrom(poi.translations, poi.title, poi.description, poi.slug);
     this.activeTranslationIndex = Math.max(0, this.translations.findIndex(translation => translation.is_reference));
@@ -948,6 +962,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.latitude = latitude;
     this.longitude = longitude;
     this.website = '';
+    this.phone = '';
+    this.email = '';
     this.categoryIds = [];
     this.translations = [{
       language_code: 'en',
@@ -1291,6 +1307,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       gps_latitude: Number.isFinite(Number(this.latitude)) ? Number(this.latitude) : null,
       gps_longitude: Number.isFinite(Number(this.longitude)) ? Number(this.longitude) : null,
       website: this.website.trim(),
+      phone: this.phone.trim(),
+      email: this.email.trim(),
       category_ids: [...this.categoryIds].sort((left, right) => left - right),
       translations: this.normalizedTranslations(),
       media: this.normalizedMedia(),

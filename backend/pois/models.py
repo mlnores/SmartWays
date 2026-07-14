@@ -24,6 +24,8 @@ class POI(models.Model):
     country_code = models.CharField(max_length=2, blank=True, validators=[country_code_validator])
     location = models.PointField(srid=4326)
     website = models.URLField(blank=True)
+    phone = models.CharField(max_length=50, blank=True)
+    email = models.EmailField(blank=True)
     categories = models.ManyToManyField(
         "Category",
         related_name="pois",

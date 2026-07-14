@@ -60,6 +60,8 @@ def poi_jsonld(poi, request=None):
         "schema:name": translations_as_language_map(poi.translations, "title"),
         "schema:description": translations_as_language_map(poi.translations, "description"),
         "schema:url": poi.website,
+        "schema:telephone": poi.phone,
+        "schema:email": poi.email,
         "schema:addressCountry": poi.country_code,
         "schema:geo": {
             "@type": "schema:GeoCoordinates",
@@ -205,4 +207,3 @@ def drop_empty(value):
     if isinstance(value, list):
         return [drop_empty(item) for item in value if item not in (None, "", [], {})]
     return value
-

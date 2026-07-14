@@ -1784,6 +1784,8 @@
               <h3>${escapeHtml(poi.label || "POI")}</h3>
               <p>${escapeHtml(poi.snippet || "No description available.")}</p>
               ${poi.website ? `<p><a href="${escapeHtml(poi.website)}" target="_blank" rel="noopener noreferrer">${escapeHtml(poi.website)}</a></p>` : ""}
+              ${poi.phone ? `<p>${escapeHtml(poi.phone)}</p>` : ""}
+              ${poi.email ? `<p><a href="mailto:${escapeHtml(poi.email)}">${escapeHtml(poi.email)}</a></p>` : ""}
             </section>
           `;
     
