@@ -426,6 +426,9 @@ GET|POST              /api/route-translations/
 
 GET|POST              /api/itineraries/
 GET|PUT|PATCH|DELETE  /api/itineraries/{id}/
+GET                   /api/itineraries/{id}/isochrones/
+POST                  /api/itineraries/{id}/request-isochrones/
+GET                   /api/itinerary-isochrone-jobs/?pending=true
 GET|POST              /api/itinerary-translations/
 
 POST                  /api/buffer-pois/
@@ -453,6 +456,80 @@ Common POI filters:
 ```
 
 The `POST /api/buffer-pois/` endpoint accepts a GeoJSON Polygon or MultiPolygon and returns POIs inside that buffer.
+
+### Itinerary Isochrones
+
+Published itineraries can have generated walking isochrones for map visualization on `/itineraries/:id/pois`.
+Isochrones are stored separately from `itinerary_json` and are generated only from saved walking-path segment geometries.
+Segments without a user-selected walking path are skipped.
+When an itinerary is made public, SmartWays queues an isochrone generation job. When saved walking-path geometry changes,
+existing isochrones are invalidated and pending jobs for the old geometry are cancelled. Draft itineraries can request
+high-priority jobs from the itinerary POI map using **Get isochrones**.
+
+Generate 10, 20, and 30 minute isochrones for all public itineraries:
+
+```bash
+export ORS_API_KEY=your-openrouteservice-key
+scripts/generate_public_itinerary_isochrones.sh
+```
+
+Run a dry run first:
+
+```bash
+scripts/generate_public_itinerary_isochrones.sh --dry-run
+```
+
+Useful options:
+
+```bash
+scripts/generate_public_itinerary_isochrones.sh --itinerary 219 --force
+ISOCHRONE_SAMPLE_DISTANCE_METERS=2000 scripts/generate_public_itinerary_isochrones.sh
+```
+
+The generator uses an OpenRouteService-compatible isochrone endpoint by default. Override `ISOCHRONE_PROVIDER_URL`,
+`ISOCHRONE_MINUTES`, `ISOCHRONE_SAMPLE_DISTANCE_METERS`, and `ISOCHRONE_BATCH_SIZE` as needed.
+Generated polygons are simplified and smoothed by default with `--simplify-tolerance-meters 25` and
+`--smooth-iterations 2` to avoid jagged union artifacts. Use `0` for either option to disable that step.
+
+For queued work, list pending jobs:
+
+```bash
+docker compose exec backend python manage.py process_itinerary_isochrone_jobs --list
+curl -sS 'http://localhost:8000/api/itinerary-isochrone-jobs/?pending=true'
+```
+
+Process queued jobs while respecting the default ORS Standard limits of 500 requests/day and 20 requests/minute:
+
+```bash
+docker compose exec backend python manage.py process_itinerary_isochrone_jobs
+```
+
+Clear queued or running jobs without deleting generated isochrone polygons:
+
+```bash
+docker compose exec backend python manage.py shell -c \
+"from pois.models import ItineraryIsochroneJob; ItineraryIsochroneJob.objects.filter(status__in=['pending','running']).delete()"
+```
+
+Clear all jobs for one itinerary:
+
+```bash
+docker compose exec backend python manage.py shell -c \
+"from pois.models import ItineraryIsochroneJob; ItineraryIsochroneJob.objects.filter(itinerary_id=219).delete()"
+```
+
+Clear all isochrone jobs of any status:
+
+```bash
+docker compose exec backend python manage.py shell -c \
+"from pois.models import ItineraryIsochroneJob; ItineraryIsochroneJob.objects.all().delete()"
+```
+
+Regenerate an itinerary with the default smoothing:
+
+```bash
+docker compose exec backend python manage.py generate_itinerary_isochrones --itinerary 219 --clear --force
+```
 
 ### ECCCH Export
 

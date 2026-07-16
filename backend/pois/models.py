@@ -456,6 +456,92 @@ class Itinerary(models.Model):
         return translation.title if translation else f"Itinerary {self.pk}"
 
 
+class ItineraryIsochrone(models.Model):
+    itinerary = models.ForeignKey(
+        Itinerary,
+        related_name="isochrones",
+        on_delete=models.CASCADE,
+    )
+    minutes = models.PositiveSmallIntegerField()
+    mode = models.CharField(max_length=40, default="foot")
+    provider = models.CharField(max_length=120, blank=True)
+    geometry = models.MultiPolygonField(srid=4326)
+    source_route_hash = models.CharField(max_length=64)
+    source_segment_count = models.PositiveIntegerField(default=0)
+    sample_distance_meters = models.PositiveIntegerField(default=1000)
+    simplify_tolerance_meters = models.PositiveIntegerField(default=25)
+    smooth_iterations = models.PositiveSmallIntegerField(default=2)
+    generated_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["itinerary_id", "mode", "minutes"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["itinerary", "mode", "minutes"],
+                name="unique_itinerary_isochrone",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["itinerary", "mode"], name="pois_itiso_itin_mode_idx"),
+            models.Index(fields=["minutes"], name="pois_itiso_minutes_idx"),
+            models.Index(fields=["source_route_hash"], name="pois_itiniso_hash_972a78_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.itinerary_id} {self.mode} {self.minutes} min"
+
+
+class ItineraryIsochroneJob(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped"
+        CANCELLED = "cancelled", "Cancelled"
+
+    class Priority(models.IntegerChoices):
+        HIGH = 0, "High"
+        NORMAL = 50, "Normal"
+        LOW = 100, "Low"
+
+    itinerary = models.ForeignKey(
+        Itinerary,
+        related_name="isochrone_jobs",
+        on_delete=models.CASCADE,
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    priority = models.PositiveSmallIntegerField(choices=Priority.choices, default=Priority.NORMAL)
+    mode = models.CharField(max_length=40, default="foot")
+    minutes = models.JSONField(default=list)
+    source_route_hash = models.CharField(max_length=64, blank=True)
+    sample_distance_meters = models.PositiveIntegerField(default=1000)
+    simplify_tolerance_meters = models.PositiveIntegerField(default=25)
+    smooth_iterations = models.PositiveSmallIntegerField(default=2)
+    estimated_request_count = models.PositiveIntegerField(default=0)
+    provider_request_count = models.PositiveIntegerField(default=0)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    requested_manually = models.BooleanField(default=False)
+    last_error = models.TextField(blank=True)
+    not_before = models.DateTimeField(default=timezone.now)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["priority", "not_before", "created_at", "id"]
+        indexes = [
+            models.Index(fields=["status", "priority", "not_before"], name="pois_isojob_queue_idx"),
+            models.Index(fields=["itinerary", "mode"], name="pois_isojob_itin_mode_idx"),
+            models.Index(fields=["source_route_hash"], name="pois_isojob_hash_idx"),
+            models.Index(fields=["completed_at"], name="pois_isojob_done_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.itinerary_id} {self.mode} {self.status}"
+
+
 class RouteStage(models.Model):
     route = models.ForeignKey(
         Route,

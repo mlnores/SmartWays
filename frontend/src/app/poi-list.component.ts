@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, forkJoin, map, Observable, of, startWith, switchMap } from 'rxjs';
 
-import { ApiPage, ApiService, Category, Itinerary, Poi, PoiMedia, Translation } from './api.service';
+import { ApiPage, ApiService, Category, Itinerary, ItineraryIsochrone, Poi, PoiMedia, Translation } from './api.service';
 import { MediaManagerDialogComponent } from './media-manager-dialog.component';
 
 interface TranslationDraft {
@@ -326,6 +326,12 @@ declare const turf: any;
                   <span class="preview-action-icon" aria-hidden="true">🎯</span>
                   <span>Fit view to selection</span>
                 </button>
+                @if (currentItinerary && !currentItinerary.enabled) {
+                  <button type="button" class="secondary preview-action" [disabled]="requestingIsochrones" (click)="requestIsochronesForCurrentItinerary()">
+                    <span class="preview-action-icon" aria-hidden="true">◎</span>
+                    <span>{{ requestingIsochrones ? 'Requesting...' : 'Get isochrones' }}</span>
+                  </button>
+                }
 
                 @if (selectedPoiIds.size > 0 && selectedPoisAreDraft()) {
                   <button type="button" class="secondary preview-action" (click)="setSelectedPoisEnabled(true)">
@@ -584,6 +590,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   pendingHighlightPoiId: number | null = null;
   previewPoi: Poi | null = null;
   previewMessage = 'Click a POI to preview it.';
+  requestingIsochrones = false;
   private previewMap: any = null;
   private previewLayer: any = null;
   private previewFilterLayer: any = null;
@@ -591,6 +598,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private previewFitRequestId = 0;
   private poiRowClickTimer: number | null = null;
   private selectedPreviewFitLocked = false;
+  private currentItineraryIsochrones: ItineraryIsochrone[] = [];
 
   constructor() {
     this.restoreFiltersFromQueryParams();
@@ -605,15 +613,20 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     switchMap(([query, , , itineraryId]) => {
       this.itineraryId = itineraryId;
       const itinerary$ = itineraryId ? this.api.getItinerary(itineraryId) : of(null);
+      const isochrones$ = itineraryId
+        ? this.api.getItineraryIsochrones(itineraryId).pipe(catchError(() => of({ results: [] as ItineraryIsochrone[] })))
+        : of({ results: [] as ItineraryIsochrone[] });
       return combineLatest([
         itinerary$,
+        isochrones$,
         this.api.listAllCategories(),
         this.api.listPoiCountries()
       ]).pipe(
-        switchMap(([itinerary, categories, countries]) => {
+        switchMap(([itinerary, isochrones, categories, countries]) => {
           this.availableCategories = categories;
           this.availableCountries = countries;
           this.currentItinerary = itinerary;
+          this.currentItineraryIsochrones = isochrones.results || [];
           this.itineraryTitle = itinerary?.title || null;
           this.itineraryPoiIds = itinerary ? this.poiIdsForItinerary(itinerary.itinerary_json) : [];
           if (itineraryId && itinerary) {
@@ -656,6 +669,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
           this.currentPois = [];
           this.currentPoiGroups = [];
           this.currentItinerary = null;
+          this.currentItineraryIsochrones = [];
           this.poiTotalCount = 0;
           this.poiNextPage = null;
           this.loadingMorePois = false;
@@ -901,6 +915,24 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.refreshList();
     } catch (error) {
       this.showStatus(`Could not update itinerary. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+    }
+  }
+
+  async requestIsochronesForCurrentItinerary(): Promise<void> {
+    if (!this.currentItinerary || this.requestingIsochrones) return;
+    this.requestingIsochrones = true;
+    try {
+      const response = await firstValueFrom(this.api.requestItineraryIsochrones(this.currentItinerary.id));
+      const job = response.job;
+      if (job) {
+        window.alert('Isochrone computation requested. Depending on the load on the ORS server, the isochrones may take some time to be ready. Reload this page later to check whether they are available.');
+      } else {
+        window.alert(response.detail || 'Isochrone computation was not queued.');
+      }
+    } catch (error) {
+      window.alert(`Could not request isochrones. ${error instanceof Error ? error.message : 'Request failed.'}`);
+    } finally {
+      this.requestingIsochrones = false;
     }
   }
 
@@ -1465,6 +1497,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     const segments = json.segments || [];
     const segmentCount = Math.max(0, Math.max(pointCoordinates.length - 1, segments.length));
     const bounds = L.latLngBounds([]);
+    this.drawCurrentItineraryIsochrones(bounds);
 
     for (let index = 0; index < segmentCount; index += 1) {
       const geometry = segments[index]?.selectedWalkingRoute?.geometry;
@@ -1498,6 +1531,35 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     }
 
     return bounds;
+  }
+
+  private drawCurrentItineraryIsochrones(bounds: any): void {
+    if (!this.previewLayer || this.currentItineraryIsochrones.length === 0) return;
+
+    const sortedIsochrones = [...this.currentItineraryIsochrones].sort((left, right) => right.minutes - left.minutes);
+    for (const isochrone of sortedIsochrones) {
+      const style = this.isochroneStyle(isochrone.minutes);
+      const layer = L.geoJSON(isochrone.geometry, {
+        style,
+        interactive: true
+      })
+        .bindPopup(`${isochrone.minutes}-minute walking reach`)
+        .addTo(this.previewLayer);
+      const layerBounds = layer.getBounds();
+      if (layerBounds.isValid()) {
+        bounds.extend(layerBounds);
+      }
+    }
+  }
+
+  private isochroneStyle(minutes: number): Record<string, string | number> {
+    if (minutes <= 10) {
+      return { color: '#15803d', fillColor: '#22c55e', fillOpacity: 0.15, opacity: 0.75, weight: 1.5 };
+    }
+    if (minutes <= 20) {
+      return { color: '#0369a1', fillColor: '#38bdf8', fillOpacity: 0.11, opacity: 0.68, weight: 1.5 };
+    }
+    return { color: '#7c2d12', fillColor: '#f97316', fillOpacity: 0.08, opacity: 0.6, weight: 1.5 };
   }
 
   private previewMarkerIcon(selected = false): any {

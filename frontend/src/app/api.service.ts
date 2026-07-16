@@ -54,6 +54,45 @@ export interface Itinerary {
   media: MediaAsset[];
 }
 
+export interface ItineraryIsochrone {
+  id: number;
+  itinerary: number;
+  minutes: number;
+  mode: string;
+  provider: string;
+  geometry: unknown;
+  source_route_hash: string;
+  source_segment_count: number;
+  sample_distance_meters: number;
+  simplify_tolerance_meters: number;
+  smooth_iterations: number;
+  generated_at: string;
+}
+
+export interface ItineraryIsochroneJob {
+  id: number;
+  itinerary: number;
+  itinerary_title: string | null;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'cancelled';
+  priority: number;
+  mode: string;
+  minutes: number[];
+  source_route_hash: string;
+  sample_distance_meters: number;
+  simplify_tolerance_meters: number;
+  smooth_iterations: number;
+  estimated_request_count: number;
+  provider_request_count: number;
+  attempts: number;
+  requested_manually: boolean;
+  last_error: string;
+  not_before: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ItineraryRouteMembership {
   route: number;
   route_title: string | null;
@@ -262,6 +301,35 @@ export class ApiService {
       params = params.set('language', language);
     }
     return this.http.get<Itinerary>(`${API_BASE_URL}/itineraries/${encodeURIComponent(String(id))}/`, { params });
+  }
+
+  getItineraryIsochrones(id: number | string, mode = 'foot'): Observable<{ results: ItineraryIsochrone[] }> {
+    const params = new HttpParams().set('mode', mode);
+    return this.http.get<{ results: ItineraryIsochrone[] }>(
+      `${API_BASE_URL}/itineraries/${encodeURIComponent(String(id))}/isochrones/`,
+      { params }
+    );
+  }
+
+  requestItineraryIsochrones(id: number | string): Observable<{ detail: string; job: ItineraryIsochroneJob | null }> {
+    return this.http.post<{ detail: string; job: ItineraryIsochroneJob | null }>(
+      `${API_BASE_URL}/itineraries/${encodeURIComponent(String(id))}/request-isochrones/`,
+      { force: true }
+    );
+  }
+
+  listItineraryIsochroneJobs(params: { status?: string; pending?: boolean; itinerary?: number | string } = {}): Observable<ApiPage<ItineraryIsochroneJob>> {
+    let httpParams = new HttpParams();
+    if (params.status) {
+      httpParams = httpParams.set('status', params.status);
+    }
+    if (params.pending !== undefined) {
+      httpParams = httpParams.set('pending', String(params.pending));
+    }
+    if (params.itinerary !== undefined) {
+      httpParams = httpParams.set('itinerary', String(params.itinerary));
+    }
+    return this.http.get<ApiPage<ItineraryIsochroneJob>>(`${API_BASE_URL}/itinerary-isochrone-jobs/`, { params: httpParams });
   }
 
   deleteItinerary(id: number): Observable<void> {

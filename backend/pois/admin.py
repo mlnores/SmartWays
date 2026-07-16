@@ -4,6 +4,8 @@ from .models import (
     Category,
     CategoryTranslation,
     Itinerary,
+    ItineraryIsochrone,
+    ItineraryIsochroneJob,
     ItineraryMedia,
     ItineraryMediaTranslation,
     ItineraryTranslation,
@@ -168,6 +170,47 @@ class ItineraryAdmin(admin.ModelAdmin):
             f"{stage.route} #{stage.stage_number}"
             for stage in obj.route_stages.select_related("route").order_by("route__id", "stage_number")
         )
+
+
+@admin.register(ItineraryIsochrone)
+class ItineraryIsochroneAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "itinerary",
+        "minutes",
+        "mode",
+        "provider",
+        "source_segment_count",
+        "sample_distance_meters",
+        "simplify_tolerance_meters",
+        "smooth_iterations",
+        "generated_at",
+    ]
+    list_filter = ["mode", "minutes", "provider"]
+    search_fields = ["itinerary__translations__title", "source_route_hash"]
+    readonly_fields = ["generated_at"]
+
+
+@admin.register(ItineraryIsochroneJob)
+class ItineraryIsochroneJobAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "itinerary",
+        "status",
+        "priority",
+        "mode",
+        "requested_manually",
+        "estimated_request_count",
+        "provider_request_count",
+        "simplify_tolerance_meters",
+        "smooth_iterations",
+        "attempts",
+        "not_before",
+        "updated_at",
+    ]
+    list_filter = ["status", "priority", "mode", "requested_manually"]
+    search_fields = ["itinerary__translations__title", "source_route_hash", "last_error"]
+    readonly_fields = ["created_at", "updated_at", "started_at", "completed_at"]
 
 
 @admin.register(RouteStage)

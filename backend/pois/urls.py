@@ -6,6 +6,7 @@ from .views import (
     CategoryTranslationViewSet,
     CategoryViewSet,
     ItineraryTranslationViewSet,
+    ItineraryIsochroneJobViewSet,
     ItineraryMediaViewSet,
     ItineraryViewSet,
     POIMediaViewSet,
@@ -29,6 +30,7 @@ router.register("routes", RouteViewSet, basename="route")
 router.register("route-media", RouteMediaViewSet, basename="route-media")
 router.register("route-translations", RouteTranslationViewSet, basename="route-translation")
 router.register("itineraries", ItineraryViewSet, basename="itinerary")
+router.register("itinerary-isochrone-jobs", ItineraryIsochroneJobViewSet, basename="itinerary-isochrone-job")
 router.register("itinerary-media", ItineraryMediaViewSet, basename="itinerary-media")
 router.register("itinerary-translations", ItineraryTranslationViewSet, basename="itinerary-translation")
 

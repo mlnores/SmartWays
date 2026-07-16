@@ -9,6 +9,8 @@ from .models import (
     Category,
     CategoryTranslation,
     Itinerary,
+    ItineraryIsochrone,
+    ItineraryIsochroneJob,
     ItineraryMedia,
     ItineraryMediaTranslation,
     ItineraryTranslation,
@@ -929,6 +931,66 @@ class ItinerarySerializer(serializers.ModelSerializer):
                 sync_media_translations(media, translations, ItineraryMediaTranslation)
                 kept_ids.add(media.id)
         itinerary.media.exclude(id__in=kept_ids).delete()
+
+
+class ItineraryIsochroneSerializer(serializers.ModelSerializer):
+    geometry = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ItineraryIsochrone
+        fields = [
+            "id",
+            "itinerary",
+            "minutes",
+            "mode",
+            "provider",
+            "geometry",
+            "source_route_hash",
+            "source_segment_count",
+            "sample_distance_meters",
+            "simplify_tolerance_meters",
+            "smooth_iterations",
+            "generated_at",
+        ]
+        read_only_fields = fields
+
+    def get_geometry(self, obj):
+        return json.loads(obj.geometry.geojson)
+
+
+class ItineraryIsochroneJobSerializer(serializers.ModelSerializer):
+    itinerary_title = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ItineraryIsochroneJob
+        fields = [
+            "id",
+            "itinerary",
+            "itinerary_title",
+            "status",
+            "priority",
+            "mode",
+            "minutes",
+            "source_route_hash",
+            "sample_distance_meters",
+            "simplify_tolerance_meters",
+            "smooth_iterations",
+            "estimated_request_count",
+            "provider_request_count",
+            "attempts",
+            "requested_manually",
+            "last_error",
+            "not_before",
+            "started_at",
+            "completed_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_itinerary_title(self, obj):
+        translation = select_translation(obj.itinerary.translations.all(), self.context.get("language"))
+        return translation.title if translation else None
 
 
 class RouteSerializer(serializers.ModelSerializer):

@@ -15,10 +15,18 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from .country_codes import alpha3_to_alpha2
+from .isochrones import (
+    DEFAULT_ISOCHRONE_MINUTES,
+    enqueue_itinerary_isochrone_job,
+    invalidate_itinerary_isochrones,
+    itinerary_walking_geometries_and_hash,
+)
 from .models import (
     Category,
     CategoryTranslation,
     Itinerary,
+    ItineraryIsochrone,
+    ItineraryIsochroneJob,
     ItineraryMedia,
     ItineraryTranslation,
     POI,
@@ -34,6 +42,8 @@ from .serializers import (
     CategoryTranslationSerializer,
     ItineraryMediaSerializer,
     ItinerarySerializer,
+    ItineraryIsochroneSerializer,
+    ItineraryIsochroneJobSerializer,
     ItineraryTranslationSerializer,
     POIMediaSerializer,
     POISerializer,
@@ -575,19 +585,36 @@ class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.Mo
     serializer_class = ItinerarySerializer
 
     def update(self, request, *args, **kwargs):
+        itinerary_before = self.get_object()
+        was_enabled = itinerary_before.enabled
+        _, route_hash_before = itinerary_walking_geometries_and_hash(itinerary_before)
+
         if is_turn_to_draft_request(request.data):
             with transaction.atomic():
-                itinerary = self.get_object()
-                Route.objects.filter(stages__itinerary=itinerary, enabled=True).distinct().update(enabled=False)
-                return super().update(request, *args, **kwargs)
+                Route.objects.filter(stages__itinerary=itinerary_before, enabled=True).distinct().update(enabled=False)
+                response = super().update(request, *args, **kwargs)
+                self._handle_isochrone_state_after_update(was_enabled, route_hash_before)
+                return response
         if request_sets_enabled(request.data, True):
             with transaction.atomic():
                 response = super().update(request, *args, **kwargs)
                 itinerary = self.get_object()
                 if itinerary.enabled:
                     cascade_itinerary_to_public(itinerary)
+                self._handle_isochrone_state_after_update(was_enabled, route_hash_before)
                 return response
-        return super().update(request, *args, **kwargs)
+        response = super().update(request, *args, **kwargs)
+        self._handle_isochrone_state_after_update(was_enabled, route_hash_before)
+        return response
+
+    def _handle_isochrone_state_after_update(self, was_enabled, route_hash_before):
+        itinerary = self.get_object()
+        _, route_hash_after = itinerary_walking_geometries_and_hash(itinerary)
+        route_changed = route_hash_before != route_hash_after
+        if route_changed:
+            invalidate_itinerary_isochrones(itinerary)
+        if itinerary.enabled and (not was_enabled or route_changed):
+            enqueue_itinerary_isochrone_job(itinerary)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -633,6 +660,52 @@ class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.Mo
             )
 
         return queryset.distinct()
+
+    @action(detail=True, methods=["get"], url_path="isochrones")
+    def isochrones(self, request, pk=None):
+        itinerary = self.get_object()
+        mode = request.query_params.get("mode") or "foot"
+        queryset = ItineraryIsochrone.objects.filter(itinerary=itinerary, mode=mode).order_by("minutes")
+        serializer = ItineraryIsochroneSerializer(queryset, many=True)
+        return Response({"results": serializer.data})
+
+    @action(detail=True, methods=["post"], url_path="request-isochrones")
+    def request_isochrones(self, request, pk=None):
+        itinerary = self.get_object()
+        mode = request.data.get("mode") or request.query_params.get("mode") or "foot"
+        force = bool(request.data.get("force", True))
+        job, message = enqueue_itinerary_isochrone_job(
+            itinerary,
+            mode=mode,
+            minutes=DEFAULT_ISOCHRONE_MINUTES,
+            manual=True,
+            force=force,
+        )
+        if job is None:
+            return Response({"detail": message, "job": None}, status=status.HTTP_200_OK)
+        serializer = ItineraryIsochroneJobSerializer(job, context=self.get_serializer_context())
+        return Response({"detail": message, "job": serializer.data}, status=status.HTTP_201_CREATED)
+
+
+class ItineraryIsochroneJobViewSet(LanguageContextMixin, viewsets.ReadOnlyModelViewSet):
+    serializer_class = ItineraryIsochroneJobSerializer
+
+    def get_queryset(self):
+        queryset = ItineraryIsochroneJob.objects.select_related("itinerary").prefetch_related(
+            "itinerary__translations"
+        )
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        itinerary = self.request.query_params.get("itinerary")
+        if itinerary:
+            queryset = queryset.filter(itinerary_id=itinerary)
+        pending = self.request.query_params.get("pending")
+        if pending and pending.lower() in {"1", "true", "yes"}:
+            queryset = queryset.filter(
+                status__in=[ItineraryIsochroneJob.Status.PENDING, ItineraryIsochroneJob.Status.RUNNING]
+            )
+        return queryset.order_by("priority", "not_before", "created_at", "id")
 
 
 class RouteViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
