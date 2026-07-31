@@ -316,10 +316,12 @@ docker compose run --rm backend python manage.py createsuperuser
 
 ### Import Deployment Data
 
-The default import helper:
+The recommended import pipeline uses the two most developed importers, in this order:
 
-1. imports official Romea Strata GPX routes with variants,
-2. imports RurAllure POIs from the dump within `MAX_DISTANCE_KM` of existing itineraries.
+1. `rurallure_import_romea_strata_official_with_pois`
+   Imports official Romea Strata GPX routes, creates itineraries from `<trkpt>` geometry, creates and links POIs from `<wpt>` elements, bootstraps categories, annotates countries, and merges GPX waypoint POIs up to 1.5 m apart.
+2. `import_rurallure_dump_near_itineraries`
+   Imports RurAllure dump POIs near the itineraries created in step 1, discards placeholder first-title `...` entries, merges duplicate dump POIs into existing Romea Strata POIs, and imports the remaining nearby POIs with translations, categories, media, and country codes.
 
 `MAX_DISTANCE_KM` defaults to `25`.
 
@@ -349,8 +351,9 @@ You can also run individual commands manually:
 
 ```bash
 docker compose run --rm backend \
-  python manage.py rurallure_import_romea_strata_official \
+  python manage.py rurallure_import_romea_strata_official_with_pois \
   --source-dir /data/routes_data/romea_strata_official \
+  --country-boundaries /data/geoboundaries_adm0.geojson \
   --include-variants
 
 docker compose run --rm backend \
@@ -476,6 +479,87 @@ If unset, request-based URLs are used for API responses, and management commands
 
 ## Importing POIs
 
+### Recommended Two-Step Import
+
+For the current Romea Strata + RurAllure workflow, prefer the two most developed importers and run them
+in sequence:
+
+1. Bootstrap routes, itineraries, and POIs from the official Romea Strata GPX files:
+
+   ```bash
+   cd backend
+   python manage.py rurallure_import_romea_strata_official_with_pois \
+     --source-dir /path/to/routes_data/romea_strata_official \
+     --country-boundaries /path/to/geoboundaries_adm0.geojson \
+     --include-variants
+   ```
+
+2. Import RurAllure dump POIs near the itineraries created in step 1:
+
+   ```bash
+   python manage.py import_rurallure_dump_near_itineraries \
+     /path/to/dump-rurallure_db.sql \
+     --country-boundaries /path/to/geoboundaries_adm0.geojson \
+     --max-distance-km 25
+   ```
+
+Use dry runs before writing data:
+
+```bash
+python manage.py rurallure_import_romea_strata_official_with_pois \
+  --source-dir /path/to/routes_data/romea_strata_official \
+  --country-boundaries /path/to/geoboundaries_adm0.geojson \
+  --include-variants \
+  --dry-run \
+  --language-report
+
+python manage.py import_rurallure_dump_near_itineraries \
+  /path/to/dump-rurallure_db.sql \
+  --country-boundaries /path/to/geoboundaries_adm0.geojson \
+  --max-distance-km 25 \
+  --dry-run
+```
+
+The Romea Strata GPX dry run reports route/stage counts, raw GPX waypoint count, unique waypoint POIs
+after exact deduplication, unique waypoint POIs after the 1.5 m merge, distinct category labels,
+country-boundary configuration, potential duplicate waypoint POI pairs within 2 m, 5 m, and 10 m, and
+language-detection confidence/examples when `--language-report` is present. Override the duplicate
+threshold report with `--poi-duplicate-distance-meters 2,5,10`.
+
+The RurAllure near-itineraries dry run reports table counts after distance filtering, POIs matching the
+itinerary-distance range, POIs skipped by the distance filter, existing-POI proximity counts at 2 m, 5 m,
+and 10 m, discarded first-title `...` dump POIs, automatic metadata merges within 10 m, curated
+beyond-10 m metadata merges, and any remaining potential coincidences within the largest configured
+proximity threshold. Override the proximity report thresholds with `--existing-poi-distance-meters 2,5,10`.
+
+Important options:
+
+```bash
+# Romea Strata GPX bootstrap importer
+--source-dir /path/to/routes_data/romea_strata_official
+--include-variants
+--replace
+--clear-pois
+--poi-fallback-language it
+--language-report
+--country-boundaries /path/to/geoboundaries_adm0.geojson
+--skip-country-annotation
+--poi-duplicate-distance-meters 2,5,10
+--dry-run
+
+# RurAllure dump near-itineraries importer
+--min-distance-km 0
+--max-distance-km 25
+--country-boundaries /path/to/geoboundaries_adm0.geojson
+--skip-country-annotation
+--image-base-url "https://example.com/images/"
+--existing-poi-distance-meters 2,5,10
+--dry-run
+```
+
+Do not use `--clear` with `import_rurallure_dump_near_itineraries` in this sequence, because that would
+delete the Romea Strata POIs that the dump importer is meant to merge into and enrich.
+
 The RurAllure POI importer reads the SQL dump under `POI_data/` and creates categories, POIs, translations, category assignments, media links, and country codes.
 
 Place the country boundary file at:
@@ -534,6 +618,15 @@ with:
 ```bash
 python manage.py import_rurallure_dump_near_itineraries --dry-run --existing-poi-distance-meters 2,5,10
 ```
+
+Dry-run output also identifies dump POIs discarded because the first dump translation title is the
+placeholder `...`. On a real import, those dump POIs are ignored entirely: they are not created, merged,
+categorized, or used for media.
+
+Non-placeholder dump POIs within 10 m of an existing POI are treated as the same POI. On real import,
+the existing POI is updated with the dump coordinates and dump translations, the first dump translation
+is marked as the reference translation, and dump media/category links are attached. A curated list of
+additional beyond-10 m dump/existing pairs is handled with the same dump-metadata merge behavior.
 
 Import POIs from 0 to the default 25 km away:
 
@@ -598,6 +691,12 @@ category translations so they can be refined later in the category management di
 POIs are annotated with country codes using `backend/pois/data/geoboundaries_adm0.geojson` by default.
 In Docker, pass `--country-boundaries /data/geoboundaries_adm0.geojson` when using the mounted deployment
 copy of the boundary file.
+During dry-run, the command also reports potential duplicate unique GPX waypoint POI pairs within
+2 m, 5 m, and 10 m. Override those thresholds with
+`--poi-duplicate-distance-meters 2,5,10`.
+When importing, unique GPX waypoint POIs up to 1.5 m apart are merged into one POI using the first
+encountered name and coordinates, all categories, and the longest description. Pairs beyond 1.5 m are
+kept as separate POIs.
 
 Include variants:
 

@@ -404,9 +404,21 @@ class Command(BaseCommand):
             if language_code:
                 names_by_category[row["category_id"]].append((language_code, row["description"]))
 
-        used_category_slugs = set()
+        used_category_slugs = set(Category.objects.values_list("slug", flat=True))
         categories_by_source_id = {}
-        categories_by_key = {}
+        categories_by_key = {
+            normalized_category_key(category.slug): category
+            for category in Category.objects.only("id", "slug")
+        }
+        for translation in CategoryTranslation.objects.select_related("category").only(
+            "category__id",
+            "category__slug",
+            "language_code",
+            "name",
+        ):
+            key = normalized_category_key(translation.name)
+            if key:
+                categories_by_key.setdefault(key, translation.category)
         categories = []
         merged_categories = 0
 
@@ -434,7 +446,7 @@ class Command(BaseCommand):
         Category.objects.bulk_create(categories)
 
         translation_objects = []
-        seen_translations = set()
+        seen_translations = set(CategoryTranslation.objects.values_list("category_id", "language_code"))
         for source_id, names in names_by_category.items():
             category = categories_by_source_id.get(source_id)
             if not category:
@@ -550,6 +562,8 @@ class Command(BaseCommand):
 
     def import_poi_translations(self, valid_translation_rows_by_poi, pois_by_source_id):
         used_slugs_by_language = defaultdict(set)
+        for language_code, slug in POITranslation.objects.values_list("language_code", "slug"):
+            used_slugs_by_language[language_code].add(slug)
         translations = []
         skipped = 0
 
@@ -594,7 +608,7 @@ class Command(BaseCommand):
     def import_category_relations(self, rows, pois_by_source_id, categories_by_source_id):
         through_model = POI.categories.through
         relation_objects = []
-        seen_relations = set()
+        seen_relations = set(through_model.objects.values_list("poi_id", "category_id"))
         skipped = 0
 
         for row in rows:
@@ -636,6 +650,7 @@ class Command(BaseCommand):
             media_by_poi[poi.pk].append(
                 (
                     int(row["position"] or 0),
+                    f"{image_base_url.rstrip('/')}/{filename}",
                     POIMedia(
                         poi=poi,
                         media_type=media_type_from_filename(filename),
@@ -646,10 +661,24 @@ class Command(BaseCommand):
             )
 
         media_objects = []
+        existing_primary_poi_ids = set(
+            POIMedia.objects.filter(poi_id__in=media_by_poi.keys(), is_primary=True).values_list("poi_id", flat=True)
+        )
+        existing_urls_by_poi = defaultdict(set)
+        for poi_id, url in POIMedia.objects.filter(poi_id__in=media_by_poi.keys()).values_list("poi_id", "url"):
+            if url:
+                existing_urls_by_poi[poi_id].add(url)
+
         for poi_id, poi_media in media_by_poi.items():
             ordered_media = sorted(poi_media, key=lambda item: item[0])
-            for index, (_position, media) in enumerate(ordered_media):
-                media.is_primary = index == 0
+            created_for_poi = 0
+            for _position, url, media in ordered_media:
+                if url in existing_urls_by_poi[poi_id]:
+                    skipped += 1
+                    continue
+                media.is_primary = poi_id not in existing_primary_poi_ids and created_for_poi == 0
+                existing_urls_by_poi[poi_id].add(url)
+                created_for_poi += 1
                 media_objects.append(media)
 
         POIMedia.objects.bulk_create(media_objects)

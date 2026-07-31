@@ -217,6 +217,11 @@ database. It keeps GPX `<trkpt>` elements as itinerary route geometry, creates P
 and creates initial categories from GPX `<type>` values with Italian translations.
 It also annotates imported POIs with country codes using geoBoundaries ADM0 polygons; use
 `--country-boundaries /data/geoboundaries_adm0.geojson` in Docker deployments.
+During dry-run, it reports potential duplicate unique GPX waypoint POI pairs within 2 m, 5 m, and
+10 m. Override those thresholds with `--poi-duplicate-distance-meters 2,5,10`.
+When importing, unique GPX waypoint POIs up to 1.5 m apart are merged into one POI using the first
+encountered name and coordinates, all categories, and the longest description. Pairs beyond 1.5 m remain
+separate POIs.
 
 Import POIs:
 
@@ -228,6 +233,14 @@ python manage.py import_rurallure_dump_near_itineraries
 `import_rurallure_dump_near_itineraries --dry-run` also reports how many filtered dump POIs are within
 2 m, 5 m, and 10 m of existing database POIs. Override those thresholds with
 `--existing-poi-distance-meters 2,5,10`.
+
+The near-itineraries importer discards dump POIs whose first dump translation title is the placeholder
+`...`. Dry-run reports those IDs and coordinates. Real imports ignore them entirely: they are not
+created, merged, categorized, or used for media.
+
+Non-placeholder dump POIs within 10 m of an existing POI are merged into the existing POI using dump
+coordinates, dump translations, dump categories, and dump media. The first dump translation becomes the
+reference translation. A curated list of additional beyond-10 m pairs is merged the same way.
 
 ECCCH export:
 

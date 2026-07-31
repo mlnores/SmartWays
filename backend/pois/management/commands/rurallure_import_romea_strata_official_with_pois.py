@@ -1,6 +1,7 @@
 import re
 import unicodedata
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 from django.contrib.gis.geos import Point
@@ -13,7 +14,7 @@ from pois.management.commands.import_rurallure_dump import (
     normalized_category_key,
     unique_slug,
 )
-from pois.management.gpx_route_import import BaseGpxRouteImportCommand
+from pois.management.gpx_route_import import BaseGpxRouteImportCommand, haversine_meters
 from pois.models import Category, CategoryTranslation, POI, POIMedia, POITranslation
 
 
@@ -132,6 +133,20 @@ DIACRITIC_LANGUAGE_HINTS = {
 }
 
 NAME_LANGUAGE_CODES = {"en", "it", "de"}
+POI_MERGE_DISTANCE_METERS = 1.5
+
+
+@dataclass
+class MergedWaypoint:
+    coordinates: list
+    name: str
+    description: str
+    category_names: list
+    source_fingerprints: list
+
+    @property
+    def category_name(self):
+        return self.category_names[0] if self.category_names else ""
 
 
 def normalized_words(value):
@@ -232,14 +247,23 @@ class Command(BaseGpxRouteImportCommand):
             action="store_true",
             help="Import POIs without deriving country codes from boundary polygons.",
         )
+        parser.add_argument(
+            "--poi-duplicate-distance-meters",
+            default="2,5,10",
+            help=(
+                "Comma-separated meter thresholds reported during dry-run for potential duplicate "
+                "GPX waypoint POIs. Defaults to 2,5,10."
+            ),
+        )
 
     def write_extra_dry_run(self, source_dir, prepared_routes, options):
         waypoint_count = 0
-        unique_waypoints = {}
         category_names = Counter()
         language_counts = Counter()
         examples = defaultdict(list)
         fallback_language = options["poi_fallback_language"].strip() or "it"
+        unique_waypoint_entries = self.unique_waypoint_entries(prepared_routes)
+        merged_waypoints = self.merged_waypoints(unique_waypoint_entries)
 
         for _, stages in prepared_routes:
             for stage in stages:
@@ -247,7 +271,6 @@ class Command(BaseGpxRouteImportCommand):
                     waypoint_count += 1
                     if waypoint.category_name:
                         category_names[waypoint.category_name] += 1
-                    unique_waypoints.setdefault(poi_fingerprint(waypoint), waypoint)
                     language_code, confidence, score = detect_language(
                         waypoint.name,
                         waypoint.description,
@@ -258,7 +281,10 @@ class Command(BaseGpxRouteImportCommand):
                         examples[(language_code, confidence)].append((waypoint, score))
 
         self.stdout.write(f"GPX waypoint POIs found: {waypoint_count}")
-        self.stdout.write(f"Unique GPX waypoint POIs after deduplication: {len(unique_waypoints)}")
+        self.stdout.write(f"Unique GPX waypoint POIs after exact deduplication: {len(unique_waypoint_entries)}")
+        self.stdout.write(
+            f"Unique GPX waypoint POIs after {POI_MERGE_DISTANCE_METERS:g}m merge: {len(merged_waypoints)}"
+        )
         self.stdout.write(f"Distinct GPX category labels: {len(category_names)}")
         if options["skip_country_annotation"]:
             self.stdout.write("Country annotation: skipped")
@@ -267,6 +293,18 @@ class Command(BaseGpxRouteImportCommand):
             self.stdout.write(f"Country annotation boundaries: {country_boundaries_path}")
         for name, count in category_names.most_common(20):
             self.stdout.write(f"  {count}: {name}")
+
+        duplicate_thresholds = self.parse_duplicate_distance_thresholds(options["poi_duplicate_distance_meters"])
+        duplicate_pairs = self.potential_duplicate_waypoint_pairs(
+            list(unique_waypoint_entries.values()),
+            max(duplicate_thresholds),
+        )
+        for threshold in duplicate_thresholds:
+            self.stdout.write(
+                f"unique_gpx_waypoint_poi_pairs_within_{threshold:g}m: "
+                f"{sum(1 for pair in duplicate_pairs if pair['distance_meters'] <= threshold)}"
+            )
+        self.report_potential_duplicate_waypoint_pairs(duplicate_pairs, max(duplicate_thresholds))
 
         if options["language_report"]:
             self.stdout.write("Language detection:")
@@ -280,6 +318,122 @@ class Command(BaseGpxRouteImportCommand):
                         f"  score={score} name={waypoint.name!r} type={waypoint.category_name!r} "
                         f"desc={waypoint.description[:120]!r}"
                     )
+
+    def parse_duplicate_distance_thresholds(self, value):
+        thresholds = []
+        for raw_threshold in (value or "").split(","):
+            raw_threshold = raw_threshold.strip()
+            if not raw_threshold:
+                continue
+            try:
+                threshold = float(raw_threshold)
+            except ValueError:
+                raise CommandError("--poi-duplicate-distance-meters must contain comma-separated numbers.")
+            if threshold <= 0:
+                raise CommandError("--poi-duplicate-distance-meters thresholds must be positive.")
+            thresholds.append(threshold)
+        if not thresholds:
+            raise CommandError("--poi-duplicate-distance-meters must contain at least one threshold.")
+        return sorted(set(thresholds))
+
+    def unique_waypoint_entries(self, prepared_routes):
+        unique_entries = {}
+        for _, stages in prepared_routes:
+            for stage in stages:
+                for waypoint in stage.waypoints:
+                    if waypoint.name and waypoint.coordinates:
+                        unique_entries.setdefault(poi_fingerprint(waypoint), (waypoint, stage))
+        return unique_entries
+
+    def merged_waypoints(self, unique_entries, merge_distance_meters=POI_MERGE_DISTANCE_METERS):
+        groups = []
+        for fingerprint, (waypoint, _stage) in unique_entries.items():
+            target_group = None
+            for group in groups:
+                if haversine_meters(group["representative"].coordinates, waypoint.coordinates) <= merge_distance_meters:
+                    target_group = group
+                    break
+            if target_group is None:
+                target_group = {
+                    "representative": waypoint,
+                    "waypoints": [],
+                    "fingerprints": [],
+                }
+                groups.append(target_group)
+            target_group["waypoints"].append(waypoint)
+            target_group["fingerprints"].append(fingerprint)
+
+        return [self.merged_waypoint_from_group(group) for group in groups]
+
+    def merged_waypoint_from_group(self, group):
+        representative = group["representative"]
+        category_names = []
+        seen_categories = set()
+        longest_description = representative.description or ""
+
+        for waypoint in group["waypoints"]:
+            category_key = normalized_category_key(waypoint.category_name)
+            if category_key and category_key not in seen_categories:
+                seen_categories.add(category_key)
+                category_names.append(waypoint.category_name.strip())
+            if len(waypoint.description or "") > len(longest_description):
+                longest_description = waypoint.description or ""
+
+        return MergedWaypoint(
+            coordinates=representative.coordinates,
+            name=representative.name,
+            description=longest_description,
+            category_names=category_names,
+            source_fingerprints=group["fingerprints"],
+        )
+
+    def potential_duplicate_waypoint_pairs(self, entries, threshold_meters):
+        pairs = []
+        for left_index, (left_waypoint, left_stage) in enumerate(entries):
+            for right_waypoint, right_stage in entries[left_index + 1 :]:
+                distance = haversine_meters(left_waypoint.coordinates, right_waypoint.coordinates)
+                if distance <= threshold_meters:
+                    pairs.append({
+                        "distance_meters": distance,
+                        "left_waypoint": left_waypoint,
+                        "left_stage": left_stage,
+                        "right_waypoint": right_waypoint,
+                        "right_stage": right_stage,
+                    })
+        return sorted(pairs, key=lambda item: item["distance_meters"])
+
+    def report_potential_duplicate_waypoint_pairs(self, duplicate_pairs, threshold_meters):
+        if not duplicate_pairs:
+            self.stdout.write(f"No potential duplicate GPX waypoint POI pairs within {threshold_meters:g}m.")
+            return
+
+        self.stdout.write(f"Potential duplicate GPX waypoint POI pairs within {threshold_meters:g}m:")
+        for index, pair in enumerate(duplicate_pairs, start=1):
+            left = pair["left_waypoint"]
+            right = pair["right_waypoint"]
+            self.stdout.write(f"{index}. distance={pair['distance_meters']:.2f}m")
+            self.write_duplicate_waypoint_line("left", left, pair["left_stage"])
+            self.write_duplicate_waypoint_line("right", right, pair["right_stage"])
+
+    def write_duplicate_waypoint_line(self, label, waypoint, stage):
+        lon, lat = waypoint.coordinates
+        self.stdout.write(
+            f"   {label}: stage={stage.title!r} coordinates=({lat}, {lon}) "
+            f"name={self.compact_report_text(waypoint.name)!r} "
+            f"type={self.compact_report_text(waypoint.category_name)!r} "
+            f"desc={self.compact_report_text(waypoint.description, 160)!r}"
+        )
+
+    def compact_report_text(self, value, max_length=120):
+        text = " ".join((value or "").split())
+        if len(text) <= max_length:
+            return text
+        return text[: max_length - 3] + "..."
+
+    def category_names_for_waypoint(self, waypoint):
+        if hasattr(waypoint, "category_names"):
+            return [name for name in waypoint.category_names if name]
+        return [waypoint.category_name.strip()] if waypoint.category_name.strip() else []
 
     def before_import(self, source_dir, prepared_routes, options):
         if options["clear_pois"]:
@@ -299,29 +453,27 @@ class Command(BaseGpxRouteImportCommand):
         fallback_language = options["poi_fallback_language"].strip() or "it"
         imported_at = timezone.now()
         country_lookup = self.country_lookup(options)
-        unique_waypoints = {}
-        for _, stages in prepared_routes:
-            for stage in stages:
-                for waypoint in stage.waypoints:
-                    if waypoint.name and waypoint.coordinates:
-                        unique_waypoints.setdefault(poi_fingerprint(waypoint), waypoint)
+        unique_entries = self.unique_waypoint_entries(prepared_routes)
+        waypoints = self.merged_waypoints(unique_entries)
 
-        waypoints = list(unique_waypoints.values())
         category_by_key = self.import_categories(waypoints, imported_at)
-        poi_by_fingerprint, poi_stats = self.import_pois(
+        poi_by_merged_waypoint, poi_stats = self.import_pois(
             waypoints,
             category_by_key,
             fallback_language,
             imported_at,
             country_lookup,
         )
+        poi_by_fingerprint = self.poi_by_source_fingerprint(waypoints, poi_by_merged_waypoint)
         link_stats = self.link_pois_to_itineraries(
             prepared_routes,
             itinerary_by_stage_path or {},
             poi_by_fingerprint,
         )
         return {
-            "poi_waypoints_imported": len(unique_waypoints),
+            "poi_waypoints_after_exact_deduplication": len(unique_entries),
+            "poi_waypoints_imported": len(waypoints),
+            "poi_waypoints_merged_within_1_5m": len(unique_entries) - len(waypoints),
             **poi_stats,
             **link_stats,
         }
@@ -343,23 +495,21 @@ class Command(BaseGpxRouteImportCommand):
         used_slugs = set(Category.objects.values_list("slug", flat=True))
 
         for waypoint in waypoints:
-            category_name = waypoint.category_name.strip()
-            if not category_name:
-                continue
-            key = normalized_category_key(category_name)
-            if key in category_by_key:
-                continue
-            category = Category.objects.create(
-                slug=unique_slug(
-                    ascii_slug_seed(category_name),
-                    used_slugs,
-                    f"category-{len(category_by_key) + 1}",
-                    120,
-                ),
-                created_at=imported_at,
-            )
-            category_by_key[key] = category
-            CategoryTranslation.objects.create(category=category, language_code="it", name=category_name[:255])
+            for category_name in self.category_names_for_waypoint(waypoint):
+                key = normalized_category_key(category_name)
+                if key in category_by_key:
+                    continue
+                category = Category.objects.create(
+                    slug=unique_slug(
+                        ascii_slug_seed(category_name),
+                        used_slugs,
+                        f"category-{len(category_by_key) + 1}",
+                        120,
+                    ),
+                    created_at=imported_at,
+                )
+                category_by_key[key] = category
+                CategoryTranslation.objects.create(category=category, language_code="it", name=category_name[:255])
         return category_by_key
 
     def import_pois(self, waypoints, category_by_key, fallback_language, imported_at, country_lookup):
@@ -370,7 +520,7 @@ class Command(BaseGpxRouteImportCommand):
         relation_objects = []
         translations = []
         confidence_counts = Counter()
-        poi_by_fingerprint = {}
+        poi_by_merged_waypoint = {}
 
         total = len(waypoints)
         for index, waypoint in enumerate(waypoints, start=1):
@@ -386,12 +536,15 @@ class Command(BaseGpxRouteImportCommand):
                 created_at=imported_at,
                 updated_at=imported_at,
             )
-            poi_by_fingerprint[poi_fingerprint(waypoint)] = poi
+            poi_by_merged_waypoint[id(waypoint)] = poi
             poi_count += 1
 
-            category = category_by_key.get(normalized_category_key(waypoint.category_name))
-            if category:
-                relation_objects.append(through_model(poi_id=poi.pk, category_id=category.pk))
+            seen_category_ids = set()
+            for category_name in self.category_names_for_waypoint(waypoint):
+                category = category_by_key.get(normalized_category_key(category_name))
+                if category and category.pk not in seen_category_ids:
+                    seen_category_ids.add(category.pk)
+                    relation_objects.append(through_model(poi_id=poi.pk, category_id=category.pk))
 
             language_code, confidence, _score = detect_language(
                 waypoint.name,
@@ -420,13 +573,23 @@ class Command(BaseGpxRouteImportCommand):
 
         through_model.objects.bulk_create(relation_objects)
         POITranslation.objects.bulk_create(translations)
-        return poi_by_fingerprint, {
+        return poi_by_merged_waypoint, {
             "pois_created": poi_count,
             "pois_without_country": without_country,
             "poi_category_relations_created": len(relation_objects),
             "poi_translations_created": len(translations),
             **confidence_counts,
         }
+
+    def poi_by_source_fingerprint(self, merged_waypoints, poi_by_merged_waypoint):
+        poi_by_fingerprint = {}
+        for waypoint in merged_waypoints:
+            poi = poi_by_merged_waypoint.get(id(waypoint))
+            if not poi:
+                continue
+            for fingerprint in waypoint.source_fingerprints:
+                poi_by_fingerprint[fingerprint] = poi
+        return poi_by_fingerprint
 
     def link_pois_to_itineraries(self, prepared_routes, itinerary_by_stage_path, poi_by_fingerprint):
         updated_itinerary_count = 0
