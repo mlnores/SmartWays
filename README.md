@@ -527,6 +527,14 @@ cd backend
 python manage.py import_rurallure_dump_near_itineraries --dry-run
 ```
 
+During dry-run, the command also reports how many filtered RurAllure dump POIs are close to POIs that
+already exist in the database, using 2 m, 5 m, and 10 m thresholds by default. Override those thresholds
+with:
+
+```bash
+python manage.py import_rurallure_dump_near_itineraries --dry-run --existing-poi-distance-meters 2,5,10
+```
+
 Import POIs from 0 to the default 25 km away:
 
 ```bash
@@ -587,6 +595,9 @@ python manage.py rurallure_import_romea_strata_official_with_pois
 This command keeps GPX `<trkpt>` elements as itinerary route geometry and creates POIs from GPX `<wpt>`
 elements. It also creates initial categories from the GPX `<type>` values, storing those labels as Italian
 category translations so they can be refined later in the category management dialogs.
+POIs are annotated with country codes using `backend/pois/data/geoboundaries_adm0.geojson` by default.
+In Docker, pass `--country-boundaries /data/geoboundaries_adm0.geojson` when using the mounted deployment
+copy of the boundary file.
 
 Include variants:
 

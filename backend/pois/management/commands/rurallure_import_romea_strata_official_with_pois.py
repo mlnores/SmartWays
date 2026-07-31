@@ -7,7 +7,12 @@ from django.contrib.gis.geos import Point
 from django.core.management.base import CommandError
 from django.utils import timezone
 
-from pois.management.commands.import_rurallure_dump import normalized_category_key, unique_slug
+from pois.management.commands.import_rurallure_dump import (
+    CountryBoundaryLookup,
+    DEFAULT_COUNTRY_BOUNDARIES_PATH,
+    normalized_category_key,
+    unique_slug,
+)
 from pois.management.gpx_route_import import BaseGpxRouteImportCommand
 from pois.models import Category, CategoryTranslation, POI, POIMedia, POITranslation
 
@@ -217,6 +222,16 @@ class Command(BaseGpxRouteImportCommand):
             action="store_true",
             help="Print language detection confidence counts and examples during dry runs.",
         )
+        parser.add_argument(
+            "--country-boundaries",
+            default=str(DEFAULT_COUNTRY_BOUNDARIES_PATH),
+            help="Path to a geoBoundaries ADM0 GeoJSON file used to annotate POIs with physical country codes.",
+        )
+        parser.add_argument(
+            "--skip-country-annotation",
+            action="store_true",
+            help="Import POIs without deriving country codes from boundary polygons.",
+        )
 
     def write_extra_dry_run(self, source_dir, prepared_routes, options):
         waypoint_count = 0
@@ -245,6 +260,11 @@ class Command(BaseGpxRouteImportCommand):
         self.stdout.write(f"GPX waypoint POIs found: {waypoint_count}")
         self.stdout.write(f"Unique GPX waypoint POIs after deduplication: {len(unique_waypoints)}")
         self.stdout.write(f"Distinct GPX category labels: {len(category_names)}")
+        if options["skip_country_annotation"]:
+            self.stdout.write("Country annotation: skipped")
+        else:
+            country_boundaries_path = Path(options["country_boundaries"]).expanduser().resolve()
+            self.stdout.write(f"Country annotation boundaries: {country_boundaries_path}")
         for name, count in category_names.most_common(20):
             self.stdout.write(f"  {count}: {name}")
 
@@ -275,9 +295,10 @@ class Command(BaseGpxRouteImportCommand):
                 "Target POI/category tables are not empty. Re-run with --clear-pois or start from an empty database."
             )
 
-    def import_extra_content(self, source_dir, prepared_routes, options):
+    def import_extra_content(self, source_dir, prepared_routes, options, itinerary_by_stage_path=None):
         fallback_language = options["poi_fallback_language"].strip() or "it"
         imported_at = timezone.now()
+        country_lookup = self.country_lookup(options)
         unique_waypoints = {}
         for _, stages in prepared_routes:
             for stage in stages:
@@ -285,12 +306,37 @@ class Command(BaseGpxRouteImportCommand):
                     if waypoint.name and waypoint.coordinates:
                         unique_waypoints.setdefault(poi_fingerprint(waypoint), waypoint)
 
-        category_by_key = self.import_categories(unique_waypoints.values(), imported_at)
-        poi_stats = self.import_pois(unique_waypoints.values(), category_by_key, fallback_language, imported_at)
+        waypoints = list(unique_waypoints.values())
+        category_by_key = self.import_categories(waypoints, imported_at)
+        poi_by_fingerprint, poi_stats = self.import_pois(
+            waypoints,
+            category_by_key,
+            fallback_language,
+            imported_at,
+            country_lookup,
+        )
+        link_stats = self.link_pois_to_itineraries(
+            prepared_routes,
+            itinerary_by_stage_path or {},
+            poi_by_fingerprint,
+        )
         return {
             "poi_waypoints_imported": len(unique_waypoints),
             **poi_stats,
+            **link_stats,
         }
+
+    def country_lookup(self, options):
+        if options["skip_country_annotation"]:
+            return None
+        country_boundaries_path = Path(options["country_boundaries"]).expanduser().resolve()
+        if not country_boundaries_path.exists():
+            raise CommandError(
+                "Country boundaries file not found: "
+                f"{country_boundaries_path}. Pass --country-boundaries or use --skip-country-annotation."
+            )
+        self.stdout.write(f"Loading country boundaries from {country_boundaries_path}...")
+        return CountryBoundaryLookup.from_geojson(country_boundaries_path, {})
 
     def import_categories(self, waypoints, imported_at):
         category_by_key = {}
@@ -316,22 +362,31 @@ class Command(BaseGpxRouteImportCommand):
             CategoryTranslation.objects.create(category=category, language_code="it", name=category_name[:255])
         return category_by_key
 
-    def import_pois(self, waypoints, category_by_key, fallback_language, imported_at):
+    def import_pois(self, waypoints, category_by_key, fallback_language, imported_at, country_lookup):
         used_slugs_by_language = defaultdict(lambda: set(POITranslation.objects.values_list("slug", flat=True)))
         through_model = POI.categories.through
         poi_count = 0
+        without_country = 0
         relation_objects = []
         translations = []
         confidence_counts = Counter()
+        poi_by_fingerprint = {}
 
+        total = len(waypoints)
         for index, waypoint in enumerate(waypoints, start=1):
             lon, lat = waypoint.coordinates
+            location = Point(lon, lat, srid=4326)
+            country_code = country_lookup.country_code_for_point(location) if country_lookup else ""
+            if country_lookup and not country_code:
+                without_country += 1
             poi = POI.objects.create(
                 enabled=True,
-                location=Point(lon, lat, srid=4326),
+                country_code=country_code,
+                location=location,
                 created_at=imported_at,
                 updated_at=imported_at,
             )
+            poi_by_fingerprint[poi_fingerprint(waypoint)] = poi
             poi_count += 1
 
             category = category_by_key.get(normalized_category_key(waypoint.category_name))
@@ -360,12 +415,63 @@ class Command(BaseGpxRouteImportCommand):
                     is_reference=True,
                 )
             )
+            if index == 1 or index == total or index % 100 == 0:
+                self.write_progress("Importing POIs", index, total)
 
         through_model.objects.bulk_create(relation_objects)
         POITranslation.objects.bulk_create(translations)
-        return {
+        return poi_by_fingerprint, {
             "pois_created": poi_count,
+            "pois_without_country": without_country,
             "poi_category_relations_created": len(relation_objects),
             "poi_translations_created": len(translations),
             **confidence_counts,
+        }
+
+    def link_pois_to_itineraries(self, prepared_routes, itinerary_by_stage_path, poi_by_fingerprint):
+        updated_itinerary_count = 0
+        linked_poi_count = 0
+        skipped_waypoint_count = 0
+
+        for _, stages in prepared_routes:
+            for stage in stages:
+                itinerary = itinerary_by_stage_path.get(str(stage.path))
+                if itinerary is None:
+                    skipped_waypoint_count += len(stage.waypoints)
+                    continue
+
+                existing_ids = []
+                seen_ids = set()
+                for raw_id in (itinerary.itinerary_json or {}).get("poiIds") or []:
+                    try:
+                        poi_id = int(raw_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if poi_id in seen_ids:
+                        continue
+                    seen_ids.add(poi_id)
+                    existing_ids.append(poi_id)
+
+                added_ids = []
+                for waypoint in stage.waypoints:
+                    poi = poi_by_fingerprint.get(poi_fingerprint(waypoint))
+                    if poi is None:
+                        skipped_waypoint_count += 1
+                        continue
+                    if poi.id in seen_ids:
+                        continue
+                    seen_ids.add(poi.id)
+                    added_ids.append(poi.id)
+
+                if not added_ids:
+                    continue
+                itinerary.itinerary_json["poiIds"] = existing_ids + added_ids
+                itinerary.save(update_fields=["itinerary_json", "updated_at"])
+                updated_itinerary_count += 1
+                linked_poi_count += len(added_ids)
+
+        return {
+            "itineraries_linked_to_pois": updated_itinerary_count,
+            "itinerary_poi_links_created": linked_poi_count,
+            "itinerary_poi_links_skipped_without_poi": skipped_waypoint_count,
         }

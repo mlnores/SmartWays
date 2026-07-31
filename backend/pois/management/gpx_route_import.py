@@ -240,8 +240,14 @@ class BaseGpxRouteImportCommand(BaseCommand):
             raise CommandError(f"No importable GPX route files found in {source_dir}")
 
         prepared_routes = []
+        total_files = sum(len(plan.files) for plan in route_plans)
+        parsed_files = 0
         for plan in route_plans:
-            stages = [parse_gpx_stage(path) for path in plan.files]
+            stages = []
+            for path in plan.files:
+                stages.append(parse_gpx_stage(path))
+                parsed_files += 1
+                self.write_progress("Parsing GPX files", parsed_files, total_files)
             prepared_routes.append((plan, stages))
 
         if options["dry_run"]:
@@ -256,6 +262,7 @@ class BaseGpxRouteImportCommand(BaseCommand):
             reused_itinerary_count = 0
             skipped_duplicate_stage_count = 0
             itinerary_by_fingerprint = {}
+            itinerary_by_stage_path = {}
             for plan, stages in prepared_routes:
                 route = self.get_or_create_route(plan, language)
                 existing_count = route.itineraries.count()
@@ -293,6 +300,7 @@ class BaseGpxRouteImportCommand(BaseCommand):
                     else:
                         reused_itinerary_count += 1
                     itinerary_by_fingerprint[fingerprint] = itinerary
+                    itinerary_by_stage_path[str(stage.path)] = itinerary
                     if itinerary.id in route_itinerary_ids:
                         skipped_duplicate_stage_count += 1
                         continue
@@ -305,7 +313,7 @@ class BaseGpxRouteImportCommand(BaseCommand):
                     next_stage_number += 1
                     imported_count += 1
 
-            extra_stats = self.import_extra_content(source_dir, prepared_routes, options)
+            extra_stats = self.import_extra_content(source_dir, prepared_routes, options, itinerary_by_stage_path)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -323,8 +331,22 @@ class BaseGpxRouteImportCommand(BaseCommand):
     def before_import(self, source_dir, prepared_routes, options):
         return None
 
-    def import_extra_content(self, source_dir, prepared_routes, options):
+    def import_extra_content(self, source_dir, prepared_routes, options, itinerary_by_stage_path=None):
         return {}
+
+    def write_progress(self, label, current, total):
+        if total <= 0:
+            return
+        width = 30
+        ratio = min(1, max(0, current / total))
+        filled = round(width * ratio)
+        bar = "#" * filled + "-" * (width - filled)
+        percent = round(ratio * 100)
+        self.stdout.write(
+            f"\r{label}: [{bar}] {current}/{total} ({percent}%)",
+            ending="" if current < total else "\n",
+        )
+        self.stdout.flush()
 
     def build_route_plans(self, source_dir, include_variants=False):
         country_dirs = [source_dir / name / "A piedi_on foot" for name in [

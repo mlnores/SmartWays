@@ -1,10 +1,10 @@
 import { AsyncPipe, NgTemplateOutlet } from '@angular/common';
-import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
-import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, forkJoin, map, Observable, of, startWith, switchMap } from 'rxjs';
+import { BehaviorSubject, catchError, combineLatest, debounceTime, finalize, firstValueFrom, forkJoin, map, Observable, of, startWith, switchMap } from 'rxjs';
 
-import { ApiPage, ApiService, Category, Itinerary, Poi, PoiMedia, Translation } from './api.service';
+import { ApiService, Category, Itinerary, Poi, PoiMedia, Translation } from './api.service';
 import { MediaManagerDialogComponent } from './media-manager-dialog.component';
 
 interface TranslationDraft {
@@ -57,13 +57,7 @@ interface ItinerarySegmentExport {
 interface ItineraryJsonExport {
   points?: ItineraryPointExport[];
   segments?: ItinerarySegmentExport[];
-}
-
-interface MapBoundsFilter {
-  south: number;
-  west: number;
-  north: number;
-  east: number;
+  poiIds?: Array<number | string>;
 }
 
 interface PoiGroup {
@@ -81,6 +75,8 @@ interface PoiListState {
 
 type PoiSortKey = 'title' | 'country' | 'draft';
 type SortDirection = 'asc' | 'desc';
+
+const MAX_DISPLAYED_CLUSTER_POIS = 50;
 
 declare const L: any;
 declare const turf: any;
@@ -153,10 +149,14 @@ declare const turf: any;
             <option [value]="countryCode">{{ countryName(countryCode) }}</option>
           }
         </select>
-        <button type="button" class="secondary toolbar-action" (click)="filterToPreviewArea()">
-          <span aria-hidden="true">▣</span>
-          <span>Filter to map area</span>
-        </button>
+        @if (loadingPoiInfo) {
+          <span class="toolbar-loading-indicator" role="status" aria-live="polite">
+            <span class="toolbar-loading-spinner" aria-hidden="true"></span>
+            <span>Downloading POI info</span>
+          </span>
+        } @else {
+          <span class="toolbar-result-count">Found {{ poiTotalCount }} POIs</span>
+        }
         @if (itineraryId) {
           @if (currentItinerary && !currentItinerary.enabled) {
             <a class="secondary toolbar-action" [routerLink]="['/itineraries', itineraryId, 'edit']" [queryParams]="itineraryEditorReturnQueryParams()">
@@ -166,12 +166,6 @@ declare const turf: any;
             <button type="button" class="secondary toolbar-action" disabled>Open in editor</button>
           }
           <button type="button" class="secondary toolbar-action" [disabled]="!currentItinerary || currentItinerary.enabled" (click)="openItineraryMediaDialog()">Manage itinerary metadata, translations and media</button>
-        }
-        @if (mapBoundsFilter) {
-          <button type="button" class="secondary filter-chip" title="Remove map area filter" aria-label="Remove map area filter" (click)="clearMapAreaFilter()">
-            <span>Map area filter</span>
-            <span aria-hidden="true">×</span>
-          </button>
         }
       </div>
 
@@ -274,7 +268,7 @@ declare const turf: any;
                     </tr>
                   } @empty {
                     <tr>
-                      <td colspan="6">No POIs found.</td>
+                      <td colspan="6">{{ currentPois.length ? 'No POIs visible in the current map view.' : 'No POIs found.' }}</td>
                     </tr>
                   }
                 </tbody>
@@ -302,20 +296,12 @@ declare const turf: any;
                   }
                 </div>
               } @else {
-                <ng-container *ngTemplateOutlet="poiTable; context: { items: state.items }"></ng-container>
+                <ng-container *ngTemplateOutlet="poiTable; context: { items: itineraryId ? state.items : displayedPois }"></ng-container>
               }
             </div>
             <aside class="preview-panel" aria-label="POI map preview">
               <header>
                 <h2>Map preview</h2>
-                <div class="preview-count-row">
-                  <p>{{ poiCountLabel(state.items.length) }}</p>
-                  @if (poiNextPage !== null) {
-                    <button type="button" class="secondary load-more-badge" [disabled]="loadingMorePois" (click)="loadMorePois()">
-                      {{ loadingMorePois ? 'Loading...' : 'Load more' }}
-                    </button>
-                  }
-                </div>
               </header>
               <div class="preview-map" #previewMap></div>
               @if (previewMessage) {
@@ -544,9 +530,9 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly changeDetector = inject(ChangeDetectorRef);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
-  readonly mapFilter$ = new BehaviorSubject(0);
   query = '';
   itineraryId: string | null = null;
   itineraryTitle: string | null = null;
@@ -558,6 +544,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   poiSortDirection: SortDirection = 'asc';
   statusMessage = '';
   statusIsError = false;
+  loadingPoiInfo = false;
   availableCategories: Category[] = [];
   availableCountries: string[] = [];
   backLink: UrlTree | string = '/itineraries';
@@ -576,19 +563,19 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   readonly collapsedPoiGroupKeys = new Set<string>();
   currentPois: Poi[] = [];
   currentPoiGroups: PoiGroup[] = [];
+  displayedPois: Poi[] = [];
   poiTotalCount = 0;
-  poiNextPage: number | null = null;
-  loadingMorePois = false;
-  mapBoundsFilter: MapBoundsFilter | null = null;
   highlightedPoiId: number | null = null;
   pendingHighlightPoiId: number | null = null;
   previewPoi: Poi | null = null;
   previewMessage = 'Click a POI to preview it.';
   private previewMap: any = null;
   private previewLayer: any = null;
-  private previewFilterLayer: any = null;
+  private previewClusterLayer: any = null;
+  private readonly previewMarkerPois = new Map<any, Poi>();
   private previewResizeObserver: ResizeObserver | null = null;
   private previewFitRequestId = 0;
+  private displayedPoisUpdateRequestId = 0;
   private poiRowClickTimer: number | null = null;
   private selectedPreviewFitLocked = false;
 
@@ -599,10 +586,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   readonly state$: Observable<PoiListState> = combineLatest([
     this.query$.pipe(debounceTime(250)),
     this.refresh$,
-    this.mapFilter$,
     this.activatedRoute.paramMap.pipe(map(params => params.get('id')))
   ]).pipe(
-    switchMap(([query, , , itineraryId]) => {
+    switchMap(([query, , itineraryId]) => {
+      this.loadingPoiInfo = true;
       this.itineraryId = itineraryId;
       const itinerary$ = itineraryId ? this.api.getItinerary(itineraryId) : of(null);
       return combineLatest([
@@ -621,9 +608,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
               map(result => {
                 this.currentPoiGroups = result.groups;
                 this.currentPois = result.items;
+                this.displayedPois = result.items;
                 this.poiTotalCount = result.items.length;
-                this.poiNextPage = null;
-                this.loadingMorePois = false;
                 this.pruneSelectedPois(this.currentPois);
                 this.schedulePoiHighlight(this.pendingHighlightPoiId, this.currentPois);
                 if (this.selectedPoiIds.size > 0) {
@@ -635,12 +621,12 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
               })
             );
           }
-          return this.fetchPoiPage(query, 1).pipe(
-            map(page => {
+          return this.fetchAllPois(query).pipe(
+            map(pois => {
               this.currentPoiGroups = [];
-              this.currentPois = this.sortedPois(page.results);
-              this.poiTotalCount = page.count;
-              this.poiNextPage = page.next ? 2 : null;
+              this.currentPois = this.sortedPois(pois);
+              this.displayedPois = [];
+              this.poiTotalCount = this.currentPois.length;
               this.pruneSelectedPois(this.currentPois);
               this.schedulePoiHighlight(this.pendingHighlightPoiId, this.currentPois);
               if (this.selectedPoiIds.size > 0) {
@@ -648,18 +634,20 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
               } else {
                 this.renderVisiblePoisPreview(this.currentPois);
               }
-              return { items: this.currentPois, count: page.count, groups: [] as PoiGroup[], error: '' };
+              return { items: this.currentPois, count: this.currentPois.length, groups: [] as PoiGroup[], error: '' };
             })
           );
         }),
         catchError(error => {
           this.currentPois = [];
           this.currentPoiGroups = [];
+          this.displayedPois = [];
           this.currentItinerary = null;
           this.poiTotalCount = 0;
-          this.poiNextPage = null;
-          this.loadingMorePois = false;
           return of({ items: [] as Poi[], count: 0, groups: [] as PoiGroup[], error: `Could not load POIs. ${error.message}` });
+        }),
+        finalize(() => {
+          this.loadingPoiInfo = false;
         })
       );
     }),
@@ -793,11 +781,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  poiCountLabel(visibleCount: number): string {
-    const suffix = this.hasActivePoiFilters() ? ' matching the filter(s)' : '';
-    return `Showing ${visibleCount} of ${this.poiTotalCount} POIs${suffix}`;
-  }
-
   selectPoiFromPreviewMarker(poi: Poi): void {
     this.setPoiSelected(poi, true);
     this.highlightedPoiId = poi.id;
@@ -860,6 +843,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.poiSortDirection = 'asc';
     }
     this.currentPois.splice(0, this.currentPois.length, ...this.sortedPois(this.currentPois));
+    this.displayedPois = this.sortedPois(this.displayedPois);
     this.currentPoiGroups.forEach(group => {
       group.items.splice(0, group.items.length, ...this.sortedPois(group.items));
     });
@@ -924,69 +908,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.selectedCountry = value;
     this.refresh$.next(this.refresh$.value + 1);
     this.syncFiltersToUrl();
-  }
-
-  filterToPreviewArea(): void {
-    if (!this.previewMap) return;
-    const bounds = this.previewMap.getBounds();
-    this.mapBoundsFilter = {
-      south: bounds.getSouth(),
-      west: bounds.getWest(),
-      north: bounds.getNorth(),
-      east: bounds.getEast()
-    };
-    this.selectedPoiIds.clear();
-    this.selectedPreviewFitLocked = false;
-    this.previewPoi = null;
-    this.mapFilter$.next(this.mapFilter$.value + 1);
-    this.drawMapBoundsFilter();
-    this.syncFiltersToUrl();
-  }
-
-  clearMapAreaFilter(): void {
-    this.mapBoundsFilter = null;
-    this.previewFilterLayer?.clearLayers();
-    this.selectedPoiIds.clear();
-    this.selectedPreviewFitLocked = false;
-    this.previewPoi = null;
-    this.mapFilter$.next(this.mapFilter$.value + 1);
-    this.syncFiltersToUrl();
-  }
-
-  async loadMorePois(): Promise<void> {
-    if (this.poiNextPage === null || this.loadingMorePois) return;
-    const pageToLoad = this.poiNextPage;
-    this.loadingMorePois = true;
-    try {
-      const page = await firstValueFrom(this.fetchPoiPage(this.query, pageToLoad));
-      const existingIds = new Set(this.currentPois.map(poi => poi.id));
-      const newPois = page.results.filter(poi => !existingIds.has(poi.id));
-      this.currentPois.push(...newPois);
-      this.currentPois.splice(0, this.currentPois.length, ...this.sortedPois(this.currentPois));
-      this.poiTotalCount = page.count;
-      this.poiNextPage = page.next ? pageToLoad + 1 : null;
-      this.pruneSelectedPois(this.currentPois);
-      if (this.selectedPoiIds.size > 0) {
-        this.renderSelectedPoiPreviewIfNeeded(false);
-      } else {
-        this.renderVisiblePoisPreview(this.currentPois);
-      }
-      this.clearStatus();
-    } catch (error) {
-      this.showStatus(`Could not load more POIs. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
-    } finally {
-      this.loadingMorePois = false;
-    }
-  }
-
-  private hasActivePoiFilters(): boolean {
-    return Boolean(
-      this.query.trim()
-      || this.selectedCategory
-      || this.selectedCountry
-      || this.mapBoundsFilter
-      || this.itineraryId
-    );
   }
 
   async setPoiEnabled(poi: Poi, enabled: boolean): Promise<void> {
@@ -1346,7 +1267,9 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       maxZoom: 19
     }).addTo(this.previewMap);
     this.previewLayer = L.layerGroup().addTo(this.previewMap);
-    this.previewFilterLayer = L.layerGroup().addTo(this.previewMap);
+    this.previewClusterLayer = this.createPreviewClusterLayer().addTo(this.previewMap);
+    this.previewMap.on('moveend zoomend', () => this.updateDisplayedPoisFromPreviewMap());
+    this.previewMap.on('layeradd layerremove', () => this.scheduleDisplayedPoisUpdate());
     this.previewResizeObserver = new ResizeObserver(() => {
       this.previewMap?.invalidateSize();
     });
@@ -1359,7 +1282,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     if (!this.previewMap || !this.previewLayer) return;
 
     this.previewLayer.clearLayers();
-    this.drawMapBoundsFilter();
+    this.clearPreviewClusterLayer();
     this.drawCurrentItineraryPreview();
     if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) {
       this.previewMessage = 'This POI does not have valid coordinates.';
@@ -1394,7 +1317,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.previewPoi = null;
     if (pois.length === 0) {
       this.previewLayer?.clearLayers();
-      this.drawMapBoundsFilter();
+      this.clearPreviewClusterLayer();
+      this.displayedPois = [];
       const itineraryBounds = this.drawCurrentItineraryPreview();
       this.previewMessage = 'No POIs found.';
       if (itineraryBounds?.isValid?.()) {
@@ -1402,6 +1326,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       } else {
         this.fitPreviewMapToWorld();
       }
+      return;
+    }
+    if (!this.itineraryId && this.selectedPoiIds.size === 0) {
+      this.renderClusteredPoisPreview(pois);
       return;
     }
     this.renderPreviewPois(pois, true, 'visible POIs');
@@ -1417,7 +1345,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     if (!this.previewMap || !this.previewLayer) return;
 
     this.previewLayer.clearLayers();
-    this.drawMapBoundsFilter();
+    this.clearPreviewClusterLayer();
     const itineraryBounds = this.drawCurrentItineraryPreview();
     const bounds = L.latLngBounds([]);
     const fitBounds = L.latLngBounds([]);
@@ -1455,6 +1383,101 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         ? '1 POI with coordinates.'
         : `${validCoordinateCount} POIs with coordinates.`;
     }
+
+    if (!this.itineraryId) {
+      this.displayedPois = this.sortedPois(pois).slice(0, MAX_DISPLAYED_CLUSTER_POIS);
+    }
+  }
+
+  private renderClusteredPoisPreview(pois: Poi[]): void {
+    this.initializePreviewMap();
+    if (!this.previewMap || !this.previewLayer || !this.previewClusterLayer) return;
+
+    this.previewLayer.clearLayers();
+    this.clearPreviewClusterLayer();
+    const bounds = L.latLngBounds([]);
+    let validCoordinateCount = 0;
+
+    pois.forEach(poi => {
+      if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) return;
+      const latLng = [poi.gps_latitude, poi.gps_longitude];
+      validCoordinateCount += 1;
+      bounds.extend(latLng);
+      const marker = L.marker(latLng, {
+        icon: this.previewMarkerIcon(false)
+      }).on('click', () => this.selectPoiFromPreviewMarker(poi));
+      this.previewMarkerPois.set(marker, poi);
+      this.previewClusterLayer.addLayer(marker);
+    });
+
+    if (bounds.isValid()) {
+      this.fitPreviewBounds(bounds);
+    } else {
+      this.fitPreviewMapToWorld();
+    }
+
+    this.displayedPois = this.sortedPois(pois).slice(0, MAX_DISPLAYED_CLUSTER_POIS);
+    this.previewMessage = validCoordinateCount === 0 ? 'The POIs do not have valid coordinates.' : '';
+    this.scheduleDisplayedPoisUpdate();
+  }
+
+  private createPreviewClusterLayer(): any {
+    if (typeof L.markerClusterGroup !== 'function') {
+      return L.layerGroup();
+    }
+    return L.markerClusterGroup({
+      chunkedLoading: true,
+      showCoverageOnHover: false,
+      spiderfyOnMaxZoom: false,
+      zoomToBoundsOnClick: true,
+      maxClusterRadius: 72
+    });
+  }
+
+  private clearPreviewClusterLayer(): void {
+    this.previewMarkerPois.clear();
+    this.previewClusterLayer?.clearLayers();
+  }
+
+  private scheduleDisplayedPoisUpdate(): void {
+    const requestId = ++this.displayedPoisUpdateRequestId;
+    window.requestAnimationFrame(() => {
+      if (requestId !== this.displayedPoisUpdateRequestId) return;
+      this.updateDisplayedPoisFromPreviewMap();
+    });
+  }
+
+  private updateDisplayedPoisFromPreviewMap(): void {
+    if (this.itineraryId || this.selectedPoiIds.size > 0 || !this.previewMap || !this.previewClusterLayer) {
+      return;
+    }
+    const bounds = this.previewMap.getBounds();
+    if (!bounds?.isValid?.()) {
+      this.displayedPois = this.sortedPois(this.currentPois).slice(0, MAX_DISPLAYED_CLUSTER_POIS);
+      this.changeDetector.detectChanges();
+      return;
+    }
+    const visiblePois: Poi[] = [];
+    const clusteredPois: Poi[] = [];
+    this.previewMarkerPois.forEach((poi, marker) => {
+      if (!bounds.contains(marker.getLatLng())) return;
+      const visibleParent = typeof this.previewClusterLayer.getVisibleParent === 'function'
+        ? this.previewClusterLayer.getVisibleParent(marker)
+        : marker;
+      if (visibleParent === marker) {
+        visiblePois.push(poi);
+      } else {
+        clusteredPois.push(poi);
+      }
+    });
+    if (visiblePois.length > 0) {
+      this.displayedPois = this.sortedPois(visiblePois).slice(0, MAX_DISPLAYED_CLUSTER_POIS);
+    } else {
+      this.displayedPois = this.sortedPois(clusteredPois).slice(0, MAX_DISPLAYED_CLUSTER_POIS);
+    }
+    this.previewMessage = '';
+    this.pruneSelectedPois(this.currentPois);
+    this.changeDetector.detectChanges();
   }
 
   private drawCurrentItineraryPreview(): any {
@@ -1509,28 +1532,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  private drawMapBoundsFilter(): void {
-    if (!this.previewFilterLayer) return;
-    this.previewFilterLayer.clearLayers();
-    if (!this.mapBoundsFilter) return;
-    L.rectangle(
-      [
-        [this.mapBoundsFilter.south, this.mapBoundsFilter.west],
-        [this.mapBoundsFilter.north, this.mapBoundsFilter.east]
-      ],
-      {
-        color: '#1f6feb',
-        weight: 2,
-        opacity: 0.9,
-        dashArray: '3 6',
-        fill: true,
-        fillColor: '#93c5fd',
-        fillOpacity: 0.22,
-        interactive: false
-      }
-    ).addTo(this.previewFilterLayer);
-  }
-
   private fitPreviewBounds(bounds: any): void {
     const requestId = ++this.previewFitRequestId;
     window.requestAnimationFrame(() => {
@@ -1541,7 +1542,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       } else {
         this.previewMap.fitWorld({ animate: false });
       }
-      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+      window.requestAnimationFrame(() => {
+        this.previewMap?.invalidateSize(false);
+        this.scheduleDisplayedPoisUpdate();
+      });
     });
   }
 
@@ -1551,7 +1555,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       if (!this.previewMap || requestId !== this.previewFitRequestId) return;
       this.previewMap.invalidateSize(false);
       this.previewMap.fitWorld({ animate: false });
-      window.requestAnimationFrame(() => this.previewMap?.invalidateSize(false));
+      window.requestAnimationFrame(() => {
+        this.previewMap?.invalidateSize(false);
+        this.scheduleDisplayedPoisUpdate();
+      });
     });
   }
 
@@ -1764,6 +1771,12 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       : {};
     const seen = new Set<string>();
     const ids: string[] = [];
+    for (const rawId of json.poiIds || []) {
+      const id = String(rawId);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
     for (const point of json.points || []) {
       if (point.type !== 'poi' || point.id === undefined || point.id === null) continue;
       const id = String(point.id);
@@ -1784,8 +1797,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         undefined,
         this.selectedCategory,
         this.selectedCountry,
-        directIds,
-        this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : undefined
+        directIds
       )
       : of([] as Poi[]);
 
@@ -1799,8 +1811,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
             undefined,
             this.selectedCategory,
             this.selectedCountry,
-            nearbyOnlyIds,
-            this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : undefined
+            nearbyOnlyIds
           )
           : of([] as Poi[]);
 
@@ -1934,16 +1945,14 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     return unique;
   }
 
-  private fetchPoiPage(query: string, page: number): Observable<ApiPage<Poi>> {
-    return this.api.listPois(
+  private fetchAllPois(query: string): Observable<Poi[]> {
+    return this.api.listAllPois(
       query,
       '',
       undefined,
       this.selectedCategory,
       this.selectedCountry,
-      this.itineraryId ? this.itineraryPoiIds : undefined,
-      this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : undefined,
-      page
+      this.itineraryId ? this.itineraryPoiIds : undefined
     );
   }
 
@@ -1967,7 +1976,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.query$.next(this.query);
     this.selectedCategory = params.get('category') || '';
     this.selectedCountry = (params.get('country') || '').toUpperCase();
-    this.mapBoundsFilter = this.parseBboxParam(params.get('bbox'));
     this.pendingHighlightPoiId = this.parsePositiveInteger(params.get('highlight'));
   }
 
@@ -1998,7 +2006,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       q: this.query.trim() || null,
       category: this.selectedCategory || null,
       country: this.selectedCountry || null,
-      bbox: this.mapBoundsFilter ? this.bboxParam(this.mapBoundsFilter) : null
+      bbox: null
     };
   }
 
@@ -2036,18 +2044,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     } else {
       this.previewPoi = this.selectedPoiIds.size === 1 ? this.selectedPois()[0] || null : null;
     }
-  }
-
-  private bboxParam(bounds: MapBoundsFilter): string {
-    return [bounds.west, bounds.south, bounds.east, bounds.north].join(',');
-  }
-
-  private parseBboxParam(value: string | null): MapBoundsFilter | null {
-    if (!value) return null;
-    const parts = value.split(',').map(part => Number(part));
-    if (parts.length !== 4 || parts.some(part => !Number.isFinite(part))) return null;
-    const [west, south, east, north] = parts;
-    return { south, west, north, east };
   }
 
   private parsePositiveInteger(value: string | null): number | null {

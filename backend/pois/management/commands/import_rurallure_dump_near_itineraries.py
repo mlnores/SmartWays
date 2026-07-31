@@ -231,6 +231,53 @@ class ItineraryDistanceIndex:
         return min(distances) if distances else None
 
 
+class ExistingPoiDistanceIndex:
+    def __init__(self, coordinates, max_distance_meters):
+        self.max_distance_meters = max_distance_meters
+        self.cell_size = max(max_distance_meters, 1)
+        self.grid = {}
+        for coordinate in coordinates:
+            key = self.grid_key(coordinate)
+            self.grid.setdefault(key, []).append(coordinate)
+
+    @classmethod
+    def from_database(cls, max_distance_meters):
+        coordinates = [
+            (poi.location.x, poi.location.y)
+            for poi in POI.objects.only("location")
+            if poi.location
+        ]
+        return cls(coordinates, max_distance_meters)
+
+    @property
+    def poi_count(self):
+        return sum(len(coordinates) for coordinates in self.grid.values())
+
+    def grid_key(self, coordinate):
+        lon, lat = coordinate
+        x = EARTH_RADIUS_METERS * math.radians(lon)
+        y = EARTH_RADIUS_METERS * math.radians(lat)
+        return math.floor(x / self.cell_size), math.floor(y / self.cell_size)
+
+    def nearest_distance_meters(self, point):
+        if not self.grid:
+            return None
+
+        center_x, center_y = self.grid_key(point)
+        lon, lat = point
+        longitude_scale = max(math.cos(math.radians(abs(lat))), 0.2)
+        neighbor_radius = max(1, math.ceil(1 / longitude_scale) + 1)
+        nearest = None
+
+        for x in range(center_x - neighbor_radius, center_x + neighbor_radius + 1):
+            for y in range(center_y - neighbor_radius, center_y + neighbor_radius + 1):
+                for candidate in self.grid.get((x, y), []):
+                    distance = haversine_meters(point, candidate)
+                    if distance <= self.max_distance_meters and (nearest is None or distance < nearest):
+                        nearest = distance
+        return nearest
+
+
 class Command(RurallureDumpImportCommand):
     help = (
         "Import POIs from the RurAllure dump only when they fall within a distance range "
@@ -250,6 +297,14 @@ class Command(RurallureDumpImportCommand):
             type=float,
             default=25,
             help="Maximum distance in kilometers from any itinerary. Defaults to 25.",
+        )
+        parser.add_argument(
+            "--existing-poi-distance-meters",
+            default="2,5,10",
+            help=(
+                "Comma-separated meter thresholds reported during dry-run for dump POIs near existing POIs. "
+                "Defaults to 2,5,10."
+            ),
         )
 
     def handle(self, *args, **options):
@@ -291,6 +346,12 @@ class Command(RurallureDumpImportCommand):
         if options["dry_run"]:
             self.report_loaded_data(filtered_data)
             for key, value in filter_stats.items():
+                self.stdout.write(f"{key}: {value}")
+            proximity_stats = self.existing_poi_proximity_stats(
+                filtered_data["public.point_of_interest"],
+                self.parse_existing_poi_distance_thresholds(options["existing_poi_distance_meters"]),
+            )
+            for key, value in proximity_stats.items():
                 self.stdout.write(f"{key}: {value}")
             return
 
@@ -401,3 +462,50 @@ class Command(RurallureDumpImportCommand):
             "pois_skipped_by_distance_filter_without_coordinates": skipped_without_coordinates,
             "pois_skipped_outside_distance_range": skipped_outside_distance_range,
         }
+
+    def parse_existing_poi_distance_thresholds(self, value):
+        thresholds = []
+        for raw_threshold in (value or "").split(","):
+            raw_threshold = raw_threshold.strip()
+            if not raw_threshold:
+                continue
+            try:
+                threshold = float(raw_threshold)
+            except ValueError:
+                raise CommandError("--existing-poi-distance-meters must contain comma-separated numbers.")
+            if threshold <= 0:
+                raise CommandError("--existing-poi-distance-meters thresholds must be positive.")
+            thresholds.append(threshold)
+        if not thresholds:
+            raise CommandError("--existing-poi-distance-meters must contain at least one threshold.")
+        return sorted(set(thresholds))
+
+    def existing_poi_proximity_stats(self, poi_rows, thresholds_meters):
+        max_threshold = max(thresholds_meters)
+        index = ExistingPoiDistanceIndex.from_database(max_threshold)
+        stats = {
+            "existing_pois_indexed_for_proximity": index.poi_count,
+            "dump_pois_checked_for_existing_poi_proximity": 0,
+            "dump_pois_skipped_for_existing_poi_proximity_without_coordinates": 0,
+        }
+        for threshold in thresholds_meters:
+            stats[f"dump_pois_within_{threshold:g}m_of_existing_poi"] = 0
+
+        progress = ProgressReporter(self.stdout, "Existing POI proximity check", len(poi_rows))
+        for row_index, row in enumerate(poi_rows, start=1):
+            latitude = finite_float(row["gps_latitude"])
+            longitude = finite_float(row["gps_longitude"])
+            if latitude is None or longitude is None:
+                stats["dump_pois_skipped_for_existing_poi_proximity_without_coordinates"] += 1
+                progress.update(row_index)
+                continue
+
+            stats["dump_pois_checked_for_existing_poi_proximity"] += 1
+            nearest_distance = index.nearest_distance_meters((longitude, latitude))
+            if nearest_distance is not None:
+                for threshold in thresholds_meters:
+                    if nearest_distance <= threshold:
+                        stats[f"dump_pois_within_{threshold:g}m_of_existing_poi"] += 1
+            progress.update(row_index)
+        progress.finish()
+        return stats

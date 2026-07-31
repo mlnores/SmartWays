@@ -91,9 +91,23 @@ def itinerary_jsonld(itinerary, request=None):
         for stage in itinerary.route_stages.select_related("route").prefetch_related("route__translations")
     ]
     points = []
+    seen_poi_ids = set()
+    if isinstance(itinerary.itinerary_json, dict):
+        for raw_poi_id in itinerary.itinerary_json.get("poiIds") or []:
+            poi_id = str(raw_poi_id)
+            if poi_id in seen_poi_ids:
+                continue
+            seen_poi_ids.add(poi_id)
+            points.append({"@id": entity_uri("poi", poi_id, request)})
     for point in itinerary.itinerary_json.get("points", []) if isinstance(itinerary.itinerary_json, dict) else []:
-        if isinstance(point, dict) and point.get("type") == "poi" and point.get("poiId"):
-            points.append({"@id": entity_uri("poi", point["poiId"], request)})
+        if not isinstance(point, dict) or point.get("type") != "poi":
+            continue
+        raw_poi_id = point.get("poiId") or point.get("id") or point.get("poi_id")
+        poi_id = str(raw_poi_id) if raw_poi_id else ""
+        if not poi_id or poi_id in seen_poi_ids:
+            continue
+        seen_poi_ids.add(poi_id)
+        points.append({"@id": entity_uri("poi", poi_id, request)})
     data = {
         "@context": JSONLD_CONTEXT,
         "@id": entity_uri("itinerary", itinerary.id, request),

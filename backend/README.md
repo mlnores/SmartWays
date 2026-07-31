@@ -215,6 +215,8 @@ python manage.py rurallure_import_romea_strata_official_with_pois --include-vari
 The `rurallure_import_romea_strata_official_with_pois` command is the bootstrap variant for an empty
 database. It keeps GPX `<trkpt>` elements as itinerary route geometry, creates POIs from `<wpt>` elements,
 and creates initial categories from GPX `<type>` values with Italian translations.
+It also annotates imported POIs with country codes using geoBoundaries ADM0 polygons; use
+`--country-boundaries /data/geoboundaries_adm0.geojson` in Docker deployments.
 
 Import POIs:
 
@@ -222,6 +224,10 @@ Import POIs:
 python manage.py import_rurallure_dump
 python manage.py import_rurallure_dump_near_itineraries
 ```
+
+`import_rurallure_dump_near_itineraries --dry-run` also reports how many filtered dump POIs are within
+2 m, 5 m, and 10 m of existing database POIs. Override those thresholds with
+`--existing-poi-distance-meters 2,5,10`.
 
 ECCCH export:
 

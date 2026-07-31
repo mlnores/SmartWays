@@ -582,6 +582,15 @@ class POISerializer(serializers.ModelSerializer):
             points = (itinerary.itinerary_json or {}).get("points") or []
             poi_ids = []
             seen = set()
+            for raw_poi_id in (itinerary.itinerary_json or {}).get("poiIds") or []:
+                try:
+                    poi_id = int(raw_poi_id)
+                except (TypeError, ValueError):
+                    continue
+                if poi_id in seen:
+                    continue
+                seen.add(poi_id)
+                poi_ids.append(poi_id)
             for point in points:
                 if not isinstance(point, dict) or point.get("type") != "poi":
                     continue
