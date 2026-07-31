@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+from types import SimpleNamespace
 
 from django.contrib.gis.geos import Point
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -15,7 +16,12 @@ from rest_framework.test import APITestCase
 from .management.commands.import_rurallure_dump import COPY_TABLES, Command, CountryBoundaryLookup
 from .management.commands.import_rurallure_dump_near_itineraries import (
     Command as NearbyPOIImportCommand,
+    CURATED_DUMP_POI_MERGES,
+    ExistingPoiDistanceIndex,
     ItineraryDistanceIndex,
+)
+from .management.commands.rurallure_import_romea_strata_official_with_pois import (
+    Command as RomeaOfficialWithPoisCommand,
 )
 from .models import (
     Category,
@@ -440,6 +446,48 @@ class POIAPITests(APITestCase):
         self.assertFalse(itinerary.enabled)
         self.assertFalse(route.enabled)
 
+    def test_poi_turned_to_draft_cascades_from_itinerary_poi_ids(self):
+        itinerary = Itinerary.objects.create(
+            enabled=True,
+            itinerary_json={
+                "points": [],
+                "poiIds": [self.poi.id],
+                "segments": [],
+            },
+        )
+        route = Route.objects.create(enabled=True)
+        RouteStage.objects.create(route=route, itinerary=itinerary, stage_number=1)
+
+        response = self.client.patch(reverse("poi-detail", args=[self.poi.id]), {"enabled": False}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        itinerary.refresh_from_db()
+        route.refresh_from_db()
+        self.assertFalse(itinerary.enabled)
+        self.assertFalse(route.enabled)
+
+    def test_poi_list_includes_itinerary_poi_ids_in_inclusions(self):
+        itinerary = Itinerary.objects.create(
+            enabled=True,
+            itinerary_json={
+                "points": [],
+                "poiIds": [self.poi.id],
+                "segments": [],
+            },
+        )
+        itinerary.translations.create(language_code="en", title="Imported stage", slug="imported-stage")
+        route = Route.objects.create(enabled=True)
+        route.translations.create(language_code="en", title="Imported route", slug="imported-route")
+        RouteStage.objects.create(route=route, itinerary=itinerary, stage_number=3)
+
+        response = self.client.get(reverse("poi-list"), {"language": "en"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result = next(item for item in response.data["results"] if item["id"] == self.poi.id)
+        self.assertEqual(result["itinerary_inclusions"][0]["itinerary"], itinerary.id)
+        self.assertEqual(result["itinerary_inclusions"][0]["itinerary_title"], "Imported stage")
+        self.assertEqual(result["itinerary_inclusions"][0]["stage_number"], 3)
+
     def test_poi_create_rejects_multiple_reference_translations(self):
         response = self.client.post(
             reverse("poi-list"),
@@ -656,6 +704,318 @@ class POIAPITests(APITestCase):
             [row["id"] for row in filtered_data["public.file_uploaded"]],
             ["file-near"],
         )
+
+    def test_rurallure_import_near_itineraries_reports_existing_poi_proximity(self):
+        existing_poi = POI.objects.create(
+            enabled=True,
+            country_code="IT",
+            location=Point(12.0, 42.0, srid=4326),
+        )
+        POITranslation.objects.create(
+            poi=existing_poi,
+            language_code="it",
+            title="Chiesa esistente",
+            slug="chiesa-esistente",
+            description="Descrizione gia importata.",
+            is_reference=True,
+        )
+        command = NearbyPOIImportCommand()
+        rows = [
+            {
+                "id": "within-two",
+                "gps_latitude": "42.000000",
+                "gps_longitude": "12.000015",
+            },
+            {
+                "id": "within-ten",
+                "gps_latitude": "42.000000",
+                "gps_longitude": "12.000080",
+            },
+            {
+                "id": "far",
+                "gps_latitude": "42.001000",
+                "gps_longitude": "12.001000",
+            },
+            {
+                "id": "without-coordinates",
+                "gps_latitude": "",
+                "gps_longitude": "",
+            },
+        ]
+
+        stats = command.existing_poi_proximity_stats(rows, [2, 5, 10])
+
+        self.assertEqual(stats["existing_pois_indexed_for_proximity"], 1)
+        self.assertEqual(stats["dump_pois_checked_for_existing_poi_proximity"], 3)
+        self.assertEqual(stats["dump_pois_skipped_for_existing_poi_proximity_without_coordinates"], 1)
+        self.assertEqual(stats["dump_pois_within_2m_of_existing_poi"], 1)
+        self.assertEqual(stats["dump_pois_within_5m_of_existing_poi"], 1)
+        self.assertEqual(stats["dump_pois_within_10m_of_existing_poi"], 2)
+
+    def test_rurallure_import_near_itineraries_reports_existing_poi_coincidence_details(self):
+        existing_poi = POI.objects.create(
+            enabled=True,
+            country_code="IT",
+            location=Point(12.0, 42.0, srid=4326),
+        )
+        POITranslation.objects.create(
+            poi=existing_poi,
+            language_code="it",
+            title="Chiesa esistente",
+            slug="chiesa-esistente",
+            description="Descrizione gia importata.",
+            is_reference=True,
+        )
+        command = NearbyPOIImportCommand()
+        data = {table_name: [] for table_name in COPY_TABLES}
+        data["public.languages"] = [
+            {"id": "lang-en", "iso_639_1_code": "en"},
+            {"id": "lang-it", "iso_639_1_code": "it"},
+        ]
+        data["public.point_of_interest"] = [
+            {
+                "id": "dump-near",
+                "gps_latitude": "42.000000",
+                "gps_longitude": "12.000015",
+            },
+            {
+                "id": "dump-far",
+                "gps_latitude": "42.001000",
+                "gps_longitude": "12.001000",
+            },
+        ]
+        data["public.point_of_interest_translation"] = [
+            {
+                "point_of_interest_id": "dump-near",
+                "language_id": "lang-en",
+                "title": "Existing church",
+                "description": "Already described in the dump.",
+            },
+            {
+                "point_of_interest_id": "dump-far",
+                "language_id": "lang-en",
+                "title": "Far place",
+                "description": "Not a duplicate candidate.",
+            },
+        ]
+
+        coincidences = command.existing_poi_coincidences(data, 10)
+
+        self.assertEqual(len(coincidences), 1)
+        self.assertEqual(coincidences[0]["dump_poi"]["id"], "dump-near")
+        self.assertEqual(coincidences[0]["existing_poi"], existing_poi)
+        self.assertEqual(coincidences[0]["dump_translations"][0]["language_code"], "en")
+        self.assertEqual(coincidences[0]["dump_translations"][0]["title"], "Existing church")
+        self.assertEqual(coincidences[0]["existing_translations"][0].title, "Chiesa esistente")
+
+    def test_rurallure_import_near_itineraries_discards_placeholder_first_translation_title(self):
+        existing_poi = POI.objects.create(
+            enabled=True,
+            country_code="IT",
+            location=Point(12.0, 42.0, srid=4326),
+        )
+        POITranslation.objects.create(
+            poi=existing_poi,
+            language_code="it",
+            title="Chiesa esistente",
+            slug="chiesa-esistente",
+            description="Descrizione gia importata.",
+            is_reference=True,
+        )
+        command = NearbyPOIImportCommand()
+        data = {table_name: [] for table_name in COPY_TABLES}
+        data["public.languages"] = [
+            {"id": "lang-en", "iso_639_1_code": "en"},
+            {"id": "lang-it", "iso_639_1_code": "it"},
+        ]
+        data["public.point_of_interest"] = [
+            {
+                "id": "dump-placeholder",
+                "enabled": "t",
+                "gps_latitude": "42.000000",
+                "gps_longitude": "12.000015",
+                "website": "",
+            },
+            {
+                "id": "dump-new",
+                "enabled": "t",
+                "gps_latitude": "42.001000",
+                "gps_longitude": "12.001000",
+                "website": "",
+            },
+        ]
+        data["public.point_of_interest_translation"] = [
+            {
+                "point_of_interest_id": "dump-placeholder",
+                "language_id": "lang-en",
+                "title": "...",
+                "description": "...",
+                "slug": "",
+            },
+            {
+                "point_of_interest_id": "dump-placeholder",
+                "language_id": "lang-it",
+                "title": "Useful later title",
+                "description": "Useful later description.",
+                "slug": "useful-later-title",
+            },
+            {
+                "point_of_interest_id": "dump-new",
+                "language_id": "lang-en",
+                "title": "New dump place",
+                "description": "Useful dump description.",
+                "slug": "new-dump-place",
+            },
+        ]
+        data["public.file_uploaded"] = [{"id": "file-placeholder", "filename": "placeholder.jpg"}]
+        data["public.image_point_of_interest"] = [
+            {
+                "point_of_interest_id": "dump-placeholder",
+                "file_uploaded_id": "file-placeholder",
+                "position": "0",
+            }
+        ]
+
+        stats = command.import_data(data, "https://example.test/images/", country_boundaries_path=None)
+
+        self.assertEqual(stats["dump_pois_discarded_with_placeholder_first_translation_title"], 1)
+        self.assertEqual(stats["pois_created"], 1)
+        self.assertEqual(POI.objects.count(), 2)
+        self.assertEqual(POITranslation.objects.filter(title="...").count(), 0)
+        self.assertEqual(POITranslation.objects.filter(title="Useful later title").count(), 0)
+        self.assertEqual(POIMedia.objects.count(), 0)
+
+    def test_rurallure_import_near_itineraries_applies_curated_dump_metadata_merge(self):
+        source_id, existing_id = next(iter(CURATED_DUMP_POI_MERGES.items()))
+        existing_poi = POI.objects.create(
+            id=existing_id,
+            enabled=True,
+            country_code="IT",
+            location=Point(12.0, 42.0, srid=4326),
+            website="https://old.example.test",
+        )
+        POITranslation.objects.create(
+            poi=existing_poi,
+            language_code="it",
+            title="Vecchio nome",
+            slug="vecchio-nome",
+            description="Vecchia descrizione.",
+            is_reference=True,
+        )
+        command = NearbyPOIImportCommand()
+        data = {table_name: [] for table_name in COPY_TABLES}
+        data["public.languages"] = [
+            {"id": "lang-en", "iso_639_1_code": "en"},
+            {"id": "lang-it", "iso_639_1_code": "it"},
+        ]
+        data["public.point_of_interest"] = [
+            {
+                "id": source_id,
+                "enabled": "t",
+                "gps_latitude": "42.123456",
+                "gps_longitude": "12.654321",
+                "website": "https://dump.example.test",
+            }
+        ]
+        data["public.point_of_interest_translation"] = [
+            {
+                "point_of_interest_id": source_id,
+                "language_id": "lang-en",
+                "title": "Dump title",
+                "description": "Dump description.",
+                "slug": "dump-title",
+            },
+            {
+                "point_of_interest_id": source_id,
+                "language_id": "lang-it",
+                "title": "Titolo dump",
+                "description": "Descrizione dump.",
+                "slug": "titolo-dump",
+            },
+        ]
+        data["public.category"] = [{"id": "cat-1"}]
+        data["public.category_translation"] = [
+            {"category_id": "cat-1", "language_id": "lang-en", "description": "Church"}
+        ]
+        data["public.point_of_interest_category"] = [
+            {"point_of_interest_id": source_id, "category_id": "cat-1"}
+        ]
+        data["public.file_uploaded"] = [{"id": "file-1", "filename": "dump.jpg"}]
+        data["public.image_point_of_interest"] = [
+            {"point_of_interest_id": source_id, "file_uploaded_id": "file-1", "position": "0"}
+        ]
+
+        stats = command.import_data(data, "https://example.test/images/", country_boundaries_path=None)
+
+        existing_poi.refresh_from_db()
+        self.assertEqual(stats["dump_pois_merged_into_existing_pois_with_dump_metadata"], 1)
+        self.assertEqual(stats["pois_created"], 0)
+        self.assertEqual(POI.objects.count(), 1)
+        self.assertAlmostEqual(existing_poi.location.y, 42.123456)
+        self.assertAlmostEqual(existing_poi.location.x, 12.654321)
+        self.assertEqual(existing_poi.website, "https://dump.example.test")
+        self.assertFalse(POITranslation.objects.filter(title="Vecchio nome").exists())
+        reference_translation = existing_poi.translations.get(is_reference=True)
+        self.assertEqual(reference_translation.language_code, "en")
+        self.assertEqual(reference_translation.title, "Dump title")
+        self.assertEqual(existing_poi.translations.get(language_code="it").description, "Descrizione dump.")
+        self.assertEqual(existing_poi.categories.get().translations.get(language_code="en").name, "Church")
+        self.assertEqual(existing_poi.media.get().url, "https://example.test/images/dump.jpg")
+
+    def test_rurallure_import_near_itineraries_automatically_merges_nearby_dump_metadata(self):
+        existing_poi = POI.objects.create(
+            enabled=True,
+            country_code="IT",
+            location=Point(12.0, 42.0, srid=4326),
+            website="https://old.example.test",
+        )
+        POITranslation.objects.create(
+            poi=existing_poi,
+            language_code="it",
+            title="Vecchio nome",
+            slug="vecchio-nome",
+            description="Vecchia descrizione.",
+            is_reference=True,
+        )
+        command = NearbyPOIImportCommand()
+        data = {table_name: [] for table_name in COPY_TABLES}
+        data["public.languages"] = [{"id": "lang-en", "iso_639_1_code": "en"}]
+        data["public.point_of_interest"] = [
+            {
+                "id": "near-dump",
+                "enabled": "t",
+                "gps_latitude": "42.000000",
+                "gps_longitude": "12.000015",
+                "website": "https://dump.example.test",
+            }
+        ]
+        data["public.point_of_interest_translation"] = [
+            {
+                "point_of_interest_id": "near-dump",
+                "language_id": "lang-en",
+                "title": "Nearby dump title",
+                "description": "Nearby dump description.",
+                "slug": "nearby-dump-title",
+            }
+        ]
+
+        stats = command.import_data(data, "https://example.test/images/", country_boundaries_path=None)
+
+        existing_poi.refresh_from_db()
+        self.assertEqual(stats["dump_pois_automatically_merged_into_existing_pois_with_dump_metadata"], 1)
+        self.assertEqual(stats["pois_created"], 0)
+        self.assertEqual(POI.objects.count(), 1)
+        self.assertAlmostEqual(existing_poi.location.y, 42.0)
+        self.assertAlmostEqual(existing_poi.location.x, 12.000015)
+        self.assertEqual(existing_poi.website, "https://dump.example.test")
+        self.assertEqual(existing_poi.translations.get().title, "Nearby dump title")
+        self.assertTrue(existing_poi.translations.get().is_reference)
+
+    def test_existing_poi_distance_index_finds_nearby_pois(self):
+        index = ExistingPoiDistanceIndex([(12.0, 42.0)], max_distance_meters=10)
+
+        self.assertLess(index.nearest_distance_meters((12.000015, 42.0)), 2)
+        self.assertIsNone(index.nearest_distance_meters((12.001, 42.0)))
 
     def test_itinerary_create_accepts_json_and_translations(self):
         payload = {
@@ -1331,6 +1691,56 @@ class ManagementCommandTests(APITestCase):
             "LineString",
         )
         self.assertEqual(itinerary.itinerary_json["source"]["waypointCount"], 1)
+
+    def test_rurallure_import_romea_strata_official_with_pois_reports_near_duplicate_waypoints(self):
+        command = RomeaOfficialWithPoisCommand()
+        left_waypoint = SimpleNamespace(
+            coordinates=[12.0, 42.0],
+            name="Santuario della Madonna Addolorata di Merna",
+            category_name="Chiesa",
+            description="Descrizione",
+        )
+        right_waypoint = SimpleNamespace(
+            coordinates=[12.000015, 42.0],
+            name="Santuario della Madonna Addolorata di Merna",
+            category_name="Alloggio condiviso",
+            description="",
+        )
+        far_waypoint = SimpleNamespace(
+            coordinates=[12.001, 42.0],
+            name="Altro POI",
+            category_name="Chiesa",
+            description="",
+        )
+        stage = SimpleNamespace(title="RSIT01 - Miren > San Canzian")
+
+        pairs = command.potential_duplicate_waypoint_pairs(
+            [
+                (left_waypoint, stage),
+                (right_waypoint, stage),
+                (far_waypoint, stage),
+            ],
+            10,
+        )
+
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["left_waypoint"].category_name, "Chiesa")
+        self.assertEqual(pairs[0]["right_waypoint"].category_name, "Alloggio condiviso")
+        self.assertLess(pairs[0]["distance_meters"], 2)
+
+        merged_waypoints = command.merged_waypoints({
+            "left": (left_waypoint, stage),
+            "right": (right_waypoint, stage),
+            "far": (far_waypoint, stage),
+        })
+
+        self.assertEqual(len(merged_waypoints), 2)
+        merged_duplicate = merged_waypoints[0]
+        self.assertEqual(merged_duplicate.name, "Santuario della Madonna Addolorata di Merna")
+        self.assertEqual(merged_duplicate.coordinates, [12.0, 42.0])
+        self.assertEqual(merged_duplicate.category_names, ["Chiesa", "Alloggio condiviso"])
+        self.assertEqual(merged_duplicate.description, "Descrizione")
+        self.assertEqual(merged_duplicate.source_fingerprints, ["left", "right"])
 
     def test_rurallure_import_romea_strata_official_can_include_variants_disabled(self):
         with TemporaryDirectory() as temporary_directory:

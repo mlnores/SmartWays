@@ -334,11 +334,16 @@ def request_sets_enabled(data, enabled):
 def poi_ids_from_itinerary_json(itinerary_json):
     if not isinstance(itinerary_json, dict):
         return set()
+    poi_ids = set()
+    for raw_id in itinerary_json.get("poiIds") or []:
+        try:
+            poi_ids.add(int(raw_id))
+        except (TypeError, ValueError):
+            continue
     points = itinerary_json.get("points")
     if not isinstance(points, list):
-        return set()
+        return poi_ids
 
-    poi_ids = set()
     for point in points:
         if not isinstance(point, dict) or point.get("type") != "poi":
             continue

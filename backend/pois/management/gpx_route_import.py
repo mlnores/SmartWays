@@ -19,10 +19,19 @@ VARIANT_MARKERS = ("variante", "de tour", "fuori percorso", "raccordo", "anello"
 
 
 @dataclass
+class GpxWaypoint:
+    coordinates: list
+    name: str
+    description: str
+    category_name: str
+
+
+@dataclass
 class GpxStage:
     path: Path
     title: str
     coordinates: list
+    waypoints: list
     waypoint_count: int
     track_count: int
     track_segment_count: int
@@ -81,6 +90,20 @@ def gpx_point_coordinates(point):
     return [float(point.attrib["lon"]), float(point.attrib["lat"])]
 
 
+def parse_gpx_waypoints(root):
+    waypoints = []
+    for point in root.findall("g:wpt", GPX_NS):
+        waypoints.append(
+            GpxWaypoint(
+                coordinates=gpx_point_coordinates(point),
+                name=text_or_empty(point, "g:name"),
+                description=text_or_empty(point, "g:desc"),
+                category_name=text_or_empty(point, "g:type"),
+            )
+        )
+    return waypoints
+
+
 def parse_gpx_stage(path):
     try:
         root = ET.parse(path).getroot()
@@ -103,11 +126,13 @@ def parse_gpx_stage(path):
     if len(coordinates) < 2:
         raise CommandError(f"{path} does not contain a GPX track with at least two points.")
 
+    waypoints = parse_gpx_waypoints(root)
     return GpxStage(
         path=path,
         title=title,
         coordinates=coordinates,
-        waypoint_count=len(root.findall("g:wpt", GPX_NS)),
+        waypoints=waypoints,
+        waypoint_count=len(waypoints),
         track_count=len(tracks),
         track_segment_count=track_segment_count,
         is_variant=is_variant_path(path),
@@ -215,20 +240,29 @@ class BaseGpxRouteImportCommand(BaseCommand):
             raise CommandError(f"No importable GPX route files found in {source_dir}")
 
         prepared_routes = []
+        total_files = sum(len(plan.files) for plan in route_plans)
+        parsed_files = 0
         for plan in route_plans:
-            stages = [parse_gpx_stage(path) for path in plan.files]
+            stages = []
+            for path in plan.files:
+                stages.append(parse_gpx_stage(path))
+                parsed_files += 1
+                self.write_progress("Parsing GPX files", parsed_files, total_files)
             prepared_routes.append((plan, stages))
 
         if options["dry_run"]:
             self.write_dry_run(source_dir, prepared_routes)
+            self.write_extra_dry_run(source_dir, prepared_routes, options)
             return
 
         with transaction.atomic():
+            self.before_import(source_dir, prepared_routes, options)
             imported_count = 0
             created_itinerary_count = 0
             reused_itinerary_count = 0
             skipped_duplicate_stage_count = 0
             itinerary_by_fingerprint = {}
+            itinerary_by_stage_path = {}
             for plan, stages in prepared_routes:
                 route = self.get_or_create_route(plan, language)
                 existing_count = route.itineraries.count()
@@ -266,6 +300,7 @@ class BaseGpxRouteImportCommand(BaseCommand):
                     else:
                         reused_itinerary_count += 1
                     itinerary_by_fingerprint[fingerprint] = itinerary
+                    itinerary_by_stage_path[str(stage.path)] = itinerary
                     if itinerary.id in route_itinerary_ids:
                         skipped_duplicate_stage_count += 1
                         continue
@@ -278,6 +313,8 @@ class BaseGpxRouteImportCommand(BaseCommand):
                     next_stage_number += 1
                     imported_count += 1
 
+            extra_stats = self.import_extra_content(source_dir, prepared_routes, options, itinerary_by_stage_path)
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"Imported {imported_count} route stages into {len(prepared_routes)} routes "
@@ -285,6 +322,31 @@ class BaseGpxRouteImportCommand(BaseCommand):
                 f"{skipped_duplicate_stage_count} duplicate stages skipped)."
             )
         )
+        for key, value in extra_stats.items():
+            self.stdout.write(f"{key}: {value}")
+
+    def write_extra_dry_run(self, source_dir, prepared_routes, options):
+        return None
+
+    def before_import(self, source_dir, prepared_routes, options):
+        return None
+
+    def import_extra_content(self, source_dir, prepared_routes, options, itinerary_by_stage_path=None):
+        return {}
+
+    def write_progress(self, label, current, total):
+        if total <= 0:
+            return
+        width = 30
+        ratio = min(1, max(0, current / total))
+        filled = round(width * ratio)
+        bar = "#" * filled + "-" * (width - filled)
+        percent = round(ratio * 100)
+        self.stdout.write(
+            f"\r{label}: [{bar}] {current}/{total} ({percent}%)",
+            ending="" if current < total else "\n",
+        )
+        self.stdout.flush()
 
     def build_route_plans(self, source_dir, include_variants=False):
         country_dirs = [source_dir / name / "A piedi_on foot" for name in [
