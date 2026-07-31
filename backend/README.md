@@ -208,7 +208,13 @@ python manage.py rurallure_import_via_francigena
 python manage.py rurallure_import_via_francigena_per_alps
 python manage.py rurallure_import_via_romea_del_santo
 python manage.py rurallure_import_romea_strata_official --include-variants
+python manage.py rurallure_import_romea_strata_official_with_pois --dry-run --language-report
+python manage.py rurallure_import_romea_strata_official_with_pois --include-variants
 ```
+
+The `rurallure_import_romea_strata_official_with_pois` command is the bootstrap variant for an empty
+database. It keeps GPX `<trkpt>` elements as itinerary route geometry, creates POIs from `<wpt>` elements,
+and creates initial categories from GPX `<type>` values with Italian translations.
 
 Import POIs:
 

@@ -19,10 +19,19 @@ VARIANT_MARKERS = ("variante", "de tour", "fuori percorso", "raccordo", "anello"
 
 
 @dataclass
+class GpxWaypoint:
+    coordinates: list
+    name: str
+    description: str
+    category_name: str
+
+
+@dataclass
 class GpxStage:
     path: Path
     title: str
     coordinates: list
+    waypoints: list
     waypoint_count: int
     track_count: int
     track_segment_count: int
@@ -81,6 +90,20 @@ def gpx_point_coordinates(point):
     return [float(point.attrib["lon"]), float(point.attrib["lat"])]
 
 
+def parse_gpx_waypoints(root):
+    waypoints = []
+    for point in root.findall("g:wpt", GPX_NS):
+        waypoints.append(
+            GpxWaypoint(
+                coordinates=gpx_point_coordinates(point),
+                name=text_or_empty(point, "g:name"),
+                description=text_or_empty(point, "g:desc"),
+                category_name=text_or_empty(point, "g:type"),
+            )
+        )
+    return waypoints
+
+
 def parse_gpx_stage(path):
     try:
         root = ET.parse(path).getroot()
@@ -103,11 +126,13 @@ def parse_gpx_stage(path):
     if len(coordinates) < 2:
         raise CommandError(f"{path} does not contain a GPX track with at least two points.")
 
+    waypoints = parse_gpx_waypoints(root)
     return GpxStage(
         path=path,
         title=title,
         coordinates=coordinates,
-        waypoint_count=len(root.findall("g:wpt", GPX_NS)),
+        waypoints=waypoints,
+        waypoint_count=len(waypoints),
         track_count=len(tracks),
         track_segment_count=track_segment_count,
         is_variant=is_variant_path(path),
@@ -221,9 +246,11 @@ class BaseGpxRouteImportCommand(BaseCommand):
 
         if options["dry_run"]:
             self.write_dry_run(source_dir, prepared_routes)
+            self.write_extra_dry_run(source_dir, prepared_routes, options)
             return
 
         with transaction.atomic():
+            self.before_import(source_dir, prepared_routes, options)
             imported_count = 0
             created_itinerary_count = 0
             reused_itinerary_count = 0
@@ -278,6 +305,8 @@ class BaseGpxRouteImportCommand(BaseCommand):
                     next_stage_number += 1
                     imported_count += 1
 
+            extra_stats = self.import_extra_content(source_dir, prepared_routes, options)
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"Imported {imported_count} route stages into {len(prepared_routes)} routes "
@@ -285,6 +314,17 @@ class BaseGpxRouteImportCommand(BaseCommand):
                 f"{skipped_duplicate_stage_count} duplicate stages skipped)."
             )
         )
+        for key, value in extra_stats.items():
+            self.stdout.write(f"{key}: {value}")
+
+    def write_extra_dry_run(self, source_dir, prepared_routes, options):
+        return None
+
+    def before_import(self, source_dir, prepared_routes, options):
+        return None
+
+    def import_extra_content(self, source_dir, prepared_routes, options):
+        return {}
 
     def build_route_plans(self, source_dir, include_variants=False):
         country_dirs = [source_dir / name / "A piedi_on foot" for name in [

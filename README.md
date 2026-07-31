@@ -577,16 +577,35 @@ python manage.py rurallure_import_romea_strata_official --dry-run
 python manage.py rurallure_import_romea_strata_official
 ```
 
+Official Romea Strata GPX bootstrap command, including POIs from `<wpt>` elements:
+
+```bash
+python manage.py rurallure_import_romea_strata_official_with_pois --dry-run --language-report
+python manage.py rurallure_import_romea_strata_official_with_pois
+```
+
+This command keeps GPX `<trkpt>` elements as itinerary route geometry and creates POIs from GPX `<wpt>`
+elements. It also creates initial categories from the GPX `<type>` values, storing those labels as Italian
+category translations so they can be refined later in the category management dialogs.
+
 Include variants:
 
 ```bash
 python manage.py rurallure_import_romea_strata_official --include-variants
+python manage.py rurallure_import_romea_strata_official_with_pois --include-variants
 ```
 
 Replace existing imported route content:
 
 ```bash
 python manage.py rurallure_import_romea_strata_official --replace
+python manage.py rurallure_import_romea_strata_official_with_pois --replace
+```
+
+Clear existing POIs and categories before re-running the POI bootstrap command:
+
+```bash
+python manage.py rurallure_import_romea_strata_official_with_pois --clear-pois
 ```
 
 ## Clearing Content
