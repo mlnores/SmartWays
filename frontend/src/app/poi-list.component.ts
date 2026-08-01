@@ -182,16 +182,6 @@ declare const turf: any;
               <table class="resource-table">
                 <thead>
                   <tr>
-                    <th class="selection-column" aria-label="Select">
-                      <input
-                        type="checkbox"
-                        title="Select all POIs"
-                        aria-label="Select all POIs"
-                        [checked]="areAllPoisSelected(items)"
-                        [indeterminate]="areSomePoisSelected(items)"
-                        (change)="setPoisSelected(items, $any($event.target).checked)"
-                      />
-                    </th>
                     <th class="poi-name-column">
                       <button type="button" class="sortable-header" (click)="togglePoiSort('title')">
                         <span>POI</span>
@@ -219,19 +209,10 @@ declare const turf: any;
                     <tr
                       [attr.id]="poiRowId(poi)"
                       [class.highlight-row]="highlightedPoiId === poi.id"
-                      [class.preview-selected-row]="selectedPoiIds.has(poi.id)"
+                      [class.preview-selected-row]="previewPoi?.id === poi.id"
                       (click)="queuePoiRowSelection(poi)"
                       (dblclick)="openPoiInfoAndMedia(poi)"
                     >
-                      <td class="selection-column" (click)="$event.stopPropagation()">
-                        <input
-                          type="checkbox"
-                          title="Select POI for preview"
-                          aria-label="Select POI for preview"
-                          [checked]="selectedPoiIds.has(poi.id)"
-                          (change)="setPoiSelected(poi, $any($event.target).checked)"
-                        />
-                      </td>
                       <td class="poi-name-column">
                         <strong>{{ poi.title || 'Untitled POI' }}</strong>
                         <p class="description-preview">{{ poi.description || 'No description' }}</p>
@@ -268,7 +249,7 @@ declare const turf: any;
                     </tr>
                   } @empty {
                     <tr>
-                      <td colspan="6">{{ currentPois.length ? 'No POIs visible in the current map view.' : 'No POIs found.' }}</td>
+                      <td colspan="5">{{ currentPois.length ? 'No POIs visible in the current map view.' : 'No POIs found.' }}</td>
                     </tr>
                   }
                 </tbody>
@@ -310,42 +291,35 @@ declare const turf: any;
               <div class="preview-actions" aria-label="POI preview actions">
                 <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentPois()">
                   <span class="preview-action-icon" aria-hidden="true">🎯</span>
-                  <span>Fit view to selection</span>
+                  <span>Fit view</span>
                 </button>
 
-                @if (selectedPoiIds.size > 0 && selectedPoisAreDraft()) {
-                  <button type="button" class="secondary preview-action" (click)="setSelectedPoisEnabled(true)">
+                @if (previewPoi && !previewPoi.enabled) {
+                  <button type="button" class="secondary preview-action" (click)="setPoiEnabled(previewPoi, true)">
                     <span class="preview-action-icon" aria-hidden="true">🌐</span>
                     <span>Make public</span>
                   </button>
                 }
-                @if (selectedPoiIds.size > 0 && selectedPoisArePublic()) {
-                  <button type="button" class="secondary preview-action" (click)="setSelectedPoisEnabled(false)">
+                @if (previewPoi && previewPoi.enabled) {
+                  <button type="button" class="secondary preview-action" (click)="setPoiEnabled(previewPoi, false)">
                     <span class="preview-action-icon" aria-hidden="true">✎</span>
                     <span>Turn to draft</span>
                   </button>
                 }
-                @if (selectedPoiIds.size > 1 && selectedPoisAreDraft()) {
-                  <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedPois()">
-                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                    <span>Delete selected POIs</span>
+                @if (previewPoi) {
+                  <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']" [queryParams]="poiEditorReturnQueryParams(previewPoi)">
+                    <span class="preview-action-icon" aria-hidden="true">🗺️</span>
+                    <span>{{ previewPoi.enabled ? 'View info and media' : 'Manage metadata, media and translations' }}</span>
+                  </a>
+                  <button type="button" class="secondary preview-action" [disabled]="duplicatingPoiIds.has(previewPoi.id)" (click)="duplicatePoi(previewPoi)">
+                    <span class="preview-action-icon" aria-hidden="true">📄</span>
+                    <span>{{ duplicatingPoiIds.has(previewPoi.id) ? 'Duplicating...' : 'Duplicate' }}</span>
                   </button>
-                } @else {
-                  @if (singleSelectedPoi(); as selectedPoi) {
-                    <a class="secondary preview-action" [routerLink]="['/pois', selectedPoi.id, 'edit']" [queryParams]="poiEditorReturnQueryParams(selectedPoi)">
-                      <span class="preview-action-icon" aria-hidden="true">🗺️</span>
-                      <span>{{ selectedPoi.enabled ? 'View info and media' : 'Manage metadata, media and translations' }}</span>
-                    </a>
-                    <button type="button" class="secondary preview-action" [disabled]="duplicatingPoiIds.has(selectedPoi.id)" (click)="duplicatePoi(selectedPoi)">
-                      <span class="preview-action-icon" aria-hidden="true">📄</span>
-                      <span>{{ duplicatingPoiIds.has(selectedPoi.id) ? 'Duplicating...' : 'Duplicate' }}</span>
+                  @if (!previewPoi.enabled) {
+                    <button type="button" class="secondary preview-action danger-action" (click)="deletePoi(previewPoi)">
+                      <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                      <span>Delete POI</span>
                     </button>
-                    @if (!selectedPoi.enabled) {
-                      <button type="button" class="secondary preview-action danger-action" (click)="deletePoi(selectedPoi)">
-                        <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                        <span>Delete POI</span>
-                      </button>
-                    }
                   }
                 }
               </div>
@@ -591,6 +565,9 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     switchMap(([query, , itineraryId]) => {
       this.loadingPoiInfo = true;
       this.itineraryId = itineraryId;
+      if (!itineraryId) {
+        this.showWorldMapWhilePoisLoad();
+      }
       const itinerary$ = itineraryId ? this.api.getItinerary(itineraryId) : of(null);
       return combineLatest([
         itinerary$,
@@ -611,6 +588,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
                 this.displayedPois = result.items;
                 this.poiTotalCount = result.items.length;
                 this.pruneSelectedPois(this.currentPois);
+                this.keepSingleSelectedPoi();
                 this.schedulePoiHighlight(this.pendingHighlightPoiId, this.currentPois);
                 if (this.selectedPoiIds.size > 0) {
                   this.renderSelectedPoiPreviewIfNeeded(!this.selectedPreviewFitLocked);
@@ -628,6 +606,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
               this.displayedPois = [];
               this.poiTotalCount = this.currentPois.length;
               this.pruneSelectedPois(this.currentPois);
+              this.keepSingleSelectedPoi();
               this.schedulePoiHighlight(this.pendingHighlightPoiId, this.currentPois);
               if (this.selectedPoiIds.size > 0) {
                 this.renderSelectedPoiPreviewIfNeeded(!this.selectedPreviewFitLocked);
@@ -680,12 +659,11 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   selectPreviewPoi(poi: Poi): void {
+    this.selectedPoiIds.clear();
+    this.selectedPoiIds.add(poi.id);
+    this.selectedPreviewFitLocked = false;
     this.previewPoi = poi;
-    if (this.selectedPoiIds.size > 0) {
-      this.selectedPoiIds.clear();
-      this.selectedPreviewFitLocked = false;
-    }
-    this.renderPreviewPoi(poi);
+    this.renderSelectedPoiPreviewIfNeeded(true);
   }
 
   queuePoiRowSelection(poi: Poi): void {
@@ -694,56 +672,23 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     }
     this.poiRowClickTimer = window.setTimeout(() => {
       this.poiRowClickTimer = null;
-      this.setPoiSelected(poi, !this.selectedPoiIds.has(poi.id));
+      this.togglePoiRowPreview(poi);
     }, 180);
   }
 
-  setPoiSelected(poi: Poi, selected: boolean): void {
-    if (selected) {
-      this.selectedPoiIds.add(poi.id);
-    } else {
-      this.selectedPoiIds.delete(poi.id);
+  togglePoiRowPreview(poi: Poi): void {
+    if (this.previewPoi?.id === poi.id) {
+      this.clearPoiPreview(true);
+      return;
     }
-    this.previewPoi = this.selectedPoiIds.size === 1 ? this.selectedPois()[0] || null : null;
-    if (this.selectedPoiIds.size > 0) {
-      if (this.selectedPoiIds.size >= 2) {
-        this.selectedPreviewFitLocked = true;
-      }
-      this.renderSelectedPoiPreviewIfNeeded(true);
-    } else {
-      this.selectedPreviewFitLocked = false;
-      this.previewPoi = null;
-      this.renderVisiblePoisPreview(this.currentPois);
-    }
+    this.selectPreviewPoi(poi);
   }
 
-  setPoisSelected(pois: Poi[], selected: boolean): void {
-    pois.forEach(poi => {
-      if (selected) {
-        this.selectedPoiIds.add(poi.id);
-      } else {
-        this.selectedPoiIds.delete(poi.id);
-      }
-    });
-    this.previewPoi = this.selectedPoiIds.size === 1 ? this.selectedPois()[0] || null : null;
-    if (this.selectedPoiIds.size > 0) {
-      if (this.selectedPoiIds.size >= 2) {
-        this.selectedPreviewFitLocked = true;
-      }
-      this.renderSelectedPoiPreviewIfNeeded(true);
-    } else {
-      this.selectedPreviewFitLocked = false;
-      this.previewPoi = null;
-      this.renderVisiblePoisPreview(this.currentPois);
-    }
-  }
-
-  areAllPoisSelected(pois: Poi[]): boolean {
-    return pois.length > 0 && pois.every(poi => this.selectedPoiIds.has(poi.id));
-  }
-
-  areSomePoisSelected(pois: Poi[]): boolean {
-    return pois.some(poi => this.selectedPoiIds.has(poi.id)) && !this.areAllPoisSelected(pois);
+  clearPoiPreview(shouldFit = true): void {
+    this.selectedPoiIds.clear();
+    this.selectedPreviewFitLocked = false;
+    this.previewPoi = null;
+    this.renderVisiblePoisPreview(this.currentPois);
   }
 
   togglePoiGroup(key: string): void {
@@ -758,23 +703,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     return this.collapsedPoiGroupKeys.has(key);
   }
 
-  selectedPoisAreDraft(): boolean {
-    const selected = this.selectedPois();
-    return selected.length > 0 && selected.every(poi => !poi.enabled);
-  }
-
-  selectedPoisArePublic(): boolean {
-    const selected = this.selectedPois();
-    return selected.length > 0 && selected.every(poi => poi.enabled);
-  }
-
-  singleSelectedPoi(): Poi | null {
-    if (this.selectedPoiIds.size !== 1) return null;
-    return this.selectedPois()[0] || null;
-  }
-
   fitPreviewToCurrentPois(): void {
-    if (this.selectedPoiIds.size > 0) {
+    if (this.previewPoi) {
       this.renderSelectedPoiPreviewIfNeeded(true);
     } else {
       this.renderVisiblePoisPreview(this.currentPois);
@@ -782,7 +712,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   selectPoiFromPreviewMarker(poi: Poi): void {
-    this.setPoiSelected(poi, true);
+    this.selectPreviewPoi(poi);
     this.highlightedPoiId = poi.id;
     window.setTimeout(() => {
       document.getElementById(this.poiRowId(poi))?.scrollIntoView({
@@ -918,20 +848,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not update POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
-    }
-  }
-
-  async setSelectedPoisEnabled(enabled: boolean): Promise<void> {
-    const selected = this.selectedPois();
-    if (selected.length === 0) return;
-    if (!this.confirmPoiDraftChange(selected, enabled)) return;
-
-    try {
-      await Promise.all(selected.map(poi => firstValueFrom(this.api.updatePoi(poi.id, { enabled }))));
-      this.clearStatus();
-      this.refresh$.next(this.refresh$.value + 1);
-    } catch (error) {
-      this.showStatus(`Could not update selected POIs. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
@@ -1230,28 +1146,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  async deleteSelectedPois(): Promise<void> {
-    const selected = this.selectedPois();
-    if (selected.length < 2) return;
-    if (selected.some(poi => poi.enabled)) {
-      this.showStatus('Only draft POIs can be deleted.', true);
-      return;
-    }
-    const confirmed = window.confirm(`Delete ${selected.length} selected POIs? Itineraries that reference them will not be deleted.`);
-    if (!confirmed) return;
-
-    try {
-      await Promise.all(selected.map(poi => firstValueFrom(this.api.deletePoi(poi.id))));
-      this.selectedPoiIds.clear();
-      this.selectedPreviewFitLocked = false;
-      this.previewPoi = null;
-      this.clearStatus();
-      this.refresh$.next(this.refresh$.value + 1);
-    } catch (error) {
-      this.showStatus(`Could not delete selected POIs. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
-    }
-  }
-
   private initializePreviewMap(): void {
     if (this.previewMap || !this.previewMapElement?.nativeElement) return;
     if (typeof L === 'undefined') {
@@ -1262,7 +1156,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     this.previewMap = L.map(this.previewMapElement.nativeElement, {
       zoomControl: true,
       attributionControl: false
-    }).setView([42.5, -8.5], 5);
+    });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19
     }).addTo(this.previewMap);
@@ -1274,7 +1168,19 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.previewMap?.invalidateSize();
     });
     this.previewResizeObserver.observe(this.previewMapElement.nativeElement);
-    window.requestAnimationFrame(() => this.previewMap?.invalidateSize());
+    this.fitPreviewMapToWorld();
+  }
+
+  private showWorldMapWhilePoisLoad(): void {
+    this.selectedPoiIds.clear();
+    this.selectedPreviewFitLocked = false;
+    this.previewPoi = null;
+    this.previewLayer?.clearLayers();
+    this.clearPreviewClusterLayer();
+    this.displayedPois = [];
+    this.previewMessage = '';
+    this.initializePreviewMap();
+    this.fitPreviewMapToWorld();
   }
 
   private renderPreviewPoi(poi: Poi): void {
@@ -2044,6 +1950,17 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     } else {
       this.previewPoi = this.selectedPoiIds.size === 1 ? this.selectedPois()[0] || null : null;
     }
+  }
+
+  private keepSingleSelectedPoi(): void {
+    if (this.selectedPoiIds.size <= 1) return;
+    const firstSelectedId = this.selectedPoiIds.values().next().value as number | undefined;
+    this.selectedPoiIds.clear();
+    if (firstSelectedId) {
+      this.selectedPoiIds.add(firstSelectedId);
+    }
+    this.selectedPreviewFitLocked = false;
+    this.previewPoi = this.selectedPois()[0] || null;
   }
 
   private parsePositiveInteger(value: string | null): number | null {

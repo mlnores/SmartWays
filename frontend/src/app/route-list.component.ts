@@ -102,16 +102,6 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                 <table class="resource-table">
                   <thead>
                     <tr>
-                      <th class="selection-column" aria-label="Select">
-                        <input
-                          type="checkbox"
-                          title="Select all routes"
-                          aria-label="Select all routes"
-                          [checked]="areAllRoutesSelected(state.routes)"
-                          [indeterminate]="areSomeRoutesSelected(state.routes)"
-                          (change)="setRoutesSelected(state.routes, $any($event.target).checked)"
-                        />
-                      </th>
                       <th>
                         <button type="button" class="sortable-header" (click)="toggleRouteSort('title')">
                           <span>Title</span>
@@ -137,19 +127,10 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                       <tr
                         [attr.id]="routeRowId(route)"
                         [class.highlight-row]="highlightedRouteId === route.id"
-                        [class.preview-selected-row]="selectedRouteIds.has(route.id)"
-                        (click)="setRouteSelected(route, !selectedRouteIds.has(route.id))"
+                        [class.preview-selected-row]="previewRoute?.id === route.id"
+                        (click)="togglePreviewRoute(route)"
                         (dblclick)="openRouteItineraries(route)"
                       >
-                        <td class="selection-column" (click)="$event.stopPropagation()">
-                          <input
-                            type="checkbox"
-                            title="Select route for preview"
-                            aria-label="Select route for preview"
-                            [checked]="selectedRouteIds.has(route.id)"
-                            (change)="setRouteSelected(route, $any($event.target).checked)"
-                          />
-                        </td>
                         <td>
                           <strong>{{ route.title || 'Untitled route' }}</strong>
                           <p class="description-preview">{{ route.description || 'No description' }}</p>
@@ -168,7 +149,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                       </tr>
                     } @empty {
                       <tr>
-                        <td colspan="4">No routes found.</td>
+                        <td colspan="3">No routes found.</td>
                       </tr>
                     }
                   </tbody>
@@ -187,27 +168,22 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
               <div class="preview-actions" aria-label="Route preview actions">
                 <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentRoutes()">
                   <span class="preview-action-icon" aria-hidden="true">🎯</span>
-                  <span>Fit view to selection</span>
+                  <span>Fit view</span>
                 </button>
 
-                @if (selectedRouteIds.size > 0 && selectedRoutesAreDraft()) {
-                  <button type="button" class="secondary preview-action" (click)="setSelectedRoutesEnabled(true)">
+                @if (previewRoute && !previewRoute.enabled) {
+                  <button type="button" class="secondary preview-action" (click)="setRouteEnabled(previewRoute, true)">
                     <span class="preview-action-icon" aria-hidden="true">🌐</span>
                     <span>Make public</span>
                   </button>
                 }
-                @if (selectedRouteIds.size > 0 && selectedRoutesArePublic()) {
-                  <button type="button" class="secondary preview-action" (click)="setSelectedRoutesEnabled(false)">
+                @if (previewRoute && previewRoute.enabled) {
+                  <button type="button" class="secondary preview-action" (click)="setRouteEnabled(previewRoute, false)">
                     <span class="preview-action-icon" aria-hidden="true">✎</span>
                     <span>Turn to draft</span>
                   </button>
                 }
-                @if (selectedRouteIds.size > 1 && selectedRoutesAreDraft()) {
-                  <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedRoutes()">
-                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                    <span>Delete selected routes</span>
-                  </button>
-                } @else if (previewRoute) {
+                @if (previewRoute) {
                   <a class="secondary preview-action" [routerLink]="['/route', previewRoute.slug || previewRoute.id]">
                     <span class="preview-action-icon" aria-hidden="true">📋</span>
                     <span>View itineraries</span>
@@ -391,7 +367,6 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   currentRoutes: Route[] = [];
   routeSortKey: RouteSortKey = 'title';
   routeSortDirection: SortDirection = 'asc';
-  readonly selectedRouteIds = new Set<number>();
   previewRoute: Route | null = null;
   previewMessage = 'Click a route to preview it.';
   private previewMap: any = null;
@@ -399,7 +374,6 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   private previewResizeObserver: ResizeObserver | null = null;
   private previewRequestId = 0;
   private previewFitRequestId = 0;
-  private selectedPreviewFitLocked = false;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
@@ -410,9 +384,14 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       map(routePage => {
         const routes = this.sortedRoutes(routePage.results);
         this.currentRoutes = routes;
-        this.pruneSelectedRoutes(routes);
-        if (this.selectedRouteIds.size > 0) {
-          this.renderSelectedRoutePreviewIfNeeded(!this.selectedPreviewFitLocked);
+        if (this.previewRoute) {
+          const refreshedPreviewRoute = routes.find(route => route.id === this.previewRoute?.id) || null;
+          this.previewRoute = refreshedPreviewRoute;
+          if (refreshedPreviewRoute) {
+            void this.selectPreviewRoute(refreshedPreviewRoute, false);
+          } else {
+            void this.renderVisibleRoutesPreview(routes);
+          }
         } else {
           void this.renderVisibleRoutesPreview(routes);
         }
@@ -443,12 +422,8 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  async selectPreviewRoute(route: Route): Promise<void> {
+  async selectPreviewRoute(route: Route, shouldFit = true): Promise<void> {
     this.previewRoute = route;
-    if (this.selectedRouteIds.size > 0) {
-      this.selectedRouteIds.clear();
-      this.selectedPreviewFitLocked = false;
-    }
     const requestId = this.previewRequestId + 1;
     this.previewRequestId = requestId;
     this.previewMessage = 'Loading route preview...';
@@ -456,7 +431,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     try {
       const itineraries = await firstValueFrom(this.api.listAllItineraries('', '', route.id));
       if (requestId !== this.previewRequestId) return;
-      this.renderPreviewRoute(this.sortedItineraries(itineraries));
+      this.renderPreviewRoute(this.sortedItineraries(itineraries), shouldFit);
     } catch (error) {
       if (requestId !== this.previewRequestId) return;
       this.previewMessage = `Could not load route preview. ${error instanceof Error ? error.message : 'Request failed.'}`;
@@ -464,81 +439,23 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  setRouteSelected(route: Route, selected: boolean): void {
-    if (selected) {
-      this.selectedRouteIds.add(route.id);
-    } else {
-      this.selectedRouteIds.delete(route.id);
-    }
-    this.previewRoute = this.selectedRouteIds.size === 1 ? this.selectedRoutes()[0] || null : null;
-    if (this.selectedRouteIds.size > 0) {
-      const shouldFit = !this.selectedPreviewFitLocked;
-      if (this.selectedRouteIds.size >= 2) {
-        this.selectedPreviewFitLocked = true;
-      }
-      void this.renderSelectedRoutePreviewIfNeeded(shouldFit);
-    } else {
-      this.selectedPreviewFitLocked = false;
+  togglePreviewRoute(route: Route): void {
+    if (this.previewRoute?.id === route.id) {
       this.previewRoute = null;
       void this.renderVisibleRoutesPreview(this.currentRoutes);
+      return;
     }
-  }
-
-  setRoutesSelected(routes: Route[], selected: boolean): void {
-    routes.forEach(route => {
-      if (selected) {
-        this.selectedRouteIds.add(route.id);
-      } else {
-        this.selectedRouteIds.delete(route.id);
-      }
-    });
-
-    if (selected && routes.length > 0) {
-      this.previewRoute = this.selectedRouteIds.size === 1 ? this.selectedRoutes()[0] || null : null;
-    }
-
-    if (this.selectedRouteIds.size > 0) {
-      this.previewRoute = this.selectedRouteIds.size === 1 ? this.selectedRoutes()[0] || null : null;
-      if (this.selectedRouteIds.size >= 2) {
-        this.selectedPreviewFitLocked = true;
-      }
-      void this.renderSelectedRoutePreviewIfNeeded(true);
-    } else {
-      this.selectedPreviewFitLocked = false;
-      this.previewRoute = null;
-      this.previewLayer?.clearLayers();
-      void this.renderVisibleRoutesPreview(this.currentRoutes);
-    }
-  }
-
-  areAllRoutesSelected(routes: Route[]): boolean {
-    return routes.length > 0 && routes.every(route => this.selectedRouteIds.has(route.id));
-  }
-
-  areSomeRoutesSelected(routes: Route[]): boolean {
-    return routes.some(route => this.selectedRouteIds.has(route.id)) && !this.areAllRoutesSelected(routes);
-  }
-
-  selectedRoutesAreDraft(): boolean {
-    const selected = this.selectedRoutes();
-    return selected.length > 0 && selected.every(route => !route.enabled);
-  }
-
-  selectedRoutesArePublic(): boolean {
-    const selected = this.selectedRoutes();
-    return selected.length > 0 && selected.every(route => route.enabled);
+    void this.selectPreviewRoute(route);
   }
 
   previewLabel(): string {
-    const selected = this.selectedRoutes();
-    if (selected.length > 1) return `${selected.length} selected routes`;
-    if (selected.length === 1) return selected[0].title || 'Untitled route';
+    if (this.previewRoute) return this.previewRoute.title || 'Untitled route';
     return 'All routes';
   }
 
   fitPreviewToCurrentRoutes(): void {
-    if (this.selectedRouteIds.size > 0) {
-      void this.renderSelectedRoutePreviewIfNeeded(true);
+    if (this.previewRoute) {
+      void this.selectPreviewRoute(this.previewRoute, true);
     } else {
       void this.renderVisibleRoutesPreview(this.currentRoutes);
     }
@@ -549,8 +466,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   }
 
   previewColorForRoute(route: Route): string {
-    const previewRoutes = this.selectedRouteIds.size > 0 ? this.selectedRoutes() : this.currentRoutes;
-    const index = previewRoutes.findIndex(candidate => candidate.id === route.id);
+    const index = this.currentRoutes.findIndex(candidate => candidate.id === route.id);
     if (index < 0) return '#cfd6e3';
     return PREVIEW_COLORS[index % PREVIEW_COLORS.length];
   }
@@ -620,26 +536,12 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  async setSelectedRoutesEnabled(enabled: boolean): Promise<void> {
-    const selected = this.selectedRoutes();
-    if (selected.length === 0) return;
-    if (!this.confirmRouteDraftChange(selected, enabled)) return;
-
-    try {
-      await Promise.all(selected.map(route => firstValueFrom(this.api.updateRoute(route.id, { enabled }))));
-      this.clearStatus();
-      this.refresh$.next(this.refresh$.value + 1);
-    } catch (error) {
-      this.showStatus(`Could not update selected routes. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
-    }
-  }
-
   private confirmRouteDraftChange(routes: Route[], enabled: boolean): boolean {
     const action = enabled ? 'make public' : 'turn to draft';
     const itemLabel = routes.length === 1 ? 'route' : 'routes';
-    let message = `Really ${action} ${routes.length} selected ${itemLabel}?`;
+    let message = `Really ${action} ${routes.length} ${itemLabel}?`;
     if (enabled) {
-      message += '\n\nDraft itineraries in the selected route(s), and draft POIs included in those itineraries, will also be made public.';
+      message += '\n\nDraft itineraries in the route, and draft POIs included in those itineraries, will also be made public.';
     }
     return window.confirm(message);
   }
@@ -653,17 +555,6 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     this.deleteRouteDialog?.nativeElement.showModal();
   }
 
-  deleteSelectedRoutes(): void {
-    const selected = this.selectedRoutes();
-    if (selected.length < 2) return;
-    if (selected.some(route => route.enabled)) {
-      this.showStatus('Only draft routes can be deleted.', true);
-      return;
-    }
-    this.routesPendingDeletion = selected;
-    this.deleteRouteDialog?.nativeElement.showModal();
-  }
-
   closeDeleteRouteDialog(): void {
     this.deleteRouteDialog?.nativeElement.close();
     this.routesPendingDeletion = [];
@@ -673,7 +564,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     if (this.routesPendingDeletion.length === 1) {
       return `Delete route "${this.routesPendingDeletion[0].title || 'Untitled route'}"? Its constituent itineraries will not be deleted.`;
     }
-    return `Delete ${this.routesPendingDeletion.length} selected routes? Their constituent itineraries will not be deleted.`;
+    return 'Delete route? Its constituent itineraries will not be deleted.';
   }
 
   async confirmDeleteRoutes(): Promise<void> {
@@ -681,9 +572,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     if (routes.length === 0) return;
     try {
       await Promise.all(routes.map(route => firstValueFrom(this.api.deleteRoute(route.id))));
-      if (routes.length > 1) {
-        this.selectedRouteIds.clear();
-        this.selectedPreviewFitLocked = false;
+      if (routes.some(route => route.id === this.previewRoute?.id)) {
         this.previewRoute = null;
       }
       this.closeDeleteRouteDialog();
@@ -816,13 +705,17 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     this.fitPreviewMapToWorld();
   }
 
-  private renderPreviewRoute(itineraries: Itinerary[]): void {
+  private renderPreviewRoute(itineraries: Itinerary[], shouldFit = true): void {
     this.initializePreviewMap();
     if (!this.previewMap || !this.previewLayer) return;
 
     this.previewLayer.clearLayers();
     const result = this.drawRoutePreview(itineraries, PREVIEW_COLORS[0]);
-    this.fitPreviewMap(result.bounds);
+    if (shouldFit) {
+      this.fitPreviewMap(result.bounds);
+    } else {
+      this.previewMap.invalidateSize(false);
+    }
 
     if (itineraries.length === 0) {
       this.previewMessage = 'This route has no itineraries yet.';
@@ -836,34 +729,6 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       this.previewMessage = 'Previewing straight lines for segments without walking routes.';
     } else {
       this.previewMessage = '';
-    }
-  }
-
-  private async renderSelectedRoutePreviewIfNeeded(shouldFit = true): Promise<void> {
-    if (this.selectedRouteIds.size === 0) return;
-    const selected = this.selectedRoutes();
-    if (selected.length === 0) {
-      this.selectedRouteIds.clear();
-      this.selectedPreviewFitLocked = false;
-      return;
-    }
-
-    const requestId = ++this.previewRequestId;
-    this.previewMessage = 'Loading selected route previews...';
-    try {
-      const routeItineraries = await Promise.all(
-        selected.map(route => firstValueFrom(this.api.listAllItineraries('', '', route.id)))
-      );
-      if (requestId !== this.previewRequestId) return;
-      this.renderPreviewRoutes(
-        routeItineraries.map(itineraries => this.sortedItineraries(itineraries)),
-        shouldFit,
-        'selected routes'
-      );
-    } catch (error) {
-      if (requestId !== this.previewRequestId) return;
-      this.previewMessage = `Could not load selected route previews. ${error instanceof Error ? error.message : 'Request failed.'}`;
-      this.previewLayer?.clearLayers();
     }
   }
 
@@ -882,7 +747,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       const routeItineraries = await Promise.all(
         routes.map(route => firstValueFrom(this.api.listAllItineraries('', '', route.id)))
       );
-      if (requestId !== this.previewRequestId || this.selectedRouteIds.size > 0 || this.previewRoute) return;
+      if (requestId !== this.previewRequestId || this.previewRoute) return;
       this.renderPreviewRoutes(
         routeItineraries.map(itineraries => this.sortedItineraries(itineraries)),
         true,
@@ -898,7 +763,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   private renderPreviewRoutes(
     routeItineraries: Itinerary[][],
     shouldFit = true,
-    scopeLabel = 'selected routes'
+    scopeLabel = 'routes'
   ): void {
     this.initializePreviewMap();
     if (!this.previewMap || !this.previewLayer) return;
@@ -987,23 +852,6 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     }
 
     return { bounds, routeGeometryCount, straightSegmentCount, hasPointCoordinates };
-  }
-
-  private selectedRoutes(): Route[] {
-    return this.currentRoutes.filter(route => this.selectedRouteIds.has(route.id));
-  }
-
-  private pruneSelectedRoutes(routes: Route[]): void {
-    const visibleIds = new Set(routes.map(route => route.id));
-    [...this.selectedRouteIds].forEach(id => {
-      if (!visibleIds.has(id)) this.selectedRouteIds.delete(id);
-    });
-    if (this.selectedRouteIds.size === 0) {
-      this.selectedPreviewFitLocked = false;
-      this.previewRoute = null;
-    } else {
-      this.previewRoute = this.selectedRouteIds.size === 1 ? this.selectedRoutes()[0] || null : null;
-    }
   }
 
   private sortedRoutes(routes: Route[]): Route[] {

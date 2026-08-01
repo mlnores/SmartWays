@@ -103,6 +103,56 @@ input {
   white-space: nowrap;
 }
 
+.toolbar-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  color: #475467;
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
+
+.toolbar-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-track {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: #cfd6e3;
+  transition: background-color 0.18s ease;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.24);
+  transition: transform 0.18s ease;
+}
+
+.toolbar-switch input:checked + .switch-track {
+  background: #1f6feb;
+}
+
+.toolbar-switch input:checked + .switch-track .switch-thumb {
+  transform: translateX(18px);
+}
+
+.toolbar-switch input:focus-visible + .switch-track {
+  outline: 3px solid rgba(31, 111, 235, 0.2);
+  outline-offset: 2px;
+}
+
 @keyframes toolbar-loading-spin {
   to {
     transform: rotate(360deg);
@@ -287,10 +337,18 @@ label span {
 
 .view-toggle {
   display: inline-flex;
+  align-items: center;
   padding: 3px;
   border: 1px solid #cfd6e3;
   border-radius: 10px;
   background: #ffffff;
+}
+
+.view-toggle .toggle-label {
+  padding: 0 8px;
+  color: #475467;
+  font-size: 0.9rem;
+  white-space: nowrap;
 }
 
 .view-toggle button {

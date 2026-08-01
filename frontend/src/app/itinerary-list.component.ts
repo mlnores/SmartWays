@@ -1,8 +1,8 @@
 import { AsyncPipe, DatePipe, NgTemplateOutlet } from '@angular/common';
-import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
+import { BehaviorSubject, catchError, combineLatest, debounceTime, finalize, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Itinerary, ItineraryRouteMembership, Route, Translation } from './api.service';
 import { MediaManagerDialogComponent } from './media-manager-dialog.component';
@@ -99,7 +99,7 @@ interface PreviewRenderOptions {
   markerClickFor?: (itinerary: Itinerary) => void;
 }
 
-interface MapBoundsFilter {
+interface ViewportBounds {
   south: number;
   west: number;
   north: number;
@@ -153,15 +153,24 @@ declare const L: any;
             <button type="button" [class.active]="viewMode === 'flat'" (click)="viewMode = 'flat'">Plain list</button>
             <button type="button" [class.active]="viewMode === 'grouped'" (click)="viewMode = 'grouped'">Grouped by route</button>
           </div>
-          <button type="button" class="secondary toolbar-action" (click)="filterToPreviewArea()">
-            <span aria-hidden="true">▣</span>
-            <span>Filter to map area</span>
-          </button>
-          @if (mapBoundsFilter) {
-            <button type="button" class="secondary filter-chip" title="Remove map area filter" aria-label="Remove map area filter" (click)="clearMapAreaFilter()">
-              <span>Map area filter</span>
-              <span aria-hidden="true">×</span>
-            </button>
+          <label class="toolbar-switch">
+            <span>Update list with map view</span>
+            <input
+              type="checkbox"
+              [ngModel]="listUpdatesWithMapView"
+              (ngModelChange)="setListUpdatesWithMapView($event)"
+            />
+            <span class="switch-track" aria-hidden="true">
+              <span class="switch-thumb"></span>
+            </span>
+          </label>
+          @if (loadingItineraries) {
+            <span class="toolbar-loading-indicator" role="status" aria-live="polite">
+              <span class="toolbar-loading-spinner" aria-hidden="true"></span>
+              <span>Downloading itinerary info</span>
+            </span>
+          } @else {
+            <span class="toolbar-result-count">Found {{ displayedItineraries.length }} itineraries</span>
           }
         } @else {
           <button type="button" class="secondary toolbar-action" [disabled]="!currentRouteIsDraft" (click)="openNewItineraryForCurrentRoute()">Create new itinerary</button>
@@ -181,10 +190,10 @@ declare const L: any;
           <div class="preview-layout itinerary-preview-layout">
             <div class="preview-list">
               @if (routeSlug || viewMode === 'flat') {
-                <ng-container *ngTemplateOutlet="itineraryTable; context: { items: state.items, routes: state.routes }"></ng-container>
+                <ng-container *ngTemplateOutlet="itineraryTable; context: { items: routeSlug ? state.items : displayedItineraries, routes: state.routes }"></ng-container>
               } @else {
                 <div class="route-group-list">
-              @for (group of groupsFor(state.items); track groupKey(group)) {
+              @for (group of groupsFor(displayedItineraries); track groupKey(group)) {
                 <section class="route-group">
                   <header class="route-group-header">
                     <button
@@ -203,16 +212,6 @@ declare const L: any;
                       <table class="resource-table">
                         <thead>
                           <tr>
-                            <th class="selection-column" aria-label="Select">
-                              <input
-                                type="checkbox"
-                                title="Select all itineraries in this group"
-                                aria-label="Select all itineraries in this group"
-                                [checked]="areAllItinerariesSelected(group.items)"
-                                [indeterminate]="areSomeItinerariesSelected(group.items)"
-                                (change)="setItinerariesSelected(group.items, $any($event.target).checked)"
-                            />
-                          </th>
                           <th>
                             <button type="button" class="sortable-header" (click)="toggleItinerarySort('title')">
                               <span>Itinerary</span>
@@ -238,19 +237,10 @@ declare const L: any;
                             <tr
                               [attr.id]="itineraryRowId(itinerary)"
                               [class.highlight-row]="highlightedItineraryId === itinerary.id"
-                              [class.preview-selected-row]="selectedItineraryIds.has(itinerary.id)"
-                              (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
+                              [class.preview-selected-row]="previewItinerary?.id === itinerary.id"
+                              (click)="toggleItineraryRowPreview(itinerary)"
                               (dblclick)="openItineraryFromDoubleClick(itinerary)"
                             >
-                              <td class="selection-column" (click)="$event.stopPropagation()">
-                                <input
-                                  type="checkbox"
-                                  title="Select itinerary for preview"
-                                  aria-label="Select itinerary for preview"
-                                  [checked]="selectedItineraryIds.has(itinerary.id)"
-                                  (change)="setItinerarySelected(itinerary, $any($event.target).checked)"
-                              />
-                            </td>
                             <td>
                               {{ itinerary.title || 'Untitled itinerary' }}
                               <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
@@ -268,7 +258,7 @@ declare const L: any;
                   }
                 </section>
               } @empty {
-                <p class="empty">No itineraries found.</p>
+                <p class="empty">{{ listUpdatesWithMapView && currentItineraries.length ? 'No itineraries visible in the current map view.' : 'No itineraries found.' }}</p>
               }
                 </div>
               }
@@ -283,33 +273,26 @@ declare const L: any;
                 <p class="muted preview-message">{{ previewMessage }}</p>
               }
               <div class="preview-actions" aria-label="Itinerary preview actions">
-                <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentItineraries()">
-                  <span class="preview-action-icon" aria-hidden="true">🎯</span>
-                  <span>Fit view to selection</span>
-                </button>
+                @if (routeSlug || !listUpdatesWithMapView) {
+                  <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentItineraries()">
+                    <span class="preview-action-icon" aria-hidden="true">🎯</span>
+                    <span>Fit view to list</span>
+                  </button>
+                }
 
-                @if (selectedItineraryIds.size > 0 && selectedItinerariesAreDraft()) {
-                  <button type="button" class="secondary preview-action" (click)="setSelectedItinerariesEnabled(true)">
-                    <span class="preview-action-icon" aria-hidden="true">🌐</span>
-                    <span>Make public</span>
-                  </button>
-                }
-                @if (selectedItineraryIds.size > 0 && selectedItinerariesArePublic()) {
-                  <button type="button" class="secondary preview-action" (click)="setSelectedItinerariesEnabled(false)">
-                    <span class="preview-action-icon" aria-hidden="true">✎</span>
-                    <span>Turn to draft</span>
-                  </button>
-                }
-                @if (selectedItineraryIds.size > 1 && selectedItinerariesAreDraft()) {
-                  <button type="button" class="secondary preview-action" (click)="openRouteInclusionDialog()">
-                    <span class="preview-action-icon" aria-hidden="true">🔗</span>
-                    <span>Manage route inclusions</span>
-                  </button>
-                  <button type="button" class="secondary preview-action danger-action" (click)="deleteSelectedItineraries()">
-                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                    <span>Delete selected itineraries</span>
-                  </button>
-                } @else if (previewItinerary) {
+                @if (previewItinerary) {
+                  @if (!previewItinerary.enabled) {
+                    <button type="button" class="secondary preview-action" (click)="setItineraryEnabled(previewItinerary, true)">
+                      <span class="preview-action-icon" aria-hidden="true">🌐</span>
+                      <span>Make public</span>
+                    </button>
+                  }
+                  @if (previewItinerary.enabled) {
+                    <button type="button" class="secondary preview-action" (click)="setItineraryEnabled(previewItinerary, false)">
+                      <span class="preview-action-icon" aria-hidden="true">✎</span>
+                      <span>Turn to draft</span>
+                    </button>
+                  }
                   @if (!previewItinerary.enabled) {
                     <button type="button" class="secondary preview-action" (click)="openSelectedItineraryMediaDialog(previewItinerary)">
                       <span class="preview-action-icon" aria-hidden="true">🖼️</span>
@@ -350,16 +333,6 @@ declare const L: any;
           <table class="resource-table">
             <thead>
               <tr>
-                <th class="selection-column" aria-label="Select">
-                  <input
-                    type="checkbox"
-                    title="Select all itineraries"
-                    aria-label="Select all itineraries"
-                    [checked]="areAllItinerariesSelected(items)"
-                    [indeterminate]="areSomeItinerariesSelected(items)"
-                    (change)="setItinerariesSelected(items, $any($event.target).checked)"
-                  />
-                </th>
                 <th>
                   <button type="button" class="sortable-header" (click)="toggleItinerarySort('title')">
                     <span>Itinerary</span>
@@ -388,27 +361,16 @@ declare const L: any;
                 <tr
                   [attr.id]="itineraryRowId(itinerary)"
                   [class.highlight-row]="highlightedItineraryId === itinerary.id"
-                  [class.preview-selected-row]="selectedItineraryIds.has(itinerary.id)"
+                  [class.preview-selected-row]="previewItinerary?.id === itinerary.id"
                   [class.dragging-row]="draggedItineraryId === itinerary.id"
                   [attr.draggable]="routeSlug && currentRouteIsDraft ? true : null"
-                  (click)="setItinerarySelected(itinerary, !selectedItineraryIds.has(itinerary.id))"
+                  (click)="toggleItineraryRowPreview(itinerary)"
                   (dblclick)="openItineraryFromDoubleClick(itinerary)"
                   (dragstart)="startStageDrag(itinerary)"
                   (dragover)="allowStageDrop($event)"
                   (drop)="dropStage(itinerary, items)"
                   (dragend)="endStageDrag()"
                 >
-                  <td class="selection-column" (click)="$event.stopPropagation()">
-                    <div class="route-stage-controls">
-                      <input
-                        type="checkbox"
-                        title="Select itinerary for preview"
-                        aria-label="Select itinerary for preview"
-                        [checked]="selectedItineraryIds.has(itinerary.id)"
-                        (change)="setItinerarySelected(itinerary, $any($event.target).checked)"
-                      />
-                    </div>
-                  </td>
                   <td>
                     {{ itinerary.title || 'Untitled itinerary' }}
                     <p class="description-preview">{{ itinerary.description || 'No description' }}</p>
@@ -442,7 +404,7 @@ declare const L: any;
                 </tr>
               } @empty {
                 <tr>
-                  <td [attr.colspan]="routeSlug ? 6 : 7">No itineraries found.</td>
+                  <td [attr.colspan]="routeSlug ? 3 : 4">{{ !routeSlug && listUpdatesWithMapView && currentItineraries.length ? 'No itineraries visible in the current map view.' : 'No itineraries found.' }}</td>
                 </tr>
               }
             </tbody>
@@ -685,7 +647,7 @@ declare const L: any;
                   <span class="inclusion-row-text">
                     <strong>{{ route.title || 'Route ' + route.id }}</strong>
                     <span class="muted">
-                      {{ route.enabled ? 'Public route' : routeInclusionCount(route.id) + ' of ' + routeInclusionTargets().length + ' selected ' + (routeInclusionTargets().length === 1 ? 'itinerary' : 'itineraries') }}
+                      {{ route.enabled ? 'Public route' : routeInclusionCount(route.id) + ' of ' + routeInclusionTargets().length + ' target ' + (routeInclusionTargets().length === 1 ? 'itinerary' : 'itineraries') }}
                     </span>
                   </span>
                 </label>
@@ -802,9 +764,9 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly changeDetector = inject(ChangeDetectorRef);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
-  readonly mapFilter$ = new BehaviorSubject(0);
   query = '';
   routeSlug: string | null = null;
   routeTitle: string | null = null;
@@ -823,6 +785,10 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   pendingHighlightItineraryId: number | null = null;
   pendingScrollItineraryId: number | null = null;
   currentItineraries: Itinerary[] = [];
+  displayedItineraries: Itinerary[] = [];
+  itineraryTotalCount = 0;
+  loadingItineraries = false;
+  listUpdatesWithMapView = true;
   editingItinerary: Itinerary | null = null;
   translationDrafts: TranslationDraft[] = [];
   activeTranslationIndex = 0;
@@ -849,22 +815,21 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   itinerarySortDirection: SortDirection = 'asc';
   previewItinerary: Itinerary | null = null;
   previewMessage = 'Click an itinerary to preview it.';
-  mapBoundsFilter: MapBoundsFilter | null = null;
   private previewMap: any = null;
   private previewLayer: any = null;
-  private previewFilterLayer: any = null;
   private previewResizeObserver: ResizeObserver | null = null;
   private previewFitRequestId = 0;
+  private displayedItinerariesUpdateRequestId = 0;
   private selectedPreviewFitLocked = false;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
     this.refresh$,
-    this.mapFilter$,
     this.activatedRoute.paramMap.pipe(map(params => params.get('slug'))),
     this.activatedRoute.queryParamMap.pipe(map(params => Number(params.get('highlight')) || null))
   ]).pipe(
-    switchMap(([query, , , routeSlug, highlightedItineraryId]) => {
+    switchMap(([query, , routeSlug, highlightedItineraryId]) => {
+      this.loadingItineraries = true;
       this.routeSlug = routeSlug;
       return combineLatest([
         this.api.listAllRoutes(''),
@@ -877,6 +842,9 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
           this.routeTitle = selectedRoute?.title || null;
           this.currentRouteIsDraft = selectedRoute ? !selectedRoute.enabled : false;
           if (routeSlug && !selectedRoute) {
+            this.currentItineraries = [];
+            this.displayedItineraries = [];
+            this.itineraryTotalCount = 0;
             return of({
               items: [] as Itinerary[],
               routes,
@@ -888,15 +856,25 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
           return this.api.listAllItineraries(query, '', selectedRoute?.id).pipe(
             map(itineraries => {
               const sortedItems = this.sortedItineraries(itineraries);
-              const items = this.routeSlug ? sortedItems : this.applyMapBoundsFilter(sortedItems);
+              const items = sortedItems;
               this.currentItineraries = items;
+              this.displayedItineraries = this.displayedItinerariesForCurrentMode(items);
+              this.itineraryTotalCount = items.length;
               this.pruneSelectedItineraries(items);
+              if (this.selectedItineraryIds.size > 1) {
+                const firstSelectedId = this.selectedItineraryIds.values().next().value as number | undefined;
+                this.selectedItineraryIds.clear();
+                if (firstSelectedId) {
+                  this.selectedItineraryIds.add(firstSelectedId);
+                }
+                this.selectedPreviewFitLocked = false;
+              }
               if (this.selectedItineraryIds.size > 0) {
                 this.renderSelectedItineraryPreviewIfNeeded(!this.selectedPreviewFitLocked);
               } else if (this.routeSlug) {
                 this.renderRouteItinerarySelectionPreview(true);
               } else {
-                this.renderVisibleItinerariesPreview(items);
+                this.renderVisibleItinerariesPreview(this.displayedItineraries, true);
               }
               return {
                 items,
@@ -913,13 +891,21 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
             })
           );
         }),
-        catchError(error => of({
-          items: [] as Itinerary[],
-          routes: [] as Route[],
-          groups: [] as ItineraryGroup[],
-          count: 0,
-          error: `Could not load itineraries. ${error.message}`
-        }))
+        catchError(error => {
+          this.currentItineraries = [];
+          this.displayedItineraries = [];
+          this.itineraryTotalCount = 0;
+          return of({
+            items: [] as Itinerary[],
+            routes: [] as Route[],
+            groups: [] as ItineraryGroup[],
+            count: 0,
+            error: `Could not load itineraries. ${error.message}`
+          });
+        }),
+        finalize(() => {
+          this.loadingItineraries = false;
+        })
       );
     }),
     startWith({ items: [] as Itinerary[], routes: [] as Route[], groups: [] as ItineraryGroup[], count: 0, error: '' })
@@ -939,21 +925,20 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   selectPreviewItinerary(itinerary: Itinerary): void {
-    if (this.routeSlug) {
-      this.selectedItineraryIds.clear();
-      this.selectedItineraryIds.add(itinerary.id);
-      this.selectedPreviewFitLocked = false;
-      this.previewItinerary = itinerary;
-      this.renderRouteItinerarySelectionPreview(true);
+    this.selectedItineraryIds.clear();
+    this.selectedItineraryIds.add(itinerary.id);
+    this.selectedPreviewFitLocked = false;
+    this.previewItinerary = itinerary;
+    this.renderSelectedItineraryPreviewIfNeeded(true);
+  }
+
+  toggleItineraryRowPreview(itinerary: Itinerary): void {
+    this.freezeListUpdatesWithCurrentList();
+    if (this.previewItinerary?.id === itinerary.id) {
+      this.clearItineraryPreview(true);
       return;
     }
-
-    this.previewItinerary = itinerary;
-    if (this.selectedItineraryIds.size > 0) {
-      this.selectedItineraryIds.clear();
-      this.selectedPreviewFitLocked = false;
-    }
-    this.renderPreviewItinerary();
+    this.selectPreviewItinerary(itinerary);
   }
 
   openRouteMediaDialog(): void {
@@ -988,71 +973,55 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     this.refresh$.next(this.refresh$.value + 1);
   }
 
-  setItinerarySelected(itinerary: Itinerary, selected: boolean): void {
-    if (selected) {
-      this.selectedItineraryIds.add(itinerary.id);
-    } else {
-      this.selectedItineraryIds.delete(itinerary.id);
-    }
-    this.previewItinerary = this.selectedItineraryIds.size === 1 ? this.selectedItineraries()[0] || null : null;
-    if (this.selectedItineraryIds.size > 0) {
-      const shouldFit = !this.selectedPreviewFitLocked;
-      if (this.selectedItineraryIds.size >= 2) {
-        this.selectedPreviewFitLocked = true;
-      }
-      this.renderSelectedItineraryPreviewIfNeeded(shouldFit);
-    } else {
-      this.selectedPreviewFitLocked = false;
-      this.previewItinerary = null;
-      if (this.routeSlug) {
-        this.renderRouteItinerarySelectionPreview(true);
+  setListUpdatesWithMapView(enabled: boolean): void {
+    if (this.listUpdatesWithMapView === enabled) return;
+    this.listUpdatesWithMapView = enabled;
+    if (!this.routeSlug) {
+      if (enabled) {
+        this.selectedItineraryIds.clear();
+        this.selectedPreviewFitLocked = false;
+        this.previewItinerary = null;
+        this.displayedItineraries = this.visibleItinerariesForCurrentMap(this.currentItineraries);
+        this.pruneSelectedItineraries(this.displayedItineraries);
+        this.renderVisibleItinerariesPreview(this.displayedItineraries, true);
+        this.changeDetector.detectChanges();
       } else {
-        this.renderVisibleItinerariesPreview(this.currentItineraries);
+        this.changeDetector.detectChanges();
       }
     }
   }
 
-  setItinerariesSelected(itineraries: Itinerary[], selected: boolean): void {
-    itineraries.forEach(itinerary => {
-      if (selected) {
-        this.selectedItineraryIds.add(itinerary.id);
-      } else {
-        this.selectedItineraryIds.delete(itinerary.id);
-      }
-    });
+  private freezeListUpdatesWithCurrentList(): void {
+    if (this.routeSlug || !this.listUpdatesWithMapView) return;
+    this.listUpdatesWithMapView = false;
+    this.changeDetector.detectChanges();
+  }
 
-    this.previewItinerary = this.selectedItineraryIds.size === 1 ? this.selectedItineraries()[0] || null : null;
-
-    if (this.selectedItineraryIds.size > 0) {
-      if (this.selectedItineraryIds.size >= 2) {
-        this.selectedPreviewFitLocked = true;
-      }
-      this.renderSelectedItineraryPreviewIfNeeded(true);
+  clearItineraryPreview(shouldFit = true): void {
+    this.selectedItineraryIds.clear();
+    this.selectedPreviewFitLocked = false;
+    this.previewItinerary = null;
+    if (this.routeSlug) {
+      this.renderRouteItinerarySelectionPreview(shouldFit);
     } else {
-      this.selectedPreviewFitLocked = false;
-      this.previewItinerary = null;
-      if (this.routeSlug) {
-        this.renderRouteItinerarySelectionPreview(true);
-      } else {
-        this.renderVisibleItinerariesPreview(this.currentItineraries);
-      }
+      this.renderVisibleItinerariesPreview(this.displayedItineraries);
     }
   }
 
   previewLabel(): string {
-    const selected = this.selectedItineraries();
-    if (selected.length > 1) return `${selected.length} selected itineraries`;
-    if (selected.length === 1) return selected[0].title || 'Untitled itinerary';
+    if (this.previewItinerary) return this.previewItinerary.title || 'Untitled itinerary';
     return 'All itineraries';
   }
 
   fitPreviewToCurrentItineraries(): void {
-    if (this.selectedItineraryIds.size > 0) {
+    if (!this.routeSlug && !this.listUpdatesWithMapView) {
+      this.clearItineraryPreview(true);
+    } else if (this.previewItinerary) {
       this.renderSelectedItineraryPreviewIfNeeded(true);
     } else if (this.routeSlug) {
       this.renderRouteItinerarySelectionPreview(true);
     } else {
-      this.renderVisibleItinerariesPreview(this.currentItineraries);
+      this.renderVisibleItinerariesPreview(this.displayedItineraries);
     }
   }
 
@@ -1072,7 +1041,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   selectItineraryFromPreviewMarker(itinerary: Itinerary): void {
-    this.setItinerarySelected(itinerary, true);
+    this.selectPreviewItinerary(itinerary);
     this.highlightedItineraryId = itinerary.id;
     window.setTimeout(() => {
       document.getElementById(this.itineraryRowId(itinerary))?.scrollIntoView({
@@ -1112,49 +1081,6 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     void this.router.navigate(['/route', membership.route_slug || membership.route], {
       queryParams: { highlight: itinerary.id }
     });
-  }
-
-  filterToPreviewArea(): void {
-    if (!this.previewMap) return;
-    const bounds = this.previewMap.getBounds();
-    this.mapBoundsFilter = {
-      south: bounds.getSouth(),
-      west: bounds.getWest(),
-      north: bounds.getNorth(),
-      east: bounds.getEast()
-    };
-    this.selectedItineraryIds.clear();
-    this.selectedPreviewFitLocked = false;
-    this.previewItinerary = null;
-    this.mapFilter$.next(this.mapFilter$.value + 1);
-    this.drawMapBoundsFilter();
-  }
-
-  clearMapAreaFilter(): void {
-    this.mapBoundsFilter = null;
-    this.previewFilterLayer?.clearLayers();
-    this.selectedItineraryIds.clear();
-    this.selectedPreviewFitLocked = false;
-    this.previewItinerary = null;
-    this.mapFilter$.next(this.mapFilter$.value + 1);
-  }
-
-  areAllItinerariesSelected(itineraries: Itinerary[]): boolean {
-    return itineraries.length > 0 && itineraries.every(itinerary => this.selectedItineraryIds.has(itinerary.id));
-  }
-
-  areSomeItinerariesSelected(itineraries: Itinerary[]): boolean {
-    return itineraries.some(itinerary => this.selectedItineraryIds.has(itinerary.id)) && !this.areAllItinerariesSelected(itineraries);
-  }
-
-  selectedItinerariesAreDraft(): boolean {
-    const selected = this.selectedItineraries();
-    return selected.length > 0 && selected.every(itinerary => !itinerary.enabled);
-  }
-
-  selectedItinerariesArePublic(): boolean {
-    const selected = this.selectedItineraries();
-    return selected.length > 0 && selected.every(itinerary => itinerary.enabled);
   }
 
   openNewItineraryDialog(): void {
@@ -1381,20 +1307,6 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  async setSelectedItinerariesEnabled(enabled: boolean): Promise<void> {
-    const selected = this.selectedItineraries();
-    if (selected.length === 0) return;
-    if (!this.confirmItineraryDraftChange(selected, enabled)) return;
-
-    try {
-      await Promise.all(selected.map(itinerary => firstValueFrom(this.api.updateItinerary(itinerary.id, { enabled }))));
-      this.clearStatus();
-      this.refresh$.next(this.refresh$.value + 1);
-    } catch (error) {
-      this.showStatus(`Could not update selected itineraries. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
-    }
-  }
-
   async deleteItinerary(itinerary: Itinerary): Promise<void> {
     if (itinerary.enabled) {
       this.showStatus('Public itineraries cannot be deleted.', true);
@@ -1411,30 +1323,6 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
       this.showStatus(`Could not delete itinerary. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
-    }
-  }
-
-  async deleteSelectedItineraries(): Promise<void> {
-    const selected = this.selectedItineraries();
-    if (selected.length < 2) return;
-    if (selected.some(itinerary => itinerary.enabled)) {
-      this.showStatus('Only draft itineraries can be deleted.', true);
-      return;
-    }
-    const confirmed = window.confirm(
-      `Delete ${selected.length} selected itineraries? POIs referenced by these itineraries will not be deleted.`
-    );
-    if (!confirmed) return;
-
-    try {
-      await Promise.all(selected.map(itinerary => firstValueFrom(this.api.deleteItinerary(itinerary.id))));
-      this.selectedItineraryIds.clear();
-      this.selectedPreviewFitLocked = false;
-      this.previewItinerary = null;
-      this.clearStatus();
-      this.refresh$.next(this.refresh$.value + 1);
-    } catch (error) {
-      this.showStatus(`Could not delete selected itineraries. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
@@ -1782,7 +1670,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       maxZoom: 19
     }).addTo(this.previewMap);
     this.previewLayer = L.layerGroup().addTo(this.previewMap);
-    this.previewFilterLayer = L.layerGroup().addTo(this.previewMap);
+    this.previewMap.on('moveend zoomend', () => this.updateDisplayedItinerariesFromPreviewMap());
     this.previewResizeObserver = new ResizeObserver(() => {
       this.previewMap?.invalidateSize();
     });
@@ -1795,7 +1683,6 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     if (!this.previewMap || !this.previewLayer || !this.previewItinerary) return;
 
     this.previewLayer.clearLayers();
-    this.drawMapBoundsFilter();
     const result = this.drawItineraryPreview(this.previewItinerary, PREVIEW_COLORS[0]);
     this.fitPreviewMap(result.bounds);
 
@@ -1827,21 +1714,23 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       return;
     }
     this.previewItinerary = selected.length === 1 ? selected[0] : null;
-    this.renderPreviewItineraries(selected, shouldFit, 'selected itineraries', undefined, {
+    this.renderPreviewItineraries(selected, shouldFit, 'selected itinerary', undefined, {
       showMarkers: Boolean(this.routeSlug),
       markerClickFor: this.routeSlug ? itinerary => this.selectItineraryFromPreviewMarker(itinerary) : undefined
     });
   }
 
-  private renderVisibleItinerariesPreview(itineraries: Itinerary[]): void {
+  private renderVisibleItinerariesPreview(itineraries: Itinerary[], shouldFit = true): void {
     this.previewItinerary = null;
     if (itineraries.length === 0) {
       this.previewLayer?.clearLayers();
       this.previewMessage = 'No itineraries found.';
-      this.fitPreviewMapToWorld();
+      if (shouldFit) {
+        this.fitPreviewMapToWorld();
+      }
       return;
     }
-    this.renderPreviewItineraries(itineraries, true, 'visible itineraries');
+    this.renderPreviewItineraries(itineraries, shouldFit, 'visible itineraries');
   }
 
   private renderRouteItinerarySelectionPreview(shouldFit = true): void {
@@ -1867,7 +1756,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   private renderPreviewItineraries(
     itineraries: Itinerary[],
     shouldFit = true,
-    scopeLabel = 'selected itineraries',
+    scopeLabel = 'selected itinerary',
     lineStyleFor?: (itinerary: Itinerary, index: number) => PreviewLineStyle,
     options: PreviewRenderOptions = {}
   ): void {
@@ -1875,7 +1764,6 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     if (!this.previewMap || !this.previewLayer) return;
 
     this.previewLayer.clearLayers();
-    this.drawMapBoundsFilter();
     const bounds = L.latLngBounds([]);
     const fitBounds = L.latLngBounds([]);
     let routeGeometryCount = 0;
@@ -1979,28 +1867,6 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     return { bounds, routeGeometryCount, straightSegmentCount, hasPointCoordinates };
   }
 
-  private drawMapBoundsFilter(): void {
-    if (!this.previewFilterLayer) return;
-    this.previewFilterLayer.clearLayers();
-    if (!this.mapBoundsFilter) return;
-    L.rectangle(
-      [
-        [this.mapBoundsFilter.south, this.mapBoundsFilter.west],
-        [this.mapBoundsFilter.north, this.mapBoundsFilter.east]
-      ],
-      {
-        color: '#1f6feb',
-        weight: 2,
-        opacity: 0.9,
-        dashArray: '3 6',
-        fill: true,
-        fillColor: '#93c5fd',
-        fillOpacity: 0.22,
-        interactive: false
-      }
-    ).addTo(this.previewFilterLayer);
-  }
-
   private previewMarkerIcon(markerNumber: number): any {
     return L.divIcon({
       className: 'preview-marker',
@@ -2090,13 +1956,48 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     return this.currentItineraries.filter(itinerary => this.selectedItineraryIds.has(itinerary.id));
   }
 
-  private applyMapBoundsFilter(itineraries: Itinerary[]): Itinerary[] {
-    const bounds = this.mapBoundsFilter;
+  private scheduleDisplayedItinerariesUpdate(): void {
+    const requestId = ++this.displayedItinerariesUpdateRequestId;
+    window.requestAnimationFrame(() => {
+      if (requestId !== this.displayedItinerariesUpdateRequestId) return;
+      this.updateDisplayedItinerariesFromPreviewMap();
+    });
+  }
+
+  private updateDisplayedItinerariesFromPreviewMap(): void {
+    if (this.routeSlug || !this.listUpdatesWithMapView) return;
+    this.displayedItineraries = this.visibleItinerariesForCurrentMap(this.currentItineraries);
+    this.pruneSelectedItineraries(this.displayedItineraries);
+    if (!this.previewItinerary) {
+      this.renderVisibleItinerariesPreview(this.displayedItineraries, false);
+    }
+    this.changeDetector.detectChanges();
+  }
+
+  private displayedItinerariesForCurrentMode(itineraries: Itinerary[]): Itinerary[] {
+    if (this.routeSlug || !this.listUpdatesWithMapView) return itineraries;
+    return this.visibleItinerariesForCurrentMap(itineraries);
+  }
+
+  private visibleItinerariesForCurrentMap(itineraries: Itinerary[]): Itinerary[] {
+    const bounds = this.currentPreviewBounds();
     if (!bounds) return itineraries;
     return itineraries.filter(itinerary => this.itineraryIntersectsBounds(itinerary, bounds));
   }
 
-  private itineraryIntersectsBounds(itinerary: Itinerary, bounds: MapBoundsFilter): boolean {
+  private currentPreviewBounds(): ViewportBounds | null {
+    if (!this.previewMap) return null;
+    const bounds = this.previewMap.getBounds();
+    if (!bounds?.isValid?.()) return null;
+    return {
+      south: bounds.getSouth(),
+      west: bounds.getWest(),
+      north: bounds.getNorth(),
+      east: bounds.getEast()
+    };
+  }
+
+  private itineraryIntersectsBounds(itinerary: Itinerary, bounds: ViewportBounds): boolean {
     const coordinates = this.itineraryCoordinates(itinerary);
     if (coordinates.length === 0) return false;
     if (coordinates.some(coordinate => this.coordinateInsideBounds(coordinate, bounds))) return true;
@@ -2144,7 +2045,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     value.forEach(child => this.collectCoordinatePairs(child, coordinates));
   }
 
-  private coordinateInsideBounds(coordinate: { lat: number; lng: number }, bounds: MapBoundsFilter): boolean {
+  private coordinateInsideBounds(coordinate: { lat: number; lng: number }, bounds: ViewportBounds): boolean {
     return (
       coordinate.lat >= bounds.south &&
       coordinate.lat <= bounds.north &&
@@ -2156,7 +2057,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   private segmentBoundsOverlap(
     start: { lat: number; lng: number },
     end: { lat: number; lng: number },
-    bounds: MapBoundsFilter
+    bounds: ViewportBounds
   ): boolean {
     const south = Math.min(start.lat, end.lat);
     const north = Math.max(start.lat, end.lat);
@@ -2204,6 +2105,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       window.requestAnimationFrame(() => {
         if (requestId === this.previewFitRequestId) {
           this.previewMap?.invalidateSize(false);
+          this.scheduleDisplayedItinerariesUpdate();
         }
       });
     });
@@ -2218,6 +2120,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       window.requestAnimationFrame(() => {
         if (requestId === this.previewFitRequestId) {
           this.previewMap?.invalidateSize(false);
+          this.scheduleDisplayedItinerariesUpdate();
         }
       });
     });
@@ -2374,7 +2277,9 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
         }))
       ));
       this.selectedItineraryIds.clear();
-      insertedIds.forEach(id => this.selectedItineraryIds.add(id));
+      if (insertedIds[0]) {
+        this.selectedItineraryIds.add(insertedIds[0]);
+      }
       this.selectedPreviewFitLocked = false;
       this.previewItinerary = null;
       this.pendingScrollItineraryId = insertedIds[0] || null;
