@@ -925,6 +925,9 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   selectPreviewItinerary(itinerary: Itinerary): void {
+    if (this.highlightedItineraryId !== itinerary.id) {
+      this.highlightedItineraryId = null;
+    }
     this.selectedItineraryIds.clear();
     this.selectedItineraryIds.add(itinerary.id);
     this.selectedPreviewFitLocked = false;
@@ -998,6 +1001,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   clearItineraryPreview(shouldFit = true): void {
+    this.highlightedItineraryId = null;
     this.selectedItineraryIds.clear();
     this.selectedPreviewFitLocked = false;
     this.previewItinerary = null;
