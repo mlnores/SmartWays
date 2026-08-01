@@ -115,6 +115,34 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
 
+    def test_poi_map_returns_individual_pois_for_small_result_sets(self):
+        response = self.client.get(reverse("poi-map"), {"bbox": "-9,42,-8,43"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["mode"], "pois")
+        self.assertEqual(response.data["results"][0]["type"], "poi")
+        self.assertEqual(response.data["results"][0]["poi"]["title"], "Castle")
+
+    def test_poi_map_returns_clusters_when_result_set_exceeds_limit(self):
+        POI.objects.create(
+            enabled=True,
+            country_code="ES",
+            location=Point(-8.6000, 42.1000, srid=4326),
+        )
+
+        response = self.client.get(reverse("poi-map"), {
+            "bbox": "-9,42,-8,43",
+            "individual_limit": "1",
+            "cluster_limit": "4",
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(response.data["mode"], "clusters")
+        self.assertEqual(response.data["results"][0]["type"], "cluster")
+        self.assertGreaterEqual(response.data["results"][0]["count"], 1)
+
     def test_poi_list_filters_by_country(self):
         response = self.client.get(reverse("poi-list"), {"country": "es"})
 

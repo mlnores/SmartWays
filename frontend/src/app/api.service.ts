@@ -169,6 +169,27 @@ export interface Poi {
   itinerary_inclusions: PoiItineraryInclusion[];
 }
 
+export interface PoiMapPoiResult {
+  type: 'poi';
+  poi: Poi;
+}
+
+export interface PoiMapClusterResult {
+  type: 'cluster';
+  count: number;
+  lat: number;
+  lng: number;
+  poi_ids: number[];
+}
+
+export type PoiMapResult = PoiMapPoiResult | PoiMapClusterResult;
+
+export interface PoiMapResponse {
+  count: number;
+  mode: 'pois' | 'clusters';
+  results: PoiMapResult[];
+}
+
 export interface PoiItineraryInclusion {
   itinerary: number;
   itinerary_title: string | null;
@@ -383,6 +404,41 @@ export class ApiService {
     bbox?: string
   ): Observable<Poi[]> {
     return this.collectPages(this.listPois(query, language, enabled, category, country, ids, bbox));
+  }
+
+  mapPois(
+    query = '',
+    language = '',
+    enabled?: boolean,
+    category?: number | string,
+    country?: string,
+    bbox?: string,
+    zoom?: number
+  ): Observable<PoiMapResponse> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
+    if (enabled !== undefined) {
+      params = params.set('enabled', String(enabled));
+    }
+    if (category !== undefined && category !== null && String(category).trim()) {
+      params = params.set('category', String(category).trim());
+    }
+    const countryFilter = (country || '').trim();
+    if (countryFilter) {
+      params = params.set('country', countryFilter.toUpperCase());
+    }
+    if (bbox) {
+      params = params.set('bbox', bbox);
+    }
+    if (zoom !== undefined) {
+      params = params.set('zoom', String(Math.round(zoom)));
+    }
+    if (query.trim()) {
+      params = params.set('q', query.trim());
+    }
+    return this.http.get<PoiMapResponse>(`${API_BASE_URL}/pois/map/`, { params });
   }
 
   findBufferPois(buffer: unknown, segmentIndex: number, limit = 200, language = ''): Observable<{ results: BufferPoiLookupResult[] }> {

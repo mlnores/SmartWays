@@ -1,4 +1,5 @@
 import json
+import math
 from functools import lru_cache
 from pathlib import Path
 
@@ -281,6 +282,20 @@ def parse_bbox(value):
     return Polygon.from_bbox((min_lon, min_lat, max_lon, max_lat))
 
 
+def parse_bbox_values(value):
+    try:
+        min_lon, min_lat, max_lon, max_lat = [float(part) for part in value.split(",")]
+    except (AttributeError, ValueError):
+        raise ValidationError({"bbox": "Use bbox=min_lon,min_lat,max_lon,max_lat."})
+    if min_lon >= max_lon or min_lat >= max_lat:
+        raise ValidationError({"bbox": "Minimum coordinates must be lower than maximum coordinates."})
+    if not (-180 <= min_lon <= 180 and -180 <= max_lon <= 180):
+        raise ValidationError({"bbox": "Longitude values must be between -180 and 180."})
+    if not (-90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+        raise ValidationError({"bbox": "Latitude values must be between -90 and 90."})
+    return min_lon, min_lat, max_lon, max_lat
+
+
 def category_display_name(category, language_code):
     translation = select_translation(category.translations.all(), language_code)
     return translation.name if translation else category.slug
@@ -438,6 +453,8 @@ class DraftParentOnlyMutationMixin(DraftOnlyMutationMixin):
 class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
     draft_label = "POI"
     serializer_class = POISerializer
+    map_individual_limit = 250
+    map_cluster_limit = 80
 
     def update(self, request, *args, **kwargs):
         if is_turn_to_draft_request(request.data):
@@ -515,6 +532,91 @@ class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelVie
             .distinct()
         )
         return Response({"results": list(country_codes)})
+
+    @action(detail=False, methods=["get"])
+    def map(self, request):
+        bbox_value = request.query_params.get("bbox") or "-180,-90,180,90"
+        min_lon, min_lat, max_lon, max_lat = parse_bbox_values(bbox_value)
+        queryset = self.get_queryset().filter(location__within=Polygon.from_bbox((min_lon, min_lat, max_lon, max_lat)))
+        total_count = queryset.count()
+        individual_limit = self._positive_int_query_param("individual_limit", self.map_individual_limit, 1, 1000)
+        cluster_limit = self._positive_int_query_param("cluster_limit", self.map_cluster_limit, 4, 400)
+        zoom = self._positive_int_query_param("zoom", 0, 0, 24)
+
+        if total_count <= individual_limit or zoom >= 14:
+            pois = queryset.order_by("id")[:individual_limit]
+            serializer = self.get_serializer(pois, many=True)
+            return Response({
+                "count": total_count,
+                "mode": "pois",
+                "results": [
+                    {
+                        "type": "poi",
+                        "poi": poi,
+                    }
+                    for poi in serializer.data
+                ],
+            })
+
+        clusters = self._cluster_pois_for_bbox(queryset, (min_lon, min_lat, max_lon, max_lat), cluster_limit)
+        return Response({
+            "count": total_count,
+            "mode": "clusters",
+            "results": clusters,
+        })
+
+    def _positive_int_query_param(self, name, default, minimum, maximum):
+        value = self.request.query_params.get(name)
+        if value in {None, ""}:
+            return default
+        try:
+            parsed = int(value)
+        except ValueError:
+            raise ValidationError({name: f"Use an integer between {minimum} and {maximum}."})
+        if parsed < minimum or parsed > maximum:
+            raise ValidationError({name: f"Use an integer between {minimum} and {maximum}."})
+        return parsed
+
+    def _cluster_pois_for_bbox(self, queryset, bbox, cluster_limit):
+        min_lon, min_lat, max_lon, max_lat = bbox
+        columns = max(1, math.ceil(math.sqrt(cluster_limit)))
+        rows = max(1, math.ceil(cluster_limit / columns))
+        lon_span = max_lon - min_lon
+        lat_span = max_lat - min_lat
+        cells = {}
+
+        for poi_id, location in queryset.order_by("id").values_list("id", "location"):
+            if location is None:
+                continue
+            longitude = location.x
+            latitude = location.y
+            column = min(columns - 1, max(0, int((longitude - min_lon) / lon_span * columns))) if lon_span else 0
+            row = min(rows - 1, max(0, int((latitude - min_lat) / lat_span * rows))) if lat_span else 0
+            key = (column, row)
+            cell = cells.setdefault(key, {
+                "type": "cluster",
+                "count": 0,
+                "lat_sum": 0.0,
+                "lng_sum": 0.0,
+                "poi_ids": [],
+            })
+            cell["count"] += 1
+            cell["lat_sum"] += latitude
+            cell["lng_sum"] += longitude
+            if len(cell["poi_ids"]) < 10:
+                cell["poi_ids"].append(poi_id)
+
+        clusters = []
+        for cell in cells.values():
+            count = cell["count"]
+            clusters.append({
+                "type": "cluster",
+                "count": count,
+                "lat": cell["lat_sum"] / count,
+                "lng": cell["lng_sum"] / count,
+                "poi_ids": cell["poi_ids"],
+            })
+        return sorted(clusters, key=lambda cluster: (-cluster["count"], cluster["lat"], cluster["lng"]))
 
     @action(detail=False, methods=["get"], url_path="country-bounds")
     def country_bounds(self, request):
