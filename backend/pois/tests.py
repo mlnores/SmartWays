@@ -446,6 +446,50 @@ class POIAPITests(APITestCase):
         self.poi.refresh_from_db()
         self.assertEqual(self.poi.website, "https://example.com/poi")
 
+    def test_deleting_draft_poi_removes_itinerary_references_and_keeps_waypoint(self):
+        self.poi.enabled = False
+        self.poi.save(update_fields=["enabled"])
+        itinerary = Itinerary.objects.create(
+            itinerary_json={
+                "poiIds": [self.poi.id, str(self.poi.id), 999],
+                "points": [
+                    {
+                        "type": "poi",
+                        "id": str(self.poi.id),
+                        "name": "Castle stop",
+                        "lat": 42.25,
+                        "lng": -8.71,
+                        "coordinates": {"lat": 42.25, "lng": -8.71},
+                    },
+                    {
+                        "type": "poi",
+                        "poiId": self.poi.id,
+                    },
+                    {
+                        "type": "waypoint",
+                        "id": "existing-waypoint",
+                        "coordinates": {"lat": 42.0, "lng": -8.0},
+                    },
+                ],
+                "segments": [],
+            },
+        )
+
+        response = self.client.delete(reverse("poi-detail", args=[self.poi.id]))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(POI.objects.filter(id=self.poi.id).exists())
+        itinerary.refresh_from_db()
+        self.assertEqual(itinerary.itinerary_json["poiIds"], [999])
+        first_point = itinerary.itinerary_json["points"][0]
+        self.assertEqual(first_point["type"], "waypoint")
+        self.assertEqual(first_point["name"], "Castle stop")
+        self.assertEqual(first_point["coordinates"], {"lat": 42.25, "lng": -8.71})
+        second_point = itinerary.itinerary_json["points"][1]
+        self.assertEqual(second_point["type"], "waypoint")
+        self.assertEqual(second_point["coordinates"], {"lat": self.poi.gps_latitude, "lng": self.poi.gps_longitude})
+        self.assertEqual(itinerary.itinerary_json["points"][2]["id"], "existing-waypoint")
+
     def test_public_poi_can_be_turned_to_draft(self):
         response = self.client.patch(reverse("poi-detail", args=[self.poi.id]), {"enabled": False}, format="json")
 

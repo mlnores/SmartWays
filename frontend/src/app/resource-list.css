@@ -741,17 +741,19 @@ label span {
 }
 
 .small-chip {
-  display: inline-flex;
-  max-width: 100%;
+  display: inline-block;
+  max-width: min(100%, 9rem);
   padding: 3px 8px;
   border: 1px solid #cfe0ff;
   border-radius: 999px;
   color: #1f4fbf;
   background: #eef4ff;
   font-size: 0.8rem;
+  line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: top;
 }
 
 .route-assignment-cell {
@@ -787,6 +789,7 @@ label span {
   font-size: 0.8rem;
   cursor: pointer;
   text-align: left;
+  text-decoration: none;
 }
 
 .route-membership-badge:hover,
@@ -800,6 +803,16 @@ label span {
   overflow-wrap: anywhere;
 }
 
+.route-membership-badge .inclusion-badge-label {
+  display: -webkit-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.25;
+}
+
 .route-membership-badge span:last-child {
   flex: 0 0 auto;
   padding-left: 6px;
@@ -808,7 +821,7 @@ label span {
 }
 
 .poi-inclusion-badge {
-  cursor: default;
+  cursor: pointer;
 }
 
 .inclusion-list {

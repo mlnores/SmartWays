@@ -227,12 +227,18 @@ declare const turf: any;
                       <td>
                         <div class="route-membership-badges">
                           @for (inclusion of poi.itinerary_inclusions; track inclusion.itinerary) {
-                            <span class="route-membership-badge poi-inclusion-badge">
-                              <span>{{ inclusion.itinerary_title || 'Itinerary ' + inclusion.itinerary }}</span>
+                            <a
+                              class="route-membership-badge poi-inclusion-badge"
+                              [routerLink]="['/itineraries', inclusion.itinerary, 'pois']"
+                              [queryParams]="poiInclusionNavigationQueryParams(poi)"
+                              [title]="poiInclusionTooltip(inclusion)"
+                              (click)="$event.stopPropagation()"
+                            >
+                              <span class="inclusion-badge-label">{{ inclusion.route_title || 'No route' }}</span>
                               @if (inclusion.stage_number !== null) {
                                 <span>{{ inclusion.stage_number }}</span>
                               }
-                            </span>
+                            </a>
                           } @empty {
                             <span class="muted">No itineraries</span>
                           }
@@ -242,7 +248,7 @@ declare const turf: any;
                         @if (poi.categories.length) {
                           <div class="chip-list">
                             @for (category of poi.categories; track category.id) {
-                              <span class="small-chip">{{ category.name || category.slug }}</span>
+                              <span class="small-chip" [title]="category.name || category.slug">{{ category.name || category.slug }}</span>
                             }
                           </div>
                         } @else {
@@ -567,6 +573,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private lastPoiMapViewKey = '';
   private suppressPoiMapRefreshUntil = 0;
   private fitPoisAfterNextFetch = false;
+  private fitInitialPoisAfterFirstFetch = true;
 
   constructor() {
     this.restoreFiltersFromQueryParams();
@@ -629,8 +636,9 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
               this.pruneSelectedPois(this.currentPois);
               this.keepSingleSelectedPoi();
               this.schedulePoiHighlight(this.pendingHighlightPoiId, this.currentPois);
-              const shouldFitPois = this.fitPoisAfterNextFetch;
+              const shouldFitPois = this.fitPoisAfterNextFetch || this.fitInitialPoisAfterFirstFetch;
               this.fitPoisAfterNextFetch = false;
+              this.fitInitialPoisAfterFirstFetch = false;
               if (shouldFitPois) {
                 this.selectedPoiIds.clear();
                 this.selectedPreviewFitLocked = false;
@@ -826,6 +834,21 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       return 'POIs are grouped in clusters. Zoom in to start discerning individual POIs.';
     }
     return this.currentPois.length ? 'No POIs visible in the current map view.' : 'No POIs found.';
+  }
+
+  poiInclusionTooltip(inclusion: Poi['itinerary_inclusions'][number]): string {
+    const routeTitle = inclusion.route_title || 'No route';
+    const itineraryTitle = inclusion.itinerary_title || `Itinerary ${inclusion.itinerary}`;
+    const stage = inclusion.stage_number === null ? '' : `\nStage: ${inclusion.stage_number}`;
+    return `Route: ${routeTitle}\nItinerary: ${itineraryTitle}${stage}`;
+  }
+
+  poiInclusionNavigationQueryParams(poi: Poi): { returnTo: string; returnLabel: string; highlight: string } {
+    return {
+      returnTo: this.poiRootReturnUrl(poi.id),
+      returnLabel: 'Back to POIs',
+      highlight: String(poi.id)
+    };
   }
 
   openPoiInfoAndMedia(poi: Poi): void {
@@ -2035,6 +2058,15 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         returnLabel: existingReturnLabel,
         ...this.poiListQueryParams(),
         highlight: highlightPoiId === null ? null : String(highlightPoiId)
+      }
+    }));
+  }
+
+  private poiRootReturnUrl(highlightPoiId: number): string {
+    return this.router.serializeUrl(this.router.createUrlTree(['/pois'], {
+      queryParams: {
+        ...this.poiListQueryParams(),
+        highlight: String(highlightPoiId)
       }
     }));
   }

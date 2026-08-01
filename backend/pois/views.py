@@ -370,6 +370,86 @@ def poi_ids_from_itinerary_json(itinerary_json):
     return poi_ids
 
 
+def value_references_poi(value, poi_id):
+    try:
+        return int(value) == poi_id
+    except (TypeError, ValueError):
+        return False
+
+
+def point_references_poi(point, poi_id):
+    if not isinstance(point, dict) or point.get("type") != "poi":
+        return False
+    return any(value_references_poi(point.get(key), poi_id) for key in ("id", "poi_id", "poiId"))
+
+
+def point_lat_lng(point, poi):
+    coordinates = point.get("coordinates") if isinstance(point.get("coordinates"), dict) else {}
+    lat = coordinates.get("lat", point.get("lat"))
+    lng = coordinates.get("lng", point.get("lng"))
+    try:
+        lat = float(lat)
+        lng = float(lng)
+    except (TypeError, ValueError):
+        lat = float(poi.location.y)
+        lng = float(poi.location.x)
+    return lat, lng
+
+
+def deleted_poi_waypoint(point, poi, index):
+    lat, lng = point_lat_lng(point, poi)
+    title = (
+        point.get("name")
+        or point.get("title")
+        or point.get("label")
+        or (select_translation(poi.translations.all(), None).title if poi.translations.exists() else "")
+        or f"Deleted POI {poi.id}"
+    )
+    return {
+        "id": f"deleted-poi-{poi.id}-{index}",
+        "type": "waypoint",
+        "label": title,
+        "name": title,
+        "lat": lat,
+        "lng": lng,
+        "coordinates": {"lat": lat, "lng": lng},
+    }
+
+
+def itinerary_json_without_poi(itinerary_json, poi):
+    if not isinstance(itinerary_json, dict):
+        return itinerary_json, False
+    changed = False
+    cleaned = {**itinerary_json}
+
+    if isinstance(cleaned.get("poiIds"), list):
+        poi_ids = [raw_id for raw_id in cleaned["poiIds"] if not value_references_poi(raw_id, poi.id)]
+        if len(poi_ids) != len(cleaned["poiIds"]):
+            cleaned["poiIds"] = poi_ids
+            changed = True
+
+    if isinstance(cleaned.get("points"), list):
+        points = []
+        for index, point in enumerate(cleaned["points"]):
+            if point_references_poi(point, poi.id):
+                points.append(deleted_poi_waypoint(point, poi, index))
+                changed = True
+            else:
+                points.append(point)
+        cleaned["points"] = points
+
+    return cleaned, changed
+
+
+def remove_deleted_poi_from_itineraries(poi):
+    for itinerary in Itinerary.objects.only("id", "itinerary_json"):
+        itinerary_json, changed = itinerary_json_without_poi(itinerary.itinerary_json, poi)
+        if not changed:
+            continue
+        itinerary.itinerary_json = itinerary_json
+        itinerary.save(update_fields=["itinerary_json", "updated_at"])
+
+
 def itinerary_ids_containing_poi(poi_id, enabled=None):
     queryset = Itinerary.objects.all()
     if enabled is not None:
@@ -455,6 +535,14 @@ class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelVie
     serializer_class = POISerializer
     map_individual_limit = 250
     map_cluster_limit = 80
+
+    def destroy(self, request, *args, **kwargs):
+        with transaction.atomic():
+            poi = self.get_object()
+            self.ensure_instance_is_draft(poi)
+            remove_deleted_poi_from_itineraries(poi)
+            self.perform_destroy(poi)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def update(self, request, *args, **kwargs):
         if is_turn_to_draft_request(request.data):
