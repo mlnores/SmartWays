@@ -1,3 +1,4 @@
+import math
 import re
 import unicodedata
 from collections import Counter, defaultdict
@@ -134,6 +135,7 @@ DIACRITIC_LANGUAGE_HINTS = {
 
 NAME_LANGUAGE_CODES = {"en", "it", "de"}
 POI_MERGE_DISTANCE_METERS = 1.5
+ON_TRACK_POI_DISTANCE_METERS = 15.0
 
 
 @dataclass
@@ -211,6 +213,59 @@ def ascii_slug_seed(value):
     return normalized.encode("ascii", "ignore").decode("ascii")
 
 
+def point_segment_projection_meters(point, start, end):
+    lon, lat = point
+    start_lon, start_lat = start
+    end_lon, end_lat = end
+    meters_per_degree_latitude = 111_320
+    meters_per_degree_longitude = meters_per_degree_latitude * math.cos(math.radians(lat))
+
+    start_x = (start_lon - lon) * meters_per_degree_longitude
+    start_y = (start_lat - lat) * meters_per_degree_latitude
+    end_x = (end_lon - lon) * meters_per_degree_longitude
+    end_y = (end_lat - lat) * meters_per_degree_latitude
+    segment_x = end_x - start_x
+    segment_y = end_y - start_y
+    segment_length_squared = segment_x * segment_x + segment_y * segment_y
+    if segment_length_squared == 0:
+        return math.hypot(start_x, start_y), 0.0
+
+    fraction = max(0.0, min(1.0, -(start_x * segment_x + start_y * segment_y) / segment_length_squared))
+    projected_x = start_x + fraction * segment_x
+    projected_y = start_y + fraction * segment_y
+    return math.hypot(projected_x, projected_y), fraction
+
+
+def closest_track_projection(point, coordinates):
+    best = None
+    distance_to_segment_start = 0.0
+    for index, (start, end) in enumerate(zip(coordinates, coordinates[1:])):
+        segment_length = haversine_meters(start, end)
+        distance, fraction = point_segment_projection_meters(point, start, end)
+        along_meters = distance_to_segment_start + segment_length * fraction
+        if best is None or distance < best["distance_meters"]:
+            lon = start[0] + (end[0] - start[0]) * fraction
+            lat = start[1] + (end[1] - start[1]) * fraction
+            best = {
+                "distance_meters": distance,
+                "segment_index": index,
+                "fraction": fraction,
+                "along_meters": along_meters,
+                "track_coordinate": [lon, lat],
+            }
+        distance_to_segment_start += segment_length
+    return best
+
+
+def compact_coordinates(coordinates):
+    compacted = []
+    for coordinate in coordinates:
+        if compacted and haversine_meters(compacted[-1], coordinate) < 0.01:
+            continue
+        compacted.append(coordinate)
+    return compacted
+
+
 class Command(BaseGpxRouteImportCommand):
     help = (
         "Import official Romea Strata GPX route files and bootstrap POIs from GPX waypoints. "
@@ -255,8 +310,18 @@ class Command(BaseGpxRouteImportCommand):
                 "GPX waypoint POIs. Defaults to 2,5,10."
             ),
         )
+        parser.add_argument(
+            "--on-track-poi-distance-meters",
+            type=float,
+            default=ON_TRACK_POI_DISTANCE_METERS,
+            help=(
+                "Maximum distance in meters for a GPX waypoint POI to become a direct itinerary "
+                "POI point. Defaults to 15."
+            ),
+        )
 
     def write_extra_dry_run(self, source_dir, prepared_routes, options):
+        self.validate_on_track_threshold(options["on_track_poi_distance_meters"])
         waypoint_count = 0
         category_names = Counter()
         language_counts = Counter()
@@ -264,6 +329,8 @@ class Command(BaseGpxRouteImportCommand):
         fallback_language = options["poi_fallback_language"].strip() or "it"
         unique_waypoint_entries = self.unique_waypoint_entries(prepared_routes)
         merged_waypoints = self.merged_waypoints(unique_waypoint_entries)
+        on_track_threshold = options["on_track_poi_distance_meters"]
+        on_track_waypoint_count = self.on_track_waypoint_count(prepared_routes, on_track_threshold)
 
         for _, stages in prepared_routes:
             for stage in stages:
@@ -284,6 +351,12 @@ class Command(BaseGpxRouteImportCommand):
         self.stdout.write(f"Unique GPX waypoint POIs after exact deduplication: {len(unique_waypoint_entries)}")
         self.stdout.write(
             f"Unique GPX waypoint POIs after {POI_MERGE_DISTANCE_METERS:g}m merge: {len(merged_waypoints)}"
+        )
+        self.stdout.write(
+            f"GPX waypoint POIs within {on_track_threshold:g}m of their stage track: {on_track_waypoint_count}"
+        )
+        self.stdout.write(
+            f"GPX waypoint POIs kept nearby only: {waypoint_count - on_track_waypoint_count}"
         )
         self.stdout.write(f"Distinct GPX category labels: {len(category_names)}")
         if options["skip_country_annotation"]:
@@ -335,6 +408,20 @@ class Command(BaseGpxRouteImportCommand):
         if not thresholds:
             raise CommandError("--poi-duplicate-distance-meters must contain at least one threshold.")
         return sorted(set(thresholds))
+
+    def validate_on_track_threshold(self, threshold_meters):
+        if threshold_meters <= 0:
+            raise CommandError("--on-track-poi-distance-meters must be positive.")
+
+    def on_track_waypoint_count(self, prepared_routes, threshold_meters):
+        count = 0
+        for _, stages in prepared_routes:
+            for stage in stages:
+                for waypoint in stage.waypoints:
+                    projection = closest_track_projection(waypoint.coordinates, stage.coordinates)
+                    if projection and projection["distance_meters"] <= threshold_meters:
+                        count += 1
+        return count
 
     def unique_waypoint_entries(self, prepared_routes):
         unique_entries = {}
@@ -450,6 +537,7 @@ class Command(BaseGpxRouteImportCommand):
             )
 
     def import_extra_content(self, source_dir, prepared_routes, options, itinerary_by_stage_path=None):
+        self.validate_on_track_threshold(options["on_track_poi_distance_meters"])
         fallback_language = options["poi_fallback_language"].strip() or "it"
         imported_at = timezone.now()
         country_lookup = self.country_lookup(options)
@@ -465,10 +553,11 @@ class Command(BaseGpxRouteImportCommand):
             country_lookup,
         )
         poi_by_fingerprint = self.poi_by_source_fingerprint(waypoints, poi_by_merged_waypoint)
-        link_stats = self.link_pois_to_itineraries(
+        link_stats = self.link_on_track_pois_to_itineraries(
             prepared_routes,
             itinerary_by_stage_path or {},
             poi_by_fingerprint,
+            options["on_track_poi_distance_meters"],
         )
         return {
             "poi_waypoints_after_exact_deduplication": len(unique_entries),
@@ -591,50 +680,117 @@ class Command(BaseGpxRouteImportCommand):
                 poi_by_fingerprint[fingerprint] = poi
         return poi_by_fingerprint
 
-    def link_pois_to_itineraries(self, prepared_routes, itinerary_by_stage_path, poi_by_fingerprint):
+    def link_on_track_pois_to_itineraries(self, prepared_routes, itinerary_by_stage_path, poi_by_fingerprint, threshold_meters):
         updated_itinerary_count = 0
         linked_poi_count = 0
-        skipped_waypoint_count = 0
+        nearby_only_count = 0
+        skipped_without_poi_count = 0
 
         for _, stages in prepared_routes:
             for stage in stages:
                 itinerary = itinerary_by_stage_path.get(str(stage.path))
                 if itinerary is None:
-                    skipped_waypoint_count += len(stage.waypoints)
+                    skipped_without_poi_count += len(stage.waypoints)
                     continue
 
-                existing_ids = []
-                seen_ids = set()
-                for raw_id in (itinerary.itinerary_json or {}).get("poiIds") or []:
-                    try:
-                        poi_id = int(raw_id)
-                    except (TypeError, ValueError):
-                        continue
-                    if poi_id in seen_ids:
-                        continue
-                    seen_ids.add(poi_id)
-                    existing_ids.append(poi_id)
-
-                added_ids = []
+                stops = []
+                seen_poi_ids = set()
                 for waypoint in stage.waypoints:
                     poi = poi_by_fingerprint.get(poi_fingerprint(waypoint))
                     if poi is None:
-                        skipped_waypoint_count += 1
+                        skipped_without_poi_count += 1
                         continue
-                    if poi.id in seen_ids:
+                    projection = closest_track_projection(waypoint.coordinates, stage.coordinates)
+                    if not projection or projection["distance_meters"] > threshold_meters:
+                        nearby_only_count += 1
                         continue
-                    seen_ids.add(poi.id)
-                    added_ids.append(poi.id)
+                    if poi.id in seen_poi_ids:
+                        continue
+                    seen_poi_ids.add(poi.id)
+                    stops.append({
+                        "poi": poi,
+                        "waypoint": waypoint,
+                        **projection,
+                    })
 
-                if not added_ids:
+                if not stops:
                     continue
-                itinerary.itinerary_json["poiIds"] = existing_ids + added_ids
-                itinerary.save(update_fields=["itinerary_json", "updated_at"])
+
+                self.write_poi_stops_to_itinerary(itinerary, stage, stops)
                 updated_itinerary_count += 1
-                linked_poi_count += len(added_ids)
+                linked_poi_count += len(stops)
 
         return {
-            "itineraries_linked_to_pois": updated_itinerary_count,
+            "itineraries_linked_to_on_track_pois": updated_itinerary_count,
             "itinerary_poi_links_created": linked_poi_count,
-            "itinerary_poi_links_skipped_without_poi": skipped_waypoint_count,
+            "itinerary_poi_links_skipped_because_wpts_are_nearby_pois": nearby_only_count,
+            "itinerary_poi_links_skipped_without_poi": skipped_without_poi_count,
         }
+
+    def write_poi_stops_to_itinerary(self, itinerary, stage, stops):
+        ordered_stops = sorted(stops, key=lambda stop: stop["along_meters"])
+        points = [itinerary.itinerary_json["points"][0]]
+        split_points = [{
+            "segment_index": 0,
+            "fraction": 0.0,
+            "track_coordinate": stage.coordinates[0],
+        }]
+
+        for index, stop in enumerate(ordered_stops, start=1):
+            lon, lat = stop["waypoint"].coordinates
+            title = stop["waypoint"].name or f"POI {stop['poi'].id}"
+            points.append({
+                "id": str(stop["poi"].id),
+                "type": "poi",
+                "label": title,
+                "name": title,
+                "lat": lat,
+                "lng": lon,
+                "coordinates": {"lat": lat, "lng": lon},
+            })
+            split_points.append({
+                "segment_index": stop["segment_index"],
+                "fraction": stop["fraction"],
+                "track_coordinate": [lon, lat],
+            })
+
+        points.append(itinerary.itinerary_json["points"][-1])
+        split_points.append({
+            "segment_index": len(stage.coordinates) - 2,
+            "fraction": 1.0,
+            "track_coordinate": stage.coordinates[-1],
+        })
+
+        segments = []
+        for index, (start, end) in enumerate(zip(split_points, split_points[1:]), start=1):
+            coordinates = self.coordinates_between_split_points(stage.coordinates, start, end)
+            segments.append({
+                "fromPoint": index,
+                "toPoint": index + 1,
+                "bufferDistanceMeters": 1000,
+                "selectedWalkingRoute": {
+                    "source": "romea_strata_official_gpx",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": coordinates,
+                    },
+                    "distanceMeters": round(haversine_meters(coordinates[0], coordinates[-1]))
+                    if len(coordinates) == 2
+                    else round(sum(haversine_meters(left, right) for left, right in zip(coordinates, coordinates[1:]))),
+                },
+            })
+
+        itinerary.itinerary_json["points"] = points
+        itinerary.itinerary_json["segments"] = segments
+        itinerary.itinerary_json.setdefault("source", {})["onTrackPoiCount"] = len(ordered_stops)
+        itinerary.save(update_fields=["itinerary_json", "updated_at"])
+
+    def coordinates_between_split_points(self, coordinates, start, end):
+        segment_coordinates = [start["track_coordinate"]]
+        for coordinate_index in range(start["segment_index"] + 1, end["segment_index"] + 1):
+            segment_coordinates.append(coordinates[coordinate_index])
+        segment_coordinates.append(end["track_coordinate"])
+        compacted = compact_coordinates(segment_coordinates)
+        if len(compacted) == 1:
+            compacted.append(compacted[0])
+        return compacted

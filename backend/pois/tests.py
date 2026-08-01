@@ -1764,6 +1764,45 @@ class ManagementCommandTests(APITestCase):
         )
         self.assertEqual(itinerary.itinerary_json["source"]["waypointCount"], 1)
 
+    def test_rurallure_import_romea_strata_official_with_pois_links_only_on_track_wpts_as_itinerary_pois(self):
+        with TemporaryDirectory() as temporary_directory:
+            source_dir = Path(temporary_directory)
+            path = source_dir / "7.Italia" / "A piedi_on foot" / "Cammino principale - Main path (Tarvisio-Roma)" / "rsit01.gpx"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                """<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>RSIT01 - Tarvisio &gt; Pontebba</name></metadata>
+  <wpt lon="13.4" lat="46.45"><name>On-track chapel</name><type>Chiesa</type></wpt>
+  <wpt lon="13.5" lat="46.7"><name>Nearby cafe</name><type>Caffè</type></wpt>
+  <trk>
+    <name>RSIT01 - Tarvisio &gt; Pontebba</name>
+    <trkseg>
+      <trkpt lon="13.5" lat="46.5"></trkpt>
+      <trkpt lon="13.3" lat="46.4"></trkpt>
+    </trkseg>
+  </trk>
+</gpx>
+""",
+                encoding="utf-8",
+            )
+
+            call_command(
+                "rurallure_import_romea_strata_official_with_pois",
+                "--source-dir",
+                str(source_dir),
+                "--skip-country-annotation",
+            )
+
+        self.assertEqual(POI.objects.count(), 2)
+        itinerary = Itinerary.objects.get()
+        self.assertNotIn("poiIds", itinerary.itinerary_json)
+        self.assertEqual([point["type"] for point in itinerary.itinerary_json["points"]], ["waypoint", "poi", "waypoint"])
+        self.assertEqual(itinerary.itinerary_json["points"][1]["name"], "On-track chapel")
+        self.assertEqual(len(itinerary.itinerary_json["segments"]), 2)
+        self.assertEqual(itinerary.itinerary_json["source"]["onTrackPoiCount"], 1)
+        self.assertNotIn("Nearby cafe", [point.get("name") for point in itinerary.itinerary_json["points"]])
+
     def test_rurallure_import_romea_strata_official_with_pois_reports_near_duplicate_waypoints(self):
         command = RomeaOfficialWithPoisCommand()
         left_waypoint = SimpleNamespace(
