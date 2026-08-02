@@ -1,11 +1,13 @@
 import { AsyncPipe, NgTemplateOutlet } from '@angular/common';
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, finalize, firstValueFrom, forkJoin, map, Observable, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Category, Itinerary, Poi, PoiMapClusterResult, PoiMapResponse, PoiMedia, Translation } from './api.service';
 import { MediaManagerDialogComponent } from './media-manager-dialog.component';
+import { PageInstructionService } from './page-instruction.service';
 
 interface TranslationDraft {
   language_code: string;
@@ -90,32 +92,24 @@ declare const turf: any;
     <section class="page">
       <header class="page-header">
         <div>
-          <h1>{{ itineraryId ? itineraryTitle || 'Itinerary POIs' : 'POIs' }}</h1>
-          <p>
+          <div class="title-with-switch">
+            <h1>{{ itineraryId ? itineraryTitle || 'Itinerary POIs' : 'POIs' }}</h1>
             @if (itineraryId) {
-              Browse POIs included in the itinerary and nearby POIs in its segment buffer zones.
-            } @else {
-              Browse and manage points of interest from the backend API.
+              @if (currentItinerary) {
+                <div class="publication-inline-switch" aria-label="Itinerary state">
+                  <div class="publication-inline-toggle">
+                    <button type="button" [class.active]="!currentItinerary.enabled" (click)="setCurrentItineraryState(false)">Draft</button>
+                    <button type="button" [class.active]="currentItinerary.enabled" (click)="setCurrentItineraryState(true)">Public (read-only)</button>
+                  </div>
+                </div>
+              }
             }
-          </p>
-        </div>
-        @if (itineraryId) {
-          @if (currentItinerary) {
-            <div class="publication-inline-switch centered-publication-switch" aria-label="Itinerary state">
-              <span>State</span>
-              <div class="publication-inline-toggle">
-                <button type="button" [class.active]="!currentItinerary.enabled" (click)="setCurrentItineraryState(false)">Draft</button>
-                <button type="button" [class.active]="currentItinerary.enabled" (click)="setCurrentItineraryState(true)">Public (read-only)</button>
-              </div>
-            </div>
-          }
-          <div class="list-actions header-end-actions">
-            <a class="secondary" [routerLink]="backLink">{{ backLabel }}</a>
           </div>
-        } @else {
+        </div>
+        @if (!itineraryId) {
           <div class="list-actions">
             <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
-            <a class="primary" title="New POI" aria-label="New POI" routerLink="/pois/new" [queryParams]="poiEditorReturnQueryParams()">New POI</a>
+            <a class="primary" title="New POI" aria-label="New POI" routerLink="/pois/new" target="_blank" rel="noopener">New POI</a>
           </div>
         }
       </header>
@@ -160,7 +154,7 @@ declare const turf: any;
         }
         @if (itineraryId) {
           @if (currentItinerary && !currentItinerary.enabled) {
-            <a class="secondary toolbar-action" [routerLink]="['/itineraries', itineraryId, 'edit']" [queryParams]="itineraryEditorReturnQueryParams()">
+            <a class="secondary toolbar-action" [routerLink]="['/itineraries', itineraryId, 'edit']" target="_blank" rel="noopener">
               Open in editor
             </a>
           } @else {
@@ -231,6 +225,8 @@ declare const turf: any;
                               class="route-membership-badge poi-inclusion-badge"
                               [routerLink]="['/itineraries', inclusion.itinerary, 'pois']"
                               [queryParams]="poiInclusionNavigationQueryParams(poi)"
+                              target="_blank"
+                              rel="noopener"
                               [title]="poiInclusionTooltip(inclusion)"
                               (click)="$event.stopPropagation()"
                             >
@@ -321,7 +317,7 @@ declare const turf: any;
                   </button>
                 }
                 @if (previewPoi) {
-                  <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']" [queryParams]="poiEditorReturnQueryParams(previewPoi)">
+                  <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']" target="_blank" rel="noopener">
                     <span class="preview-action-icon" aria-hidden="true">🗺️</span>
                     <span>{{ previewPoi.enabled ? 'View info and media' : 'Manage metadata, media and translations' }}</span>
                   </a>
@@ -519,6 +515,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private readonly activatedRoute = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly pageInstruction = inject(PageInstructionService);
+  private readonly title = inject(Title);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
   readonly mapView$ = new BehaviorSubject(0);
@@ -536,8 +534,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   loadingPoiInfo = false;
   availableCategories: Category[] = [];
   availableCountries: string[] = [];
-  backLink: UrlTree | string = '/itineraries';
-  backLabel = 'Back to itineraries';
   editingPoi: Poi | null = null;
   poiDraft: PoiDraft = this.emptyPoiDraft();
   translationDrafts: TranslationDraft[] = [];
@@ -604,6 +600,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
           this.currentItinerary = itinerary;
           this.itineraryTitle = itinerary?.title || null;
           this.itineraryPoiIds = itinerary ? this.poiIdsForItinerary(itinerary.itinerary_json) : [];
+          this.pageInstruction.setInstruction(this.currentInstruction());
+          this.title.setTitle(this.currentPageTitle(itineraryId, itinerary));
           if (itineraryId && itinerary) {
             return this.fetchItineraryPoiGroups(itinerary, query).pipe(
               map(result => {
@@ -672,18 +670,11 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   );
 
   ngAfterViewInit(): void {
-    const returnTo = this.activatedRoute.snapshot.queryParamMap.get('returnTo');
-    const returnLabel = this.activatedRoute.snapshot.queryParamMap.get('returnLabel');
-    if (returnTo?.startsWith('/')) {
-      this.backLink = this.router.parseUrl(returnTo);
-    }
-    if (returnLabel) {
-      this.backLabel = returnLabel;
-    }
     this.initializePreviewMap();
   }
 
   ngOnDestroy(): void {
+    this.pageInstruction.clearInstruction();
     if (this.poiRowClickTimer !== null) {
       window.clearTimeout(this.poiRowClickTimer);
       this.poiRowClickTimer = null;
@@ -843,10 +834,8 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     return `Route: ${routeTitle}\nItinerary: ${itineraryTitle}${stage}`;
   }
 
-  poiInclusionNavigationQueryParams(poi: Poi): { returnTo: string; returnLabel: string; highlight: string } {
+  poiInclusionNavigationQueryParams(poi: Poi): { highlight: string } {
     return {
-      returnTo: this.poiRootReturnUrl(poi.id),
-      returnLabel: 'Back to POIs',
       highlight: String(poi.id)
     };
   }
@@ -856,9 +845,28 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       window.clearTimeout(this.poiRowClickTimer);
       this.poiRowClickTimer = null;
     }
-    void this.router.navigate(['/pois', poi.id, 'edit'], {
-      queryParams: this.poiEditorReturnQueryParams(poi)
-    });
+    this.openUrlTreeInNewTab(this.router.createUrlTree(['/pois', poi.id, 'edit']));
+  }
+
+  private openUrlTreeInNewTab(urlTree: UrlTree): void {
+    window.open(this.router.serializeUrl(urlTree), '_blank', 'noopener');
+  }
+
+  private currentInstruction(): string {
+    return this.itineraryId
+      ? 'Browse POIs included in the itinerary and nearby POIs in its segment buffer zones.'
+      : 'Browse and manage points of interest from the backend API.';
+  }
+
+  private currentPageTitle(itineraryId: string | null, itinerary: Itinerary | null): string {
+    if (!itineraryId) {
+      return 'SW POIs';
+    }
+    return `SW IT POIs ${this.titlePart(itinerary?.title || `Itinerary ${itineraryId}`)}`;
+  }
+
+  private titlePart(value: string): string {
+    return value.trim().replace(/\s+/g, ' ') || 'Untitled';
   }
 
   openItineraryMediaDialog(): void {
@@ -2017,20 +2025,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     );
   }
 
-  poiEditorReturnQueryParams(poi: Poi | null = null): Record<string, string> {
-    return {
-      returnTo: this.poiListReturnUrl(poi?.id ?? null),
-      returnLabel: this.itineraryId ? 'Back to itinerary POIs' : 'Back to POIs'
-    };
-  }
-
-  itineraryEditorReturnQueryParams(): Record<string, string> {
-    return {
-      returnTo: this.poiListReturnUrl(null),
-      returnLabel: 'Back to itinerary POIs'
-    };
-  }
-
   private restoreFiltersFromQueryParams(): void {
     const params = this.activatedRoute.snapshot.queryParamMap;
     this.query = params.get('q') || '';
@@ -2046,29 +2040,6 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       queryParams: this.poiListQueryParams(),
       replaceUrl: true
     });
-  }
-
-  private poiListReturnUrl(highlightPoiId: number | null = null): string {
-    const existingReturnTo = this.activatedRoute.snapshot.queryParamMap.get('returnTo');
-    const existingReturnLabel = this.activatedRoute.snapshot.queryParamMap.get('returnLabel');
-    return this.router.serializeUrl(this.router.createUrlTree([], {
-      relativeTo: this.activatedRoute,
-      queryParams: {
-        returnTo: existingReturnTo,
-        returnLabel: existingReturnLabel,
-        ...this.poiListQueryParams(),
-        highlight: highlightPoiId === null ? null : String(highlightPoiId)
-      }
-    }));
-  }
-
-  private poiRootReturnUrl(highlightPoiId: number): string {
-    return this.router.serializeUrl(this.router.createUrlTree(['/pois'], {
-      queryParams: {
-        ...this.poiListQueryParams(),
-        highlight: String(highlightPoiId)
-      }
-    }));
   }
 
   private poiListQueryParams(): Record<string, string | null> {

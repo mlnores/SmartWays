@@ -18,9 +18,26 @@
   margin-bottom: 18px;
 }
 
+.page-header > :first-child {
+  min-width: 0;
+}
+
 h1 {
   margin: 0;
   font-size: 1.8rem;
+  overflow-wrap: anywhere;
+}
+
+.title-with-switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.title-with-switch h1 {
+  min-width: 0;
 }
 
 h2 {
@@ -208,8 +225,10 @@ label span {
   background: #ffffff;
 }
 
+.primary:disabled,
 .secondary:disabled {
   color: #98a2b3;
+  border-color: #d7deea;
   background: #f8fafc;
   cursor: not-allowed;
 }
@@ -264,9 +283,8 @@ label span {
 }
 
 .publication-inline-switch {
-  display: grid;
-  justify-items: center;
-  gap: 6px;
+  display: inline-flex;
+  flex: 0 0 auto;
   color: #475467;
   font-size: 0.86rem;
   font-weight: 700;
@@ -294,13 +312,6 @@ label span {
 .publication-inline-toggle button.active {
   color: #ffffff;
   background: #1f6feb;
-}
-
-.centered-publication-switch {
-  position: absolute;
-  left: 50%;
-  top: 0;
-  transform: translateX(-50%);
 }
 
 .header-end-actions {

@@ -1,11 +1,13 @@
 import { AsyncPipe, DatePipe, NgTemplateOutlet } from '@angular/common';
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Title } from '@angular/platform-browser';
+import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, finalize, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Itinerary, ItineraryRouteMembership, Route, Translation } from './api.service';
 import { MediaManagerDialogComponent } from './media-manager-dialog.component';
+import { PageInstructionService } from './page-instruction.service';
 
 interface ItineraryGroup {
   routeId: number | null;
@@ -119,23 +121,21 @@ declare const L: any;
     <section class="page">
       <header class="page-header">
         <div>
-          <h1>{{ routeSlug ? routeTitle || 'Route itineraries' : 'Itineraries' }}</h1>
-          <p>{{ routeSlug ? (currentRouteIsDraft ? 'Browse the constituent itineraries of this route. Drag rows up or down to define their order.' : 'Browse the constituent itineraries of this public route.') : 'Browse saved itinerary definitions and open the editor.' }}</p>
-        </div>
-        @if (routeSlug) {
-          @if (currentRoute) {
-            <div class="publication-inline-switch centered-publication-switch" aria-label="Route state">
-              <span>State</span>
-              <div class="publication-inline-toggle">
-                <button type="button" [class.active]="!currentRoute.enabled" (click)="setCurrentRouteState(false)">Draft</button>
-                <button type="button" [class.active]="currentRoute.enabled" (click)="setCurrentRouteState(true)">Public (read-only)</button>
-              </div>
-            </div>
-          }
-          <div class="list-actions header-end-actions">
-            <a class="secondary" [routerLink]="['/routes']" [queryParams]="currentRouteId ? { highlight: currentRouteId } : null">Back to routes</a>
+          <div class="title-with-switch">
+            <h1>{{ routeSlug ? routeTitle || 'Route itineraries' : 'Itineraries' }}</h1>
+            @if (routeSlug) {
+              @if (currentRoute) {
+                <div class="publication-inline-switch" aria-label="Route state">
+                  <div class="publication-inline-toggle">
+                    <button type="button" [class.active]="!currentRoute.enabled" (click)="setCurrentRouteState(false)">Draft</button>
+                    <button type="button" [class.active]="currentRoute.enabled" (click)="setCurrentRouteState(true)">Public (read-only)</button>
+                  </div>
+                </div>
+              }
+            }
           </div>
-        } @else {
+        </div>
+        @if (!routeSlug) {
           <button type="button" class="primary" title="New itinerary" aria-label="New itinerary" (click)="openNewItineraryDialog()">New itinerary</button>
         }
       </header>
@@ -298,12 +298,12 @@ declare const L: any;
                       <span class="preview-action-icon" aria-hidden="true">🖼️</span>
                       <span>Manage metadata, media and translations</span>
                     </button>
-                    <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'edit']" [queryParams]="backQueryParamsFor(previewItinerary)">
+                    <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'edit']" target="_blank" rel="noopener">
                       <span class="preview-action-icon" aria-hidden="true">🗺️</span>
                       <span>Open in editor</span>
                     </a>
                   }
-                  <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'pois']" [queryParams]="backQueryParams()">
+                  <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'pois']" target="_blank" rel="noopener">
                     <span class="preview-action-icon" aria-hidden="true">📍</span>
                     <span>View POIs on the path and nearby</span>
                   </a>
@@ -380,17 +380,19 @@ declare const L: any;
                     <td>
                       <div class="route-membership-badges">
                         @for (membership of routeMembershipsFor(itinerary); track membership.route) {
-                          <button
-                            type="button"
+                          <a
                             class="route-membership-badge"
+                            [routerLink]="['/route', membership.route_slug || membership.route]"
+                            [queryParams]="routeMembershipQueryParams(membership, itinerary)"
+                            target="_blank"
+                            rel="noopener"
                             title="Open route itineraries"
                             aria-label="Open route itineraries"
                             (click)="$event.stopPropagation()"
-                            (dblclick)="openRouteMembership(membership, itinerary, $event)"
                           >
                             <span>{{ membership.route_title || 'Route ' + membership.route }}</span>
                             <span>{{ membership.stage_number }}</span>
-                          </button>
+                          </a>
                         } @empty {
                           <span class="muted">No routes</span>
                         }
@@ -765,6 +767,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   private readonly activatedRoute = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly pageInstruction = inject(PageInstructionService);
+  private readonly title = inject(Title);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
   query = '';
@@ -841,6 +845,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
           this.currentRouteId = selectedRoute?.id || null;
           this.routeTitle = selectedRoute?.title || null;
           this.currentRouteIsDraft = selectedRoute ? !selectedRoute.enabled : false;
+          this.pageInstruction.setInstruction(this.currentInstruction());
+          this.title.setTitle(this.currentPageTitle(routeSlug, selectedRoute));
           if (routeSlug && !selectedRoute) {
             this.currentItineraries = [];
             this.displayedItineraries = [];
@@ -916,6 +922,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.pageInstruction.clearInstruction();
     this.previewResizeObserver?.disconnect();
     this.previewResizeObserver = null;
     if (this.previewMap) {
@@ -1065,26 +1072,15 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       this.showStatus('Public itineraries cannot be edited.', true);
       return;
     }
-    void this.router.navigate(['/itineraries', itinerary.id, 'edit'], {
-      queryParams: this.backQueryParamsFor(itinerary)
-    });
+    this.openUrlTreeInNewTab(this.router.createUrlTree(['/itineraries', itinerary.id, 'edit']));
   }
 
   openItineraryFromDoubleClick(itinerary: Itinerary): void {
     if (itinerary.enabled) {
-      void this.router.navigate(['/itineraries', itinerary.id, 'pois'], {
-        queryParams: this.backQueryParamsFor(itinerary)
-      });
+      this.openUrlTreeInNewTab(this.router.createUrlTree(['/itineraries', itinerary.id, 'pois']));
       return;
     }
     this.openItineraryInEditor(itinerary);
-  }
-
-  openRouteMembership(membership: ItineraryRouteMembership, itinerary: Itinerary, event?: MouseEvent): void {
-    event?.stopPropagation();
-    void this.router.navigate(['/route', membership.route_slug || membership.route], {
-      queryParams: { highlight: itinerary.id }
-    });
   }
 
   openNewItineraryDialog(): void {
@@ -1642,21 +1638,37 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     this.draggedItineraryId = null;
   }
 
-  backQueryParams(): { returnTo: string; returnLabel: string } {
-    return this.backQueryParamsFor(this.previewItinerary);
+  routeMembershipQueryParams(
+    _membership: ItineraryRouteMembership,
+    itinerary: Itinerary
+  ): { highlight: string } {
+    return {
+      highlight: String(itinerary.id)
+    };
   }
 
-  backQueryParamsFor(itinerary: Itinerary | null): { returnTo: string; returnLabel: string } {
-    if (this.routeSlug) {
-      return {
-        returnTo: `/route/${this.routeSlug}${itinerary ? `?highlight=${itinerary.id}` : ''}`,
-        returnLabel: this.routeTitle ? `Back to ${this.routeTitle}` : 'Back to route itineraries'
-      };
+  private openUrlTreeInNewTab(urlTree: UrlTree): void {
+    window.open(this.router.serializeUrl(urlTree), '_blank', 'noopener');
+  }
+
+  private currentInstruction(): string {
+    if (!this.routeSlug) {
+      return 'Browse saved itinerary definitions and open the editor.';
     }
-    return {
-      returnTo: itinerary ? `/itineraries?highlight=${itinerary.id}` : '/itineraries',
-      returnLabel: 'Back to itineraries'
-    };
+    return this.currentRouteIsDraft
+      ? 'Browse the constituent itineraries of this route. Drag rows up or down to define their order.'
+      : 'Browse the constituent itineraries of this public route.';
+  }
+
+  private currentPageTitle(routeSlug: string | null, route: Route | null): string {
+    if (!routeSlug) {
+      return 'SW Itineraries';
+    }
+    return `SW R ${this.titlePart(route?.title || routeSlug)}`;
+  }
+
+  private titlePart(value: string): string {
+    return value.trim().replace(/\s+/g, ' ') || 'Untitled';
   }
 
   private initializePreviewMap(): void {
@@ -2179,9 +2191,9 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     if (!this.duplicatedItinerary) return;
     const itineraryId = this.duplicatedItinerary.id;
     this.closeDuplicateDialog();
-    await this.router.navigate(['/itineraries'], {
+    this.openUrlTreeInNewTab(this.router.createUrlTree(['/itineraries'], {
       queryParams: { highlight: itineraryId }
-    });
+    }));
   }
 
   groupKey(group: ItineraryGroup): string {
@@ -2350,7 +2362,13 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
     this.highlightedItineraryId = itineraryId;
     this.pendingHighlightItineraryId = null;
-    if (this.previewItinerary?.id !== itineraryId) {
+    if (!this.routeSlug) {
+      this.selectedItineraryIds.clear();
+      this.selectedPreviewFitLocked = false;
+      this.previewItinerary = null;
+      this.displayedItineraries = this.displayedItinerariesForCurrentMode(itineraries);
+      this.renderVisibleItinerariesPreview(this.displayedItineraries, false);
+    } else if (this.previewItinerary?.id !== itineraryId) {
       this.selectPreviewItinerary(itinerary);
     }
     window.setTimeout(() => {

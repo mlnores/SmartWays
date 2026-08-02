@@ -1,5 +1,6 @@
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, ViewChild, ViewEncapsulation, inject } from '@angular/core';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Title } from '@angular/platform-browser';
+import { ActivatedRoute, Router } from '@angular/router';
 import { EditorApiService } from './editor-api.service';
 import { ItineraryEditorDialogsComponent } from './itinerary-editor-dialogs.component';
 import { ItineraryEditorMapComponent } from './itinerary-editor-map.component';
@@ -29,8 +30,7 @@ declare global {
   imports: [
     ItineraryEditorDialogsComponent,
     ItineraryEditorMapComponent,
-    ItineraryEditorSidebarComponent,
-    RouterLink
+    ItineraryEditorSidebarComponent
   ],
   templateUrl: './itinerary-editor.component.html',
   styleUrl: './itinerary-editor.component.css',
@@ -44,9 +44,7 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly editorApi = inject(EditorApiService);
   private readonly changeDetector = inject(ChangeDetectorRef);
-  private readonly requestedBackLink = this.route.snapshot.queryParamMap.get('returnTo');
-  readonly backLink = this.router.parseUrl(this.requestedBackLink?.startsWith('/') ? this.requestedBackLink : '/itineraries');
-  readonly backLabel = this.route.snapshot.queryParamMap.get('returnLabel') || 'Back to itineraries';
+  private readonly title = inject(Title);
   private readonly editorSessionToken = globalThis.crypto?.randomUUID?.() || `editor-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   private editor: ItineraryEditorRuntime | null = null;
   private saveFeedbackTimer: number | null = null;
@@ -54,6 +52,8 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   saveFeedback: { message: string; type: 'info' | 'success' | 'error' } | null = null;
 
   ngAfterViewInit(): void {
+    void this.updateDocumentTitle();
+
     if (!window.initInteractiveItineraryEditor) {
       throw new Error('Itinerary editor runtime did not load.');
     }
@@ -123,39 +123,50 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
 
   private openPoiEditorAt(lat: number, lng: number, segmentIndex: number | null, pointId: string | null = null, label = ''): void {
     this.saveEditorDraft();
-    const returnTo = this.router.serializeUrl(this.router.createUrlTree([], {
-      relativeTo: this.route,
-      queryParams: segmentIndex === null ? {} : { segment: segmentIndex },
-      queryParamsHandling: 'merge'
-    }));
     const poiEditorUrl = this.router.serializeUrl(this.router.createUrlTree(['/pois/new'], {
       queryParams: {
         latitude: lat.toFixed(7),
         longitude: lng.toFixed(7),
-        returnTo,
-        returnLabel: 'Back to itinerary editor',
         title: label || null,
         itineraryEditorToken: this.editorSessionToken,
         convertPointId: pointId || null
       }
     }));
-    void this.router.navigateByUrl(poiEditorUrl);
+    window.open(poiEditorUrl, '_blank');
   }
 
   private openPoiEditorForExistingPoi(poiId: string, segmentIndex: number | null): void {
     this.saveEditorDraft();
-    const returnTo = this.router.serializeUrl(this.router.createUrlTree([], {
-      relativeTo: this.route,
-      queryParams: segmentIndex === null ? {} : { segment: segmentIndex },
-      queryParamsHandling: 'merge'
-    }));
     const poiEditorUrl = this.router.serializeUrl(this.router.createUrlTree(['/pois', poiId, 'edit'], {
-      queryParams: {
-        returnTo,
-        returnLabel: 'Back to itinerary editor'
-      }
+      queryParams: segmentIndex === null ? {} : { segment: segmentIndex }
     }));
-    void this.router.navigateByUrl(poiEditorUrl);
+    window.open(poiEditorUrl, '_blank');
+  }
+
+  private async updateDocumentTitle(): Promise<void> {
+    const itineraryId = this.route.snapshot.paramMap.get('id');
+    if (!itineraryId || itineraryId === 'new') {
+      this.title.setTitle('SW IT New');
+      return;
+    }
+
+    this.title.setTitle(`SW IT ${itineraryId}`);
+    try {
+      const itinerary = await this.editorApi.getItinerary(itineraryId);
+      const title = this.stringProperty(itinerary, 'title') || `Itinerary ${itineraryId}`;
+      this.title.setTitle(`SW IT ${this.titlePart(title)}`);
+    } catch {
+      // Keep the id-based title if the itinerary title cannot be loaded.
+    }
+  }
+
+  private stringProperty(value: Record<string, unknown>, key: string): string {
+    const property = value[key];
+    return typeof property === 'string' ? property : '';
+  }
+
+  private titlePart(value: string): string {
+    return value.trim().replace(/\s+/g, ' ') || 'Untitled';
   }
 
   private editorDraftKey(): string {

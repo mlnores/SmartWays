@@ -1,9 +1,11 @@
 import { AfterViewInit, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
+import { Title } from '@angular/platform-browser';
+import { ActivatedRoute, Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 
 import { ApiService, Category, Poi, PoiMedia, PoiMediaTranslation, Translation } from './api.service';
+import { PageInstructionService } from './page-instruction.service';
 
 interface TranslationDraft {
   language_code: string;
@@ -37,26 +39,25 @@ declare const L: any;
 @Component({
   selector: 'app-poi-editor',
   standalone: true,
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule],
   template: `
     <section class="page poi-editor-page">
       <header class="page-header">
         <div class="poi-editor-heading">
           <div>
-            <h1>{{ isNewPoi ? 'New POI' : (poi?.title || 'POI editor') }}</h1>
-            <p>{{ isNewPoi ? 'Create a draft point of interest.' : 'View/edit metadata, translations, and linked media.' }}</p>
-          </div>
-        </div>
-        <div class="publication-switch">
-          <span>State</span>
-          <div class="view-toggle publication-toggle" aria-label="Publication state">
-            <button type="button" [class.active]="!enabled" (click)="enabled = false">Draft</button>
-            <button type="button" [class.active]="enabled" (click)="enabled = true">Public (read-only)</button>
+            <div class="title-with-switch">
+              <h1>{{ isNewPoi ? 'New POI' : (poi?.title || 'POI editor') }}</h1>
+              <div class="publication-switch">
+                <div class="view-toggle publication-toggle" aria-label="Publication state">
+                  <button type="button" [class.active]="!enabled" (click)="enabled = false">Draft</button>
+                  <button type="button" [class.active]="enabled" (click)="enabled = true">Public (read-only)</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="list-actions poi-save-actions">
-          <a class="secondary" [routerLink]="backLink">{{ backLabel }}</a>
-          <button type="button" class="primary" [disabled]="saving || loading || !canSave()" (click)="savePoi()">
+          <button type="button" class="primary" [disabled]="saving || loading || isReadOnlyPublicPoi() || !canSave()" (click)="savePoi()">
             {{ saving ? 'Saving...' : 'Save' }}
           </button>
           @if (statusMessage && !statusIsError) {
@@ -476,6 +477,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly pageInstruction = inject(PageInstructionService);
+  private readonly title = inject(Title);
   private locationMap: any = null;
   private locationMarker: any = null;
   private locationResizeObserver: ResizeObserver | null = null;
@@ -494,9 +497,6 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   geocodingTitle = false;
   activeTab: EditorTab = 'basic';
   activeTranslationIndex = 0;
-  backLink: string | UrlTree = '/pois';
-  backLabel = 'Back to POIs';
-
   enabled = false;
   countryCode = '';
   latitude: number | null = null;
@@ -515,17 +515,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   readonly mediaTypes: PoiMedia['media_type'][] = ['image', 'video', 'audio', 'document', 'link', 'other'];
 
   async ngOnInit(): Promise<void> {
-    const returnTo = this.route.snapshot.queryParamMap.get('returnTo');
-    const returnLabel = this.route.snapshot.queryParamMap.get('returnLabel');
-    if (returnTo?.startsWith('/')) {
-      this.backLink = this.router.parseUrl(returnTo);
-    }
-    if (returnLabel) {
-      this.backLabel = returnLabel;
-    }
-
     const id = this.route.snapshot.paramMap.get('id');
     this.isNewPoi = !id || id === 'new';
+    this.pageInstruction.setInstruction(this.isNewPoi ? 'Create a draft point of interest.' : 'View/edit metadata, translations, and linked media.');
+    this.title.setTitle(this.isNewPoi ? 'SW POI New' : `SW POI ${id}`);
 
     try {
       const categories = await firstValueFrom(this.api.listAllCategories());
@@ -549,6 +542,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.pageInstruction.clearInstruction();
     this.destroyLocationMap();
     this.revokeMediaPreviewUrls();
   }
@@ -874,12 +868,9 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       this.notifyItineraryEditorPoiSaved(finalPoi);
       if (this.isNewPoi) {
         this.isNewPoi = false;
-        const highlightedReturnTo = this.returnToWithHighlight(finalPoi.id);
         void this.router.navigate(['/pois', finalPoi.id, 'edit'], {
           replaceUrl: true,
-          queryParams: highlightedReturnTo
-            ? { ...this.route.snapshot.queryParams, returnTo: highlightedReturnTo }
-            : this.route.snapshot.queryParams
+          queryParams: this.route.snapshot.queryParams
         });
       }
       this.showStatus(this.enabled ? 'POI saved as public.' : 'POI saved as draft.', false);
@@ -905,8 +896,15 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   canSave(): boolean {
+    if (this.isReadOnlyPublicPoi()) {
+      return false;
+    }
     return this.currentSnapshot() !== this.savedSnapshot
       && (this.canEditContent() || Boolean(this.poi && this.poi.enabled !== this.enabled));
+  }
+
+  isReadOnlyPublicPoi(): boolean {
+    return Boolean(this.poi?.enabled && this.enabled);
   }
 
   hasUnsavedChanges(): boolean {
@@ -920,22 +918,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     event.returnValue = '';
   }
 
-  private returnToWithHighlight(poiId: number): string | null {
-    const returnTo = this.route.snapshot.queryParamMap.get('returnTo');
-    if (!returnTo?.startsWith('/pois')) return null;
-
-    const returnUrl = this.router.parseUrl(returnTo);
-    returnUrl.queryParams = {
-      ...returnUrl.queryParams,
-      highlight: String(poiId)
-    };
-    this.backLink = returnUrl;
-    return this.router.serializeUrl(returnUrl);
-  }
-
   private loadPoi(poi: Poi): void {
     this.revokeMediaPreviewUrls();
     this.poi = poi;
+    this.title.setTitle(`SW POI ${this.titlePart(poi.title || `POI ${poi.id}`)}`);
     this.enabled = poi.enabled;
     this.countryCode = poi.country_code || '';
     this.latitude = poi.gps_latitude;
@@ -957,6 +943,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     const latitude = this.queryNumber('latitude') ?? this.queryNumber('lat');
     const longitude = this.queryNumber('longitude') ?? this.queryNumber('lng') ?? this.queryNumber('lon');
     this.poi = null;
+    this.title.setTitle('SW POI New');
     this.enabled = false;
     this.countryCode = '';
     this.latitude = latitude;
@@ -982,6 +969,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     if (Number.isFinite(this.latitude) && Number.isFinite(this.longitude)) {
       void this.updateCountryFromCoordinates();
     }
+  }
+
+  private titlePart(value: string): string {
+    return value.trim().replace(/\s+/g, ' ') || 'Untitled';
   }
 
   private queryNumber(name: string): number | null {

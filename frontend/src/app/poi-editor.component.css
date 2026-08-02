@@ -13,11 +13,12 @@
 
 .poi-editor-page .page-header {
   position: relative;
-  min-height: 70px;
 }
 
 .poi-editor-heading {
-  max-width: min(560px, calc(50% - 150px));
+  flex: 1 1 auto;
+  max-width: none;
+  min-width: 0;
 }
 
 .poi-editor-heading > .muted {
@@ -25,14 +26,8 @@
 }
 
 .publication-switch {
-  position: absolute;
-  left: 50%;
-  top: 0;
-  transform: translateX(-50%);
-  display: grid;
-  justify-items: center;
-  gap: 6px;
-  min-width: 250px;
+  flex: 0 0 auto;
+  display: inline-flex;
   color: #475467;
   font-size: 0.9rem;
   font-weight: 700;
@@ -86,9 +81,7 @@
   }
 
   .publication-switch {
-    position: static;
-    transform: none;
-    justify-self: center;
+    margin-left: 0;
   }
 }
 

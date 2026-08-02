@@ -1,11 +1,13 @@
 import { AsyncPipe } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, firstValueFrom, map, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Itinerary, Route, Translation } from './api.service';
 import { MediaManagerDialogComponent } from './media-manager-dialog.component';
+import { PageInstructionService } from './page-instruction.service';
 
 interface RouteDraft {
   language_code: string;
@@ -74,7 +76,6 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
       <header class="page-header">
         <div>
           <h1>Routes</h1>
-          <p>Browse multi-stage routes.</p>
         </div>
         <button type="button" class="primary" title="New route" aria-label="New route" (click)="openNewRouteDialog()">New route</button>
       </header>
@@ -184,7 +185,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                   </button>
                 }
                 @if (previewRoute) {
-                  <a class="secondary preview-action" [routerLink]="['/route', previewRoute.slug || previewRoute.id]">
+                  <a class="secondary preview-action" [routerLink]="['/route', previewRoute.slug || previewRoute.id]" target="_blank" rel="noopener">
                     <span class="preview-action-icon" aria-hidden="true">📋</span>
                     <span>View itineraries</span>
                   </a>
@@ -352,6 +353,8 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   private readonly activatedRoute = inject(ActivatedRoute);
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
+  private readonly pageInstruction = inject(PageInstructionService);
+  private readonly title = inject(Title);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
   readonly languageOptions = LANGUAGE_OPTIONS;
@@ -409,11 +412,17 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     startWith({ routes: [] as Route[], error: '' })
   );
 
+  constructor() {
+    this.pageInstruction.setInstruction('Browse multi-stage routes.');
+    this.title.setTitle('SW Routes');
+  }
+
   ngAfterViewInit(): void {
     this.initializePreviewMap();
   }
 
   ngOnDestroy(): void {
+    this.pageInstruction.clearInstruction();
     this.previewResizeObserver?.disconnect();
     this.previewResizeObserver = null;
     if (this.previewMap) {
@@ -462,7 +471,12 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   }
 
   openRouteItineraries(route: Route): void {
-    void this.router.navigate(['/route', route.slug || route.id]);
+    this.openRouteInNewTab(route);
+  }
+
+  private openRouteInNewTab(route: Route): void {
+    const url = this.router.serializeUrl(this.router.createUrlTree(['/route', route.slug || route.id]));
+    window.open(url, '_blank', 'noopener');
   }
 
   previewColorForRoute(route: Route): string {
