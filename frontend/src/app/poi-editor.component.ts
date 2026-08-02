@@ -49,8 +49,8 @@ declare const L: any;
               <h1>{{ isNewPoi ? 'New POI' : (poi?.title || 'POI editor') }}</h1>
               <div class="publication-switch">
                 <div class="view-toggle publication-toggle" aria-label="Publication state">
-                  <button type="button" [class.active]="!enabled" (click)="enabled = false">Draft</button>
-                  <button type="button" [class.active]="enabled" (click)="enabled = true">Public (read-only)</button>
+                  <button type="button" [class.active]="!enabled" (click)="setPublicationState(false)">Draft</button>
+                  <button type="button" [class.active]="enabled" (click)="setPublicationState(true)">Public (read-only)</button>
                 </div>
               </div>
             </div>
@@ -76,12 +76,12 @@ declare const L: any;
         <div class="editor-shell">
           <nav class="editor-tabs" aria-label="POI editor sections">
             <button type="button" [class.active]="activeTab === 'basic'" (click)="setActiveTab('basic')">Basic info</button>
-            <button type="button" [class.active]="activeTab === 'translations'" (click)="setActiveTab('translations')">Translations</button>
             <button type="button" [class.active]="activeTab === 'media'" (click)="setActiveTab('media')">Media</button>
+            <button type="button" [class.active]="activeTab === 'translations'" (click)="setActiveTab('translations')">Translations</button>
           </nav>
 
           @if (activeTab === 'basic') {
-            <section class="editor-panel">
+            <section class="editor-panel basic-editor-panel">
               <div class="basic-layout">
                 <div class="basic-form-panel">
                   <div class="section-heading">
@@ -220,8 +220,32 @@ declare const L: any;
                 </div>
 
                 <div class="location-picker">
-                  <span>Pick location on map</span>
+                  @if (canEditContent()) {
+                    <h2>Pick location on map</h2>
+                  }
                   <div class="location-map" #locationMap></div>
+                  <section class="basic-media-preview">
+                    <h2>Media preview</h2>
+                    <div class="basic-media-strip" aria-label="POI media preview">
+                      @for (item of media; track $index) {
+                        <a
+                          class="basic-media-thumb"
+                          [attr.href]="mediaDisplayUrl(item) || null"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          [attr.title]="mediaCaptionLabel(item, $index)"
+                        >
+                          @if (item.media_type === 'image' && mediaDisplayUrl(item)) {
+                            <img [src]="mediaDisplayUrl(item)" alt="" />
+                          } @else {
+                            <span>{{ mediaTypeLabel(item.media_type) }}</span>
+                          }
+                        </a>
+                      } @empty {
+                        <p class="muted">No media linked to this POI.</p>
+                      }
+                    </div>
+                  </section>
                 </div>
               </div>
             </section>
@@ -376,12 +400,9 @@ declare const L: any;
           }
 
           @if (activeTab === 'media') {
-            <section class="editor-panel">
-              <div class="section-heading">
-                <h2>Linked media</h2>
-                @if (canEditContent()) {
-                  <button type="button" class="secondary" (click)="addMedia()">Add media</button>
-                }
+            <section class="editor-panel media-editor-panel">
+              <div class="media-fixed-actions">
+                <button type="button" class="secondary" [disabled]="!canEditContent()" (click)="addMedia()">Add media</button>
               </div>
 
               <div class="media-list">
@@ -807,10 +828,6 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
 
-    if (this.poi && this.poi.enabled !== this.enabled && !this.confirmPublicationStateChange()) {
-      return;
-    }
-
     if (this.poi?.enabled && !this.enabled) {
       this.saving = true;
       try {
@@ -885,13 +902,19 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.isNewPoi || !this.poi || !this.poi.enabled || !this.enabled;
   }
 
-  private confirmPublicationStateChange(): boolean {
+  setPublicationState(enabled: boolean): void {
+    if (this.enabled === enabled) return;
+    if (!this.confirmPublicationStateChange(enabled)) return;
+    this.enabled = enabled;
+  }
+
+  private confirmPublicationStateChange(enabled: boolean): boolean {
     if (!this.poi) return true;
-    if (this.enabled) {
-      return window.confirm('Really make this POI public?');
+    if (enabled) {
+      return window.confirm(`Really make POI "${this.poi.title || 'Untitled POI'}" public?`);
     }
     return window.confirm(
-      'Really turn this POI to draft?\n\nItineraries containing this POI, and routes containing those itineraries, will also be turned to draft.'
+      `Really turn POI "${this.poi.title || 'Untitled POI'}" to draft?\n\nItineraries containing this POI, and routes containing those itineraries, will also be turned to draft.`
     );
   }
 
