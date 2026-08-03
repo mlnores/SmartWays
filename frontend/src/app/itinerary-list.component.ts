@@ -293,15 +293,20 @@ declare const L: any;
                       <span>Turn to draft</span>
                     </button>
                   }
+                  <button type="button" class="secondary preview-action" [disabled]="previewItinerary.enabled" (click)="openSelectedItineraryMediaDialog(previewItinerary)">
+                    <span class="preview-action-icon" aria-hidden="true">🖼️</span>
+                    <span>Manage metadata, media and translations</span>
+                  </button>
                   @if (!previewItinerary.enabled) {
-                    <button type="button" class="secondary preview-action" (click)="openSelectedItineraryMediaDialog(previewItinerary)">
-                      <span class="preview-action-icon" aria-hidden="true">🖼️</span>
-                      <span>Manage metadata, media and translations</span>
-                    </button>
                     <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'edit']" target="_blank" rel="noopener">
                       <span class="preview-action-icon" aria-hidden="true">🗺️</span>
                       <span>Open in editor</span>
                     </a>
+                  } @else {
+                    <button type="button" class="secondary preview-action" disabled>
+                      <span class="preview-action-icon" aria-hidden="true">🗺️</span>
+                      <span>Open in editor</span>
+                    </button>
                   }
                   <a class="secondary preview-action" [routerLink]="['/itineraries', previewItinerary.id, 'pois']" target="_blank" rel="noopener">
                     <span class="preview-action-icon" aria-hidden="true">📍</span>
@@ -311,16 +316,14 @@ declare const L: any;
                     <span class="preview-action-icon" aria-hidden="true">📄</span>
                     <span>{{ duplicatingIds.has(previewItinerary.id) ? 'Duplicating...' : 'Duplicate' }}</span>
                   </button>
-                  @if (!previewItinerary.enabled) {
-                    <button type="button" class="secondary preview-action" (click)="openRouteInclusionDialog()">
-                      <span class="preview-action-icon" aria-hidden="true">🔗</span>
-                      <span>Manage route inclusions</span>
-                    </button>
-                    <button type="button" class="secondary preview-action danger-action" (click)="deleteItinerary(previewItinerary)">
-                      <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                      <span>Delete itinerary</span>
-                    </button>
-                  }
+                  <button type="button" class="secondary preview-action" [disabled]="previewItinerary.enabled" (click)="openRouteInclusionDialog()">
+                    <span class="preview-action-icon" aria-hidden="true">🔗</span>
+                    <span>Manage route inclusions</span>
+                  </button>
+                  <button type="button" class="secondary preview-action danger-action" [disabled]="previewItinerary.enabled" (click)="deleteItinerary(previewItinerary)">
+                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                    <span>Delete itinerary</span>
+                  </button>
                 }
               </div>
             </aside>

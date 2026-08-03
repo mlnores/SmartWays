@@ -126,6 +126,12 @@
   font-weight: 700;
 }
 
+.editor-tabs button:disabled,
+.translation-tab:disabled {
+  color: #98a2b3;
+  cursor: not-allowed;
+}
+
 .editor-panel {
   min-height: 0;
   overflow: auto;

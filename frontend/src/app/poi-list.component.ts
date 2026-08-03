@@ -325,12 +325,10 @@ declare const turf: any;
                     <span class="preview-action-icon" aria-hidden="true">📄</span>
                     <span>{{ duplicatingPoiIds.has(previewPoi.id) ? 'Duplicating...' : 'Duplicate' }}</span>
                   </button>
-                  @if (!previewPoi.enabled) {
-                    <button type="button" class="secondary preview-action danger-action" (click)="deletePoi(previewPoi)">
-                      <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                      <span>Delete POI</span>
-                    </button>
-                  }
+                  <button type="button" class="secondary preview-action danger-action" [disabled]="previewPoi.enabled" (click)="deletePoi(previewPoi)">
+                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                    <span>Delete POI</span>
+                  </button>
                 }
               </div>
             </aside>

@@ -222,7 +222,7 @@ aside {
 }
 
 .panel-content {
-  padding: 16px;
+  padding: 10px 8px 8px;
   border-bottom: 1px solid var(--border);
   background: #fafafa;
   box-shadow: 0 6px 16px rgb(0 0 0 / 0.04);
@@ -261,53 +261,24 @@ h1 {
   font-size: 1.25rem;
 }
 
-.panel-header {
+.map-action-overlay {
+  position: absolute;
+  top: 16px;
+  left: calc(var(--panel-width) + 50px);
+  z-index: 1200;
   display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.panel-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  position: relative;
-}
-
-.panel-header-actions {
-  display: flex;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: nowrap;
-  justify-content: flex-end;
-  align-items: flex-start;
+  justify-content: flex-start;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid #cfd6e3;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.92);
+  box-shadow: 0 6px 18px rgb(15 23 42 / 0.16);
 }
 
-.header-action-stack {
-  display: grid;
-  gap: 6px;
-}
-
-.header-action-row {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-@media (max-width: 430px) {
-  .panel-header {
-    flex-wrap: wrap;
-  }
-
-  .panel-header-actions {
-    width: 100%;
-    justify-content: space-between;
-  }
-}
-
-.panel-header-actions button {
+.map-action-overlay button {
   padding: 5px 8px;
   font-size: 0.82rem;
 }
@@ -317,6 +288,14 @@ h1 {
   min-width: 34px;
   font-size: 1rem;
   line-height: 1;
+}
+
+@media (max-width: 430px) {
+  .map-action-overlay {
+    left: calc(var(--panel-width) + 12px);
+    right: 12px;
+    flex-wrap: wrap;
+  }
 }
 
 .save-toast {
@@ -418,7 +397,7 @@ input {
 .tabs {
   display: flex;
   gap: 6px;
-  margin-top: 14px;
+  margin-top: 0;
   border-bottom: 1px solid var(--border);
 }
 

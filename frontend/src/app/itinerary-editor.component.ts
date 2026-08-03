@@ -6,6 +6,7 @@ import { ItineraryEditorDialogsComponent } from './itinerary-editor-dialogs.comp
 import { ItineraryEditorMapComponent } from './itinerary-editor-map.component';
 import { ItineraryEditorSidebarComponent } from './itinerary-editor-sidebar.component';
 import { ItineraryEditorApi, ItineraryEditorRuntime, SearchType } from './itinerary-editor.types';
+import { PageInstructionService } from './page-instruction.service';
 
 declare global {
   interface Window {
@@ -45,6 +46,7 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   private readonly editorApi = inject(EditorApiService);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly title = inject(Title);
+  private readonly pageInstruction = inject(PageInstructionService);
   private readonly editorSessionToken = globalThis.crypto?.randomUUID?.() || `editor-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   private editor: ItineraryEditorRuntime | null = null;
   private saveFeedbackTimer: number | null = null;
@@ -52,6 +54,7 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   saveFeedback: { message: string; type: 'info' | 'success' | 'error' } | null = null;
 
   ngAfterViewInit(): void {
+    this.pageInstruction.setInstruction('Build and edit an itinerary by adding POIs and waypoints, arranging stops, and saving the route geometry.');
     void this.updateDocumentTitle();
 
     if (!window.initInteractiveItineraryEditor) {
@@ -106,6 +109,7 @@ export class ItineraryEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.pageInstruction.clearInstruction();
     if (this.saveFeedbackTimer !== null) {
       window.clearTimeout(this.saveFeedbackTimer);
       this.saveFeedbackTimer = null;

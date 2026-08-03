@@ -8,10 +8,6 @@ import { SearchType } from './itinerary-editor.types';
   templateUrl: './itinerary-editor-sidebar.component.html'
 })
 export class ItineraryEditorSidebarComponent {
-  @Output() readonly revertItinerary = new EventEmitter<void>();
-  @Output() readonly undoItinerary = new EventEmitter<void>();
-  @Output() readonly redoItinerary = new EventEmitter<void>();
-  @Output() readonly saveItinerary = new EventEmitter<void>();
   @Output() readonly tabSelected = new EventEmitter<SearchType>();
   @Output() readonly searchInput = new EventEmitter<SearchType>();
   @Output() readonly searchKeydown = new EventEmitter<{ type: SearchType; event: KeyboardEvent }>();

@@ -1,9 +1,5 @@
 <main class="app" #editorRoot>
   <app-itinerary-editor-sidebar
-    (revertItinerary)="revertItinerary()"
-    (undoItinerary)="undoItinerary()"
-    (redoItinerary)="redoItinerary()"
-    (saveItinerary)="saveItinerary()"
     (tabSelected)="activateTab($event)"
     (searchInput)="handleSearchInput($event)"
     (searchKeydown)="handleSearchKeydown($event.type, $event.event)"
@@ -37,6 +33,13 @@
     (poiBrowserListFocusin)="handlePoiBrowserListFocusin($event)"
     (poiBrowserListFocusout)="handlePoiBrowserListFocusout($event)"
   ></app-itinerary-editor-map>
+
+  <div class="map-action-overlay" aria-label="Itinerary state actions">
+    <button id="revertItinerary" type="button" title="Revert to last saved itinerary" (click)="revertItinerary()">Revert</button>
+    <button id="saveItinerary" type="button" class="primary" title="Save current itinerary" (click)="saveItinerary()">Save</button>
+    <button id="undoItinerary" type="button" aria-label="Undo last itinerary change" title="Undo last itinerary change (Cmd/Ctrl+Z)" (click)="undoItinerary()">↶</button>
+    <button id="redoItinerary" type="button" aria-label="Redo last undone itinerary change" title="Redo last undone itinerary change (Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)" (click)="redoItinerary()">↷</button>
+  </div>
 
   @if (saveFeedback) {
     <div class="save-toast" [class.error]="saveFeedback.type === 'error'" [class.success]="saveFeedback.type === 'success'" role="status" aria-live="polite">

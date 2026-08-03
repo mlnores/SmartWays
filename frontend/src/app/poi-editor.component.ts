@@ -268,9 +268,7 @@ declare const L: any;
                       <span>{{ translation.language_code || 'New language' }}</span>
                     </button>
                   }
-                  @if (canEditContent()) {
-                    <button type="button" class="translation-tab add-tab" (click)="addTranslation()">+</button>
-                  }
+                  <button type="button" class="translation-tab add-tab" [disabled]="!canEditContent()" (click)="addTranslation()">+</button>
                 </div>
 
                 @if (activeTranslation(); as translation) {
@@ -283,9 +281,7 @@ declare const L: any;
                       @if (translation.is_reference) {
                         <span class="reference-pill"><span aria-hidden="true">★</span> Reference language</span>
                       } @else {
-                        @if (canEditContent()) {
-                          <button type="button" class="secondary" (click)="setReferenceTranslation(activeTranslationIndex)">Make reference</button>
-                        }
+                        <button type="button" class="secondary" [disabled]="!canEditContent()" (click)="setReferenceTranslation(activeTranslationIndex)">Make reference</button>
                       }
                     </div>
 
@@ -388,11 +384,9 @@ declare const L: any;
                         </section>
                       </div>
                     }
-                    @if (canEditContent() && translations.length > 1) {
-                      <button type="button" class="secondary danger-action" (click)="removeTranslation(activeTranslationIndex)">
-                        Remove this translation
-                      </button>
-                    }
+                    <button type="button" class="secondary danger-action" [disabled]="!canEditContent() || translations.length <= 1" (click)="removeTranslation(activeTranslationIndex)">
+                      Remove this translation
+                    </button>
                   </section>
                 }
               </div>
@@ -476,9 +470,7 @@ declare const L: any;
                         ></textarea>
                       </label>
                     </div>
-                    @if (canEditContent()) {
-                      <button type="button" class="secondary danger-action" (click)="removeMedia($index)">Remove</button>
-                    }
+                    <button type="button" class="secondary danger-action" [disabled]="!canEditContent()" (click)="removeMedia($index)">Remove</button>
                   </article>
                 } @empty {
                   <p class="muted">No media linked to this POI yet.</p>

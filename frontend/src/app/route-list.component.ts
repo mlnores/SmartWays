@@ -189,16 +189,14 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                     <span class="preview-action-icon" aria-hidden="true">📋</span>
                     <span>View itineraries</span>
                   </a>
-                  @if (!previewRoute.enabled) {
-                    <button type="button" class="secondary preview-action" (click)="openSelectedRouteMediaDialog(previewRoute)">
-                      <span class="preview-action-icon" aria-hidden="true">🖼️</span>
-                      <span>Manage metadata, media and translations</span>
-                    </button>
-                    <button type="button" class="secondary preview-action danger-action" (click)="deleteRoute(previewRoute)">
-                      <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                      <span>Delete route</span>
-                    </button>
-                  }
+                  <button type="button" class="secondary preview-action" [disabled]="previewRoute.enabled" (click)="openSelectedRouteMediaDialog(previewRoute)">
+                    <span class="preview-action-icon" aria-hidden="true">🖼️</span>
+                    <span>Manage metadata, media and translations</span>
+                  </button>
+                  <button type="button" class="secondary preview-action danger-action" [disabled]="previewRoute.enabled" (click)="deleteRoute(previewRoute)">
+                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                    <span>Delete route</span>
+                  </button>
                 }
               </div>
             </aside>

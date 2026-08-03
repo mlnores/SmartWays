@@ -1,22 +1,5 @@
 <aside>
   <div class="panel-content">
-    <div class="panel-header">
-      <div class="panel-title">
-        <h1>Itinerary Editor</h1>
-      </div>
-      <div class="panel-header-actions" aria-label="Itinerary state actions">
-        <span class="header-action-stack">
-          <span class="header-action-row">
-            <button id="revertItinerary" type="button" title="Revert to last saved itinerary" (click)="revertItinerary.emit()">Revert</button>
-            <button id="saveItinerary" type="button" class="primary" title="Save current itinerary" (click)="saveItinerary.emit()">Save</button>
-          </span>
-          <span class="header-action-row">
-            <button id="undoItinerary" type="button" aria-label="Undo last itinerary change" title="Undo last itinerary change (Cmd/Ctrl+Z)" (click)="undoItinerary.emit()">↶</button>
-            <button id="redoItinerary" type="button" aria-label="Redo last undone itinerary change" title="Redo last undone itinerary change (Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)" (click)="redoItinerary.emit()">↷</button>
-          </span>
-        </span>
-      </div>
-    </div>
     <div class="tabs" role="tablist" aria-label="Add itinerary items">
       <button
         class="tab-button active"
@@ -52,8 +35,7 @@
       data-tab-panel="poi"
     >
       <div class="search-box">
-        <label for="poiSearch">Search POI</label>
-        <input id="poiSearch" type="search" autocomplete="off" placeholder="Search POI by name or category" (input)="searchInput.emit('poi')" (keydown)="searchKeydown.emit({ type: 'poi', event: $event })" />
+        <input id="poiSearch" type="search" autocomplete="off" placeholder="Search POI by name or category" aria-label="Search POI by name or category" (input)="searchInput.emit('poi')" (keydown)="searchKeydown.emit({ type: 'poi', event: $event })" />
         <ol class="search-results" id="poiSearchResults" (click)="searchResultsClick.emit({ type: 'poi', event: $event })"></ol>
         <div class="search-filter-row">
           <label class="checkbox-row" for="poiSearchVisibleMapOnly">

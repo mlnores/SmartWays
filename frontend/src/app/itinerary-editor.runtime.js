@@ -932,11 +932,21 @@
           });
         }
 
-        function notifyDirtyState(force = false) {
-          const isDirty = savedItineraryState ? itineraryDirtySnapshot() !== JSON.stringify({
+        function isItineraryDirty() {
+          return savedItineraryState ? itineraryDirtySnapshot() !== JSON.stringify({
             points: savedItineraryExport?.points || [],
             segments: savedItineraryExport?.segments || []
           }) : points.length > 0;
+        }
+
+        function updateSaveRevertButtons(isDirty = isItineraryDirty()) {
+          getElementById("saveItinerary").disabled = !isDirty;
+          getElementById("revertItinerary").disabled = !savedItineraryState || !isDirty;
+        }
+
+        function notifyDirtyState(force = false) {
+          const isDirty = isItineraryDirty();
+          updateSaveRevertButtons(isDirty);
           if (force || isDirty !== lastDirtyState) {
             lastDirtyState = isDirty;
             dirtyStateChanged?.(isDirty);
@@ -948,6 +958,8 @@
         }
     
         async function saveItinerary() {
+          if (!isItineraryDirty()) return;
+
           const stateToSave = currentItineraryState();
           const exportToSave = itineraryExportFromState(stateToSave);
 
@@ -1114,7 +1126,7 @@
             undoStack = [];
             redoStack = [];
             savedItineraryState = currentItineraryState();
-            savedItineraryExport = itineraryJson;
+            savedItineraryExport = itineraryExportFromState(savedItineraryState);
             itineraryMetadata = {
               enabled: Boolean(itinerary.enabled),
               language: "en",
@@ -1193,6 +1205,8 @@
         }
     
         function revertItinerary() {
+          if (!isItineraryDirty()) return;
+
           if (!savedItineraryState) {
             alert("There is no saved itinerary to revert to yet.");
             return;
@@ -2373,6 +2387,13 @@
         mapElement.addEventListener("click", suppressPopupActionMapClick, true);
     
         const documentKeydownHandler = event => {
+          if (event.key === "Escape" && routeDialog.open) {
+            event.preventDefault();
+            event.stopPropagation();
+            routeDialog.close();
+            return;
+          }
+
           if (handleHistoryShortcut(event)) return;
     
           if (event.target.closest("input, textarea, select")) return;
@@ -2395,6 +2416,12 @@
           }
         };
         document.addEventListener("keydown", documentKeydownHandler);
+
+        routeDialog.addEventListener("cancel", event => {
+          event.preventDefault();
+          event.stopPropagation();
+          routeDialog.close();
+        });
     
         function addDetailedPoiToItinerary() {
           if (!detailedPoi) return;
