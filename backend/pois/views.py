@@ -4,13 +4,16 @@ from functools import lru_cache
 from pathlib import Path
 
 from django.conf import settings
+from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.gis.geos import GEOSGeometry, Point, Polygon
 from django.db import transaction
 from django.http import JsonResponse
 from django.db.models import Q
+from django.middleware.csrf import get_token
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework import status, viewsets
-from rest_framework.decorators import action
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ParseError, ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
@@ -42,7 +45,9 @@ from .serializers import (
     RouteMediaSerializer,
     RouteSerializer,
     RouteTranslationSerializer,
+    UserSerializer,
     select_translation,
+    user_role,
 )
 
 DEFAULT_COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parent / "data" / "geoboundaries_adm0.geojson"
@@ -72,6 +77,78 @@ FULL_COUNTRY_BOUNDS_OVERRIDES = {
     # geoBoundaries lists Greenland separately as GL; use the broader Danish realm only for fallback.
     "DK": [[54.45, -73.10], [83.65, 15.25]],
 }
+
+
+class IsEditorOrAdmin(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.is_active)
+
+
+class IsAdminRole(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and request.user.is_active
+            and user_role(request.user) == "admin"
+        )
+
+
+class ManagementApiViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsEditorOrAdmin]
+
+
+def current_user_payload(user):
+    return UserSerializer(user).data
+
+
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+@ensure_csrf_cookie
+def csrf_token(request):
+    return Response({"detail": "CSRF cookie set.", "csrfToken": get_token(request)})
+
+
+@api_view(["POST"])
+@permission_classes([permissions.AllowAny])
+def login_view(request):
+    username = (request.data.get("username") or "").strip()
+    password = request.data.get("password") or ""
+    user = authenticate(request, username=username, password=password)
+    if user is None or not user.is_active:
+        return Response({"detail": "Invalid username or password."}, status=status.HTTP_400_BAD_REQUEST)
+    login(request, user)
+    return Response(current_user_payload(user))
+
+
+@csrf_exempt
+def logout_view(request):
+    if request.method != "POST":
+        return JsonResponse({"detail": "Use POST."}, status=405)
+    if not request.user.is_authenticated or not request.user.is_active:
+        return JsonResponse({"detail": "Logged out."})
+    logout(request)
+    return JsonResponse({"detail": "Logged out."})
+
+
+@api_view(["GET"])
+@permission_classes([IsEditorOrAdmin])
+def current_user_view(request):
+    return Response(current_user_payload(request.user))
+
+
+class UserViewSet(ManagementApiViewSet):
+    serializer_class = UserSerializer
+    permission_classes = [IsAdminRole]
+    queryset = get_user_model().objects.order_by("id")
+
+    def destroy(self, request, *args, **kwargs):
+        user = self.get_object()
+        if user == request.user:
+            raise ValidationError({"detail": "You cannot deactivate your own account."})
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 def country_code_from_boundary_properties(properties):
@@ -201,6 +278,9 @@ def buffer_geometry_from_geojson(geometry):
 def buffer_poi_lookup(request):
     if request.method == "OPTIONS":
         return cors_json_response({})
+
+    if not request.user.is_authenticated or not request.user.is_active:
+        return cors_json_response({"detail": "Authentication credentials were not provided."}, status=401)
 
     if request.method != "POST":
         return cors_json_response({"detail": "Use POST."}, status=405)
@@ -530,7 +610,7 @@ class DraftParentOnlyMutationMixin(DraftOnlyMutationMixin):
         ensure_draft(parent, self.draft_label)
 
 
-class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
+class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiViewSet):
     draft_label = "POI"
     serializer_class = POISerializer
     map_individual_limit = 250
@@ -746,7 +826,7 @@ class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelVie
         return Response({"country": country_code_for_point(latitude, longitude)})
 
 
-class POITranslationViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+class POITranslationViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
     draft_label = "POI"
     parent_attribute = "poi"
     serializer_class = POITranslationSerializer
@@ -765,7 +845,7 @@ class POITranslationViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet)
         return queryset
 
 
-class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
+class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiViewSet):
     draft_label = "itinerary"
     serializer_class = ItinerarySerializer
 
@@ -830,7 +910,7 @@ class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.Mo
         return queryset.distinct()
 
 
-class RouteViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelViewSet):
+class RouteViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiViewSet):
     draft_label = "route"
     serializer_class = RouteSerializer
 
@@ -1015,7 +1095,7 @@ class RouteViewSet(DraftOnlyMutationMixin, LanguageContextMixin, viewsets.ModelV
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-class RouteTranslationViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+class RouteTranslationViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
     draft_label = "route"
     parent_attribute = "route"
     serializer_class = RouteTranslationSerializer
@@ -1034,7 +1114,7 @@ class RouteTranslationViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSe
         return queryset
 
 
-class ItineraryTranslationViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+class ItineraryTranslationViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
     draft_label = "itinerary"
     parent_attribute = "itinerary"
     serializer_class = ItineraryTranslationSerializer
@@ -1053,7 +1133,7 @@ class ItineraryTranslationViewSet(DraftParentOnlyMutationMixin, viewsets.ModelVi
         return queryset
 
 
-class CategoryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
+class CategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
     serializer_class = CategorySerializer
     queryset = Category.objects.prefetch_related("translations").all()
 
@@ -1090,7 +1170,7 @@ class CategoryViewSet(LanguageContextMixin, viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-class CategoryTranslationViewSet(viewsets.ModelViewSet):
+class CategoryTranslationViewSet(ManagementApiViewSet):
     serializer_class = CategoryTranslationSerializer
     queryset = CategoryTranslation.objects.select_related("category").all()
 
@@ -1107,7 +1187,7 @@ class CategoryTranslationViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class POIMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+class POIMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
     draft_label = "POI"
     parent_attribute = "poi"
     serializer_class = POIMediaSerializer
@@ -1134,7 +1214,7 @@ class POIMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
             POIMedia.objects.filter(poi=media.poi, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
 
-class RouteMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+class RouteMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
     draft_label = "route"
     parent_attribute = "route"
     serializer_class = RouteMediaSerializer
@@ -1159,7 +1239,7 @@ class RouteMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
             RouteMedia.objects.filter(route=media.route, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
 
-class ItineraryMediaViewSet(DraftParentOnlyMutationMixin, viewsets.ModelViewSet):
+class ItineraryMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
     draft_label = "itinerary"
     parent_attribute = "itinerary"
     serializer_class = ItineraryMediaSerializer

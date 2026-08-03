@@ -2,9 +2,7 @@ import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http'
 import { Injectable } from '@angular/core';
 import { firstValueFrom, Observable } from 'rxjs';
 
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
-const PHOTON_BASE_URL = 'https://photon.komoot.io';
-const WALKING_ROUTE_BASE_URL = 'https://routing.openstreetmap.de/routed-foot/route/v1/foot';
+import { API_BASE_URL, PHOTON_BASE_URL, WALKING_ROUTE_BASE_URL } from './api-config';
 
 export interface EditorPoiSearchRequest {
   query: string;

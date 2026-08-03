@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from types import SimpleNamespace
 
+from django.contrib.auth import get_user_model
 from django.contrib.gis.geos import Point
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
@@ -38,8 +39,78 @@ from .models import (
 )
 
 
+class AuthAPITests(APITestCase):
+    def test_management_api_requires_login(self):
+        response = self.client.get(reverse("poi-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_login_returns_current_user(self):
+        get_user_model().objects.create_user(
+            username="editor",
+            email="editor@example.com",
+            password="secret-password",
+        )
+
+        response = self.client.post(
+            reverse("auth-login"),
+            {"username": "editor", "password": "secret-password"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["username"], "editor")
+        self.assertEqual(response.data["email"], "editor@example.com")
+        self.assertEqual(response.data["role"], "editor")
+
+    def test_logout_clears_session(self):
+        get_user_model().objects.create_user(
+            username="editor",
+            email="editor@example.com",
+            password="secret-password",
+        )
+        self.client.login(username="editor", password="secret-password")
+
+        logout_response = self.client.post(reverse("auth-logout"))
+        me_response = self.client.get(reverse("auth-me"))
+
+        self.assertEqual(logout_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(me_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_user_management_is_admin_only(self):
+        editor = get_user_model().objects.create_user(username="editor", password="secret-password")
+        self.client.force_authenticate(editor)
+
+        editor_response = self.client.get(reverse("user-list"))
+
+        admin = get_user_model().objects.create_user(username="admin", password="secret-password", is_staff=True)
+        self.client.force_authenticate(admin)
+        admin_response = self.client.post(
+            reverse("user-list"),
+            {
+                "username": "new-editor",
+                "email": "new-editor@example.com",
+                "role": "editor",
+                "is_active": True,
+                "password": "secret-password",
+            },
+            format="json",
+        )
+
+        self.assertEqual(editor_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(admin_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(admin_response.data["username"], "new-editor")
+        self.assertEqual(admin_response.data["role"], "editor")
+
+
 class POIAPITests(APITestCase):
     def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="editor",
+            email="editor@example.com",
+            password="secret-password",
+        )
+        self.client.login(username="editor", password="secret-password")
         self.category = Category.objects.create(slug="heritage")
         CategoryTranslation.objects.create(
             category=self.category,

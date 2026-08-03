@@ -1,6 +1,8 @@
 import json
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.contrib.gis.geos import Point
 from django.utils.text import slugify
 from rest_framework import serializers
@@ -22,6 +24,28 @@ from .models import (
     RouteStage,
     RouteTranslation,
 )
+
+
+ADMIN_GROUP_NAME = "Admins"
+EDITOR_GROUP_NAME = "Editors"
+
+
+def user_role(user):
+    if user.is_superuser or user.is_staff or user.groups.filter(name=ADMIN_GROUP_NAME).exists():
+        return "admin"
+    return "editor"
+
+
+def apply_user_role(user, role):
+    admins, _ = Group.objects.get_or_create(name=ADMIN_GROUP_NAME)
+    editors, _ = Group.objects.get_or_create(name=EDITOR_GROUP_NAME)
+    user.groups.remove(admins, editors)
+    if role == "admin":
+        user.is_staff = True
+        user.groups.add(admins)
+    else:
+        user.is_staff = False
+        user.groups.add(editors)
 
 
 def select_translation(translations, language_code):
@@ -78,6 +102,46 @@ def normalize_reference_translation(translations):
         )
     if reference_count == 0:
         translations[0]["is_reference"] = True
+
+
+class UserSerializer(serializers.ModelSerializer):
+    role = serializers.ChoiceField(choices=["admin", "editor"], required=False)
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = get_user_model()
+        fields = ["id", "username", "email", "role", "is_active", "password"]
+        read_only_fields = ["id"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["role"] = user_role(instance)
+        return data
+
+    def create(self, validated_data):
+        role = validated_data.pop("role", "editor")
+        password = validated_data.pop("password", "")
+        user = get_user_model()(**validated_data)
+        if password:
+            user.set_password(password)
+        else:
+            user.set_unusable_password()
+        user.save()
+        apply_user_role(user, role)
+        user.save(update_fields=["is_staff"])
+        return user
+
+    def update(self, instance, validated_data):
+        role = validated_data.pop("role", None)
+        password = validated_data.pop("password", None)
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        if password:
+            instance.set_password(password)
+        if role:
+            apply_user_role(instance, role)
+        instance.save()
+        return instance
 
 
 class POITranslationSerializer(serializers.ModelSerializer):

@@ -2,13 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { EMPTY, Observable, expand, map, reduce, shareReplay } from 'rxjs';
 
-const SMARTWAYS_CONFIG = globalThis as typeof globalThis & {
-  SMARTWAYS_CONFIG?: {
-    apiBaseUrl?: string;
-  };
-};
-const API_BASE_URL = SMARTWAYS_CONFIG.SMARTWAYS_CONFIG?.apiBaseUrl || 'http://127.0.0.1:8000/api';
-const PHOTON_BASE_URL = 'https://photon.komoot.io';
+import { API_BASE_URL, PHOTON_BASE_URL } from './api-config';
 
 export interface ApiPage<T> {
   count: number;

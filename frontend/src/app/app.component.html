@@ -8,9 +8,18 @@
     }
   </div>
   <nav aria-label="Main navigation">
-    <a routerLink="/routes" routerLinkActive="active">Routes</a>
-    <a routerLink="/itineraries" routerLinkActive="active">Itineraries</a>
-    <a routerLink="/pois" routerLinkActive="active">POIs</a>
+    @if (currentUser$ | async; as currentUser) {
+      <a routerLink="/routes" routerLinkActive="active">Routes</a>
+      <a routerLink="/itineraries" routerLinkActive="active">Itineraries</a>
+      <a routerLink="/pois" routerLinkActive="active">POIs</a>
+      @if (currentUser.role === 'admin') {
+        <a routerLink="/users" routerLinkActive="active">Users</a>
+      }
+      <span class="user-label">{{ currentUser.username }}</span>
+      <button class="logout-button" type="button" (click)="logout()">Log out</button>
+    } @else {
+      <a routerLink="/login" routerLinkActive="active">Log in</a>
+    }
   </nav>
 </header>
 

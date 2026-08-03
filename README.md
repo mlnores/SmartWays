@@ -308,10 +308,43 @@ The Docker MinIO service uses `SMARTWAYS_MEDIA_ACCESS_KEY`, `SMARTWAYS_MEDIA_SEC
 
 Uploaded media is stored in the Docker volume `smartways_minio_data`, so it survives container rebuilds. Remove that volume only when you intentionally want to delete uploaded files.
 
-### Create An Admin User
+### User Management
 
 ```bash
 docker compose run --rm backend python manage.py createsuperuser
+```
+
+This creates the first unrestricted administrator account. After the stack is running, use that account to log into the SmartWays management interface:
+
+```text
+http://localhost:4200/login
+```
+
+The current management pages for routes, itineraries, POIs, categories, and media require a logged-in active user. Unauthenticated users are redirected to the login page. Public, customer-oriented browsing pages are expected to be added separately.
+
+SmartWays currently uses Django's built-in user model and two application roles:
+
+- `Admin`: unrestricted access to the management interface and the `/users` account-management page.
+- `Editor`: unrestricted access to the management interface, but no access to user account management.
+
+Administrators can manage accounts from:
+
+```text
+http://localhost:4200/users
+```
+
+The user-management page supports creating users, editing username and email, changing role, activating/deactivating accounts, and setting a new password. Passwords are write-only and are not displayed after saving.
+
+The Django admin is still available for direct inspection and maintenance:
+
+```text
+http://localhost:4200/admin/
+```
+
+Use the frontend URL above in Docker because Nginx proxies `/admin/` to the backend. If you access the backend directly, the equivalent URL is:
+
+```text
+http://localhost:8000/admin/
 ```
 
 ### Import Deployment Data

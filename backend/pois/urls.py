@@ -5,15 +5,20 @@ from .views import (
     buffer_poi_lookup,
     CategoryTranslationViewSet,
     CategoryViewSet,
+    csrf_token,
+    current_user_view,
     ItineraryTranslationViewSet,
     ItineraryMediaViewSet,
     ItineraryViewSet,
+    login_view,
+    logout_view,
     POIMediaViewSet,
     POITranslationViewSet,
     POIViewSet,
     RouteTranslationViewSet,
     RouteMediaViewSet,
     RouteViewSet,
+    UserViewSet,
     mock_poi_lookup,
 )
 
@@ -31,8 +36,13 @@ router.register("route-translations", RouteTranslationViewSet, basename="route-t
 router.register("itineraries", ItineraryViewSet, basename="itinerary")
 router.register("itinerary-media", ItineraryMediaViewSet, basename="itinerary-media")
 router.register("itinerary-translations", ItineraryTranslationViewSet, basename="itinerary-translation")
+router.register("users", UserViewSet, basename="user")
 
 urlpatterns = [
+    path("auth/csrf/", csrf_token, name="auth-csrf"),
+    path("auth/login/", login_view, name="auth-login"),
+    path("auth/logout/", logout_view, name="auth-logout"),
+    path("auth/me/", current_user_view, name="auth-me"),
     path("buffer-pois/", buffer_poi_lookup, name="buffer-poi-lookup"),
     path("mock-pois/", mock_poi_lookup, name="mock-poi-lookup"),
     *router.urls,

@@ -1,22 +1,27 @@
 import { Routes } from '@angular/router';
 
+import { adminGuard, authGuard } from './auth.guard';
 import { ItineraryEditorComponent } from './itinerary-editor.component';
 import { ItineraryListComponent } from './itinerary-list.component';
+import { LoginComponent } from './login.component';
 import { PoiEditorComponent } from './poi-editor.component';
 import { PoiListComponent } from './poi-list.component';
 import { RouteListComponent } from './route-list.component';
 import { unsavedChangesGuard } from './unsaved-changes.guard';
+import { UserManagementComponent } from './user-management.component';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'itineraries' },
-  { path: 'itineraries', component: ItineraryListComponent },
-  { path: 'itineraries/new', component: ItineraryEditorComponent, canDeactivate: [unsavedChangesGuard] },
-  { path: 'itineraries/:id/edit', component: ItineraryEditorComponent, canDeactivate: [unsavedChangesGuard] },
-  { path: 'itineraries/:id/pois', component: PoiListComponent },
-  { path: 'routes', component: RouteListComponent },
-  { path: 'route/:slug', component: ItineraryListComponent },
-  { path: 'pois', component: PoiListComponent },
-  { path: 'pois/new', component: PoiEditorComponent, canDeactivate: [unsavedChangesGuard] },
-  { path: 'pois/:id/edit', component: PoiEditorComponent, canDeactivate: [unsavedChangesGuard] },
+  { path: 'login', component: LoginComponent },
+  { path: 'users', component: UserManagementComponent, canActivate: [adminGuard] },
+  { path: 'itineraries', component: ItineraryListComponent, canActivate: [authGuard] },
+  { path: 'itineraries/new', component: ItineraryEditorComponent, canActivate: [authGuard], canDeactivate: [unsavedChangesGuard] },
+  { path: 'itineraries/:id/edit', component: ItineraryEditorComponent, canActivate: [authGuard], canDeactivate: [unsavedChangesGuard] },
+  { path: 'itineraries/:id/pois', component: PoiListComponent, canActivate: [authGuard] },
+  { path: 'routes', component: RouteListComponent, canActivate: [authGuard] },
+  { path: 'route/:slug', component: ItineraryListComponent, canActivate: [authGuard] },
+  { path: 'pois', component: PoiListComponent, canActivate: [authGuard] },
+  { path: 'pois/new', component: PoiEditorComponent, canActivate: [authGuard], canDeactivate: [unsavedChangesGuard] },
+  { path: 'pois/:id/edit', component: PoiEditorComponent, canActivate: [authGuard], canDeactivate: [unsavedChangesGuard] },
   { path: '**', redirectTo: 'itineraries' }
 ];
