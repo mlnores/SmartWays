@@ -534,16 +534,39 @@ class NestedRouteTranslationSerializer(serializers.ModelSerializer):
 class CategorySerializer(serializers.ModelSerializer):
     translations = NestedCategoryTranslationSerializer(many=True, required=False)
     name = serializers.SerializerMethodField()
+    poi_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Category
-        fields = ["id", "slug", "name", "created_at", "translations"]
+        fields = ["id", "slug", "name", "poi_count", "created_at", "translations"]
         read_only_fields = ["id", "created_at"]
 
     def get_name(self, obj):
         language = self.context.get("language")
         translation = select_translation(obj.translations.all(), language)
         return translation.name if translation else None
+
+    def get_poi_count(self, obj):
+        if hasattr(obj, "poi_count"):
+            return obj.poi_count
+        return obj.pois.count()
+
+    def validate(self, attrs):
+        slug = attrs.get("slug", self.instance.slug if self.instance else "")
+        if slug:
+            queryset = Category.objects.filter(slug=slug)
+            if self.instance is not None:
+                queryset = queryset.exclude(pk=self.instance.pk)
+            if queryset.exists():
+                raise serializers.ValidationError({"slug": "A category with this slug already exists."})
+
+        translations = attrs.get("translations")
+        if translations is not None:
+            language_codes = [translation.get("language_code") for translation in translations]
+            if len(language_codes) != len(set(language_codes)):
+                raise serializers.ValidationError({"translations": "Each language can appear only once."})
+
+        return attrs
 
     def create(self, validated_data):
         translations = validated_data.pop("translations", [])

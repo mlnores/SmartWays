@@ -226,6 +226,14 @@ DJANGO_CSRF_TRUSTED_ORIGINS
 
 If the app is served directly from a server IP address, `DJANGO_ALLOWED_HOSTS` must include that IP address. If using the Django admin or API through the frontend proxy, add the frontend origin to `DJANGO_CSRF_TRUSTED_ORIGINS`, for example:
 
+For local Docker use, the example configuration trusts the default frontend origins:
+
+```text
+DJANGO_CSRF_TRUSTED_ORIGINS=http://localhost:4200,http://127.0.0.1:4200
+```
+
+If deploying on another IP address or domain, replace or extend that list with the actual browser-facing origin.
+
 ```text
 DJANGO_ALLOWED_HOSTS=203.0.113.10,localhost,127.0.0.1,backend
 DJANGO_CSRF_TRUSTED_ORIGINS=http://203.0.113.10:4200

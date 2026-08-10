@@ -8,7 +8,7 @@ from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.gis.geos import GEOSGeometry, Point, Polygon
 from django.db import transaction
 from django.http import JsonResponse
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.csrf import csrf_exempt
@@ -1135,7 +1135,7 @@ class ItineraryTranslationViewSet(DraftParentOnlyMutationMixin, ManagementApiVie
 
 class CategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
     serializer_class = CategorySerializer
-    queryset = Category.objects.prefetch_related("translations").all()
+    queryset = Category.objects.prefetch_related("translations").annotate(poi_count=Count("pois", distinct=True)).all()
 
     def get_queryset(self):
         queryset = super().get_queryset()

@@ -1757,7 +1757,7 @@
                 <div class="poi-popup-text">
                   <strong class="poi-browser-title">${escapeHtml(poi.label)}</strong>
                   <p class="poi-browser-snippet">${poi.enabled === false ? "Draft POI" : "POI"}</p>
-                  ${poi.snippet ? `<p class="poi-browser-snippet">${escapeHtml(poi.snippet)}</p>` : ""}
+                  ${poi.snippet ? `<p class="poi-browser-snippet poi-popup-description">${escapeHtml(poi.snippet)}</p>` : ""}
                 </div>
                 <div class="poi-popup-actions">
                   <button class="poi-popup-add-button" data-action="edit-poi" data-segment="${segmentIndex}" data-poi-key="${escapeHtml(poi.id)}" title="${poi.enabled === false ? "View/edit info and media" : "View info and media"}">${poi.enabled === false ? "View/edit info and media" : "View info and media"}</button>

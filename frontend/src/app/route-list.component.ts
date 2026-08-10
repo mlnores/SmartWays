@@ -47,6 +47,13 @@ interface ItineraryJsonExport {
   segments?: SegmentExport[];
 }
 
+interface ViewportBounds {
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+}
+
 type RouteSortKey = 'title' | 'stages' | 'draft';
 type SortDirection = 'asc' | 'desc';
 
@@ -150,7 +157,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
                       </tr>
                     } @empty {
                       <tr>
-                        <td colspan="3">No routes found.</td>
+                        <td colspan="3">{{ currentRoutes.length ? 'No routes visible in the current map view.' : 'No routes found.' }}</td>
                       </tr>
                     }
                   </tbody>
@@ -355,6 +362,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   private readonly title = inject(Title);
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
+  readonly mapView$ = new BehaviorSubject(0);
   readonly languageOptions = LANGUAGE_OPTIONS;
   query = '';
   newRoute: RouteDraft = { language_code: 'en', title: '', description: '' };
@@ -366,6 +374,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   activeTranslationIndex = 0;
   highlightedRouteId: number | null = null;
   currentRoutes: Route[] = [];
+  displayedRoutes: Route[] = [];
   routeSortKey: RouteSortKey = 'title';
   routeSortDirection: SortDirection = 'asc';
   previewRoute: Route | null = null;
@@ -375,6 +384,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   private previewResizeObserver: ResizeObserver | null = null;
   private previewRequestId = 0;
   private previewFitRequestId = 0;
+  private routePreviewBounds = new Map<number, ViewportBounds>();
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
@@ -382,7 +392,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     this.activatedRoute.queryParamMap.pipe(map(params => Number(params.get('highlight')) || null))
   ]).pipe(
     switchMap(([query, , highlightedRouteId]) => this.api.listRoutes(query).pipe(
-      map(routePage => {
+      switchMap(routePage => {
         const routes = this.sortedRoutes(routePage.results);
         this.currentRoutes = routes;
         if (this.previewRoute) {
@@ -396,11 +406,14 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
         } else {
           void this.renderVisibleRoutesPreview(routes);
         }
-        this.scheduleHighlight(highlightedRouteId, routes);
-        return {
-          routes,
-          error: ''
-        };
+        return this.mapView$.pipe(map(() => {
+          this.displayedRoutes = this.visibleRoutesForCurrentMap(routes);
+          this.scheduleHighlight(highlightedRouteId, this.displayedRoutes);
+          return {
+            routes: this.displayedRoutes,
+            error: ''
+          };
+        }));
       }),
       catchError(error => of({
         routes: [] as Route[],
@@ -710,6 +723,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       maxZoom: 19
     }).addTo(this.previewMap);
     this.previewLayer = L.layerGroup().addTo(this.previewMap);
+    this.previewMap.on('moveend zoomend', () => this.updateDisplayedRoutesFromPreviewMap());
     this.previewResizeObserver = new ResizeObserver(() => {
       this.previewMap?.invalidateSize();
     });
@@ -761,6 +775,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       );
       if (requestId !== this.previewRequestId || this.previewRoute) return;
       this.renderPreviewRoutes(
+        routes,
         routeItineraries.map(itineraries => this.sortedItineraries(itineraries)),
         true,
         'routes'
@@ -773,6 +788,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   }
 
   private renderPreviewRoutes(
+    routes: Route[],
     routeItineraries: Itinerary[][],
     shouldFit = true,
     scopeLabel = 'routes'
@@ -786,9 +802,13 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     let straightSegmentCount = 0;
     let hasPointCoordinates = false;
 
+    this.routePreviewBounds.clear();
     routeItineraries.forEach((itineraries, index) => {
       const result = this.drawRoutePreview(itineraries, PREVIEW_COLORS[index % PREVIEW_COLORS.length]);
       if (result.bounds.isValid()) bounds.extend(result.bounds);
+      if (result.bounds.isValid() && routes[index]) {
+        this.routePreviewBounds.set(routes[index].id, this.viewportBoundsFromLeafletBounds(result.bounds));
+      }
       routeGeometryCount += result.routeGeometryCount;
       straightSegmentCount += result.straightSegmentCount;
       hasPointCoordinates ||= result.hasPointCoordinates;
@@ -813,6 +833,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
     } else {
       this.previewMessage = '';
     }
+    this.updateDisplayedRoutesFromPreviewMap();
   }
 
   private drawRoutePreview(
@@ -879,6 +900,40 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       }
       return comparison * direction || left.id - right.id;
     });
+  }
+
+  private updateDisplayedRoutesFromPreviewMap(): void {
+    if (!this.previewMap || this.currentRoutes.length === 0) return;
+    this.mapView$.next(this.mapView$.value + 1);
+  }
+
+  private visibleRoutesForCurrentMap(routes: Route[]): Route[] {
+    const bounds = this.currentPreviewBounds();
+    if (!bounds || this.routePreviewBounds.size === 0) return routes;
+    return routes.filter(route => {
+      const routeBounds = this.routePreviewBounds.get(route.id);
+      return routeBounds ? this.boundsOverlap(routeBounds, bounds) : false;
+    });
+  }
+
+  private currentPreviewBounds(): ViewportBounds | null {
+    if (!this.previewMap) return null;
+    const bounds = this.previewMap.getBounds();
+    if (!bounds?.isValid?.()) return null;
+    return this.viewportBoundsFromLeafletBounds(bounds);
+  }
+
+  private viewportBoundsFromLeafletBounds(bounds: any): ViewportBounds {
+    return {
+      south: bounds.getSouth(),
+      west: bounds.getWest(),
+      north: bounds.getNorth(),
+      east: bounds.getEast()
+    };
+  }
+
+  private boundsOverlap(left: ViewportBounds, right: ViewportBounds): boolean {
+    return left.south <= right.north && left.north >= right.south && left.west <= right.east && left.east >= right.west;
   }
 
   private previewPointCoordinatesByIndex(points: PointExport[]): Array<{ lat: number; lng: number; label: string } | null> {

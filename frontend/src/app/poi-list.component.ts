@@ -1,4 +1,5 @@
 import { AsyncPipe, NgTemplateOutlet } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Title } from '@angular/platform-browser';
@@ -440,14 +441,29 @@ declare const turf: any;
               </div>
               <div class="category-manager-list">
                 @for (category of availableCategories; track category.id) {
-                  <button
-                    type="button"
-                    class="category-select-button"
-                    [class.active]="editingCategory?.id === category.id"
-                    (click)="selectCategoryForEditing(category)"
-                  >
-                    {{ category.name || category.slug }}
-                  </button>
+                  <div class="category-list-row" [class.active]="editingCategory?.id === category.id">
+                    <button
+                      type="button"
+                      class="category-select-button"
+                      (click)="selectCategoryForEditing(category)"
+                    >
+                      {{ category.name || category.slug }}
+                    </button>
+                    <button
+                      type="button"
+                      class="category-open-button"
+                      title="Open POIs with this category in a new tab"
+                      [disabled]="!category.poi_count"
+                      (click)="openCategoryPoisInNewTab(category)"
+                      [attr.aria-label]="'Open POIs labeled with ' + (category.name || category.slug) + ' in a new tab'"
+                    >
+                      <svg aria-hidden="true" viewBox="0 0 24 24" class="category-eye-icon">
+                        <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                      </svg>
+                      <span class="category-poi-count">{{ category.poi_count || 0 }}</span>
+                    </button>
+                  </div>
                 } @empty {
                   <p class="muted">No categories found.</p>
                 }
@@ -593,7 +609,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         this.api.listPoiCountries()
       ]).pipe(
         switchMap(([itinerary, categories, countries]) => {
-          this.availableCategories = categories;
+          this.availableCategories = this.sortedCategories(categories);
           this.availableCountries = countries;
           this.currentItinerary = itinerary;
           this.itineraryTitle = itinerary?.title || null;
@@ -1112,6 +1128,14 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     return this.availableCategories.filter(category => category.id !== this.editingCategory?.id);
   }
 
+  openCategoryPoisInNewTab(category: Category): void {
+    const urlTree = this.router.createUrlTree(['/pois'], {
+      queryParams: { category: category.id }
+    });
+    const url = this.router.serializeUrl(urlTree);
+    window.open(url, '_blank', 'noopener');
+  }
+
   async saveCategoryDialog(): Promise<void> {
     const slug = this.categorySlugPreview();
     const translations = this.normalizedCategoryTranslations();
@@ -1141,7 +1165,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.showCategoryDialogStatus(editingCategoryId ? 'Category saved.' : 'Category created.', false);
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
-      this.showCategoryDialogStatus(`Could not save category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showCategoryDialogStatus(`Could not save category. ${this.requestErrorMessage(error)}`, true);
     }
   }
 
@@ -1165,7 +1189,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.showCategoryDialogStatus('Category deleted.', false);
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
-      this.showCategoryDialogStatus(`Could not delete category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showCategoryDialogStatus(`Could not delete category. ${this.requestErrorMessage(error)}`, true);
     }
   }
 
@@ -1192,7 +1216,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       this.showCategoryDialogStatus('Category merged.', false);
       this.refresh$.next(this.refresh$.value + 1);
     } catch (error) {
-      this.showCategoryDialogStatus(`Could not merge category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showCategoryDialogStatus(`Could not merge category. ${this.requestErrorMessage(error)}`, true);
     }
   }
 
@@ -1793,7 +1817,17 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   }
 
   private async reloadCategories(): Promise<void> {
-    this.availableCategories = await firstValueFrom(this.api.listAllCategories());
+    this.availableCategories = this.sortedCategories(await firstValueFrom(this.api.listAllCategories()));
+  }
+
+  private sortedCategories(categories: Category[]): Category[] {
+    const categoriesById = new Map<number, Category>();
+    categories.forEach(category => categoriesById.set(category.id, category));
+    return [...categoriesById.values()].sort((left, right) => {
+      const leftName = (left.name || left.slug).toLocaleLowerCase();
+      const rightName = (right.name || right.slug).toLocaleLowerCase();
+      return leftName.localeCompare(rightName, undefined, { sensitivity: 'base' }) || left.id - right.id;
+    });
   }
 
   countryName(countryCode: string | null | undefined): string {
@@ -2165,5 +2199,30 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private clearCategoryDialogStatus(): void {
     this.categoryDialogStatusMessage = '';
     this.categoryDialogStatusIsError = false;
+  }
+
+  private requestErrorMessage(error: unknown): string {
+    if (error instanceof HttpErrorResponse) {
+      return this.errorBodyMessage(error.error) || `Service returned ${error.status}.`;
+    }
+    return error instanceof Error ? error.message : 'Request failed.';
+  }
+
+  private errorBodyMessage(errorBody: unknown): string {
+    if (!errorBody) return '';
+    if (typeof errorBody === 'string') return errorBody;
+    if (Array.isArray(errorBody)) {
+      return errorBody.map(item => this.errorBodyMessage(item)).filter(Boolean).join(' ');
+    }
+    if (typeof errorBody === 'object') {
+      return Object.entries(errorBody)
+        .map(([field, value]) => {
+          const message = this.errorBodyMessage(value);
+          return field === 'detail' ? message : `${field}: ${message}`;
+        })
+        .filter(Boolean)
+        .join(' ');
+    }
+    return String(errorBody);
   }
 }

@@ -102,6 +102,7 @@ export interface Category {
   id: number;
   slug: string;
   name: string | null;
+  poi_count: number;
   translations: Translation[];
 }
 
