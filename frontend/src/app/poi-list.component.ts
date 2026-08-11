@@ -291,48 +291,79 @@ declare const turf: any;
                 <ng-container *ngTemplateOutlet="poiTable; context: { items: itineraryId ? state.items : displayedPois }"></ng-container>
               }
             </div>
-            <aside class="preview-panel" aria-label="POI map preview">
-              <header>
-                <h2>Map preview</h2>
-              </header>
-              <div class="preview-map" #previewMap></div>
-              @if (previewMessage) {
-                <p class="muted preview-message">{{ previewMessage }}</p>
-              }
-              <div class="preview-actions" aria-label="POI preview actions">
-                <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentPois()">
-                  <span class="preview-action-icon" aria-hidden="true">🎯</span>
-                  <span>Fit view</span>
-                </button>
+            <div class="preview-side-column">
+              <aside class="preview-panel" aria-label="POI map preview">
+                <header>
+                  <h2>Map preview</h2>
+                </header>
+                <div class="preview-map" #previewMap></div>
+                @if (previewMessage) {
+                  <p class="muted preview-message">{{ previewMessage }}</p>
+                }
+                <div class="preview-actions" aria-label="POI preview actions">
+                  <button type="button" class="secondary preview-action" (click)="fitPreviewToCurrentPois()">
+                    <span class="preview-action-icon" aria-hidden="true">🎯</span>
+                    <span>Fit view</span>
+                  </button>
 
-                @if (previewPoi && !previewPoi.enabled) {
-                  <button type="button" class="secondary preview-action" (click)="setPoiEnabled(previewPoi, true)">
-                    <span class="preview-action-icon" aria-hidden="true">🌐</span>
-                    <span>Make public</span>
-                  </button>
-                }
-                @if (previewPoi && previewPoi.enabled) {
-                  <button type="button" class="secondary preview-action" (click)="setPoiEnabled(previewPoi, false)">
-                    <span class="preview-action-icon" aria-hidden="true">✎</span>
-                    <span>Turn to draft</span>
-                  </button>
-                }
-                @if (previewPoi) {
-                  <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']" target="_blank" rel="noopener">
-                    <span class="preview-action-icon" aria-hidden="true">🗺️</span>
-                    <span>{{ previewPoi.enabled ? 'View info and media' : 'Manage metadata, media and translations' }}</span>
-                  </a>
-                  <button type="button" class="secondary preview-action" [disabled]="duplicatingPoiIds.has(previewPoi.id)" (click)="duplicatePoi(previewPoi)">
-                    <span class="preview-action-icon" aria-hidden="true">📄</span>
-                    <span>{{ duplicatingPoiIds.has(previewPoi.id) ? 'Duplicating...' : 'Duplicate' }}</span>
-                  </button>
-                  <button type="button" class="secondary preview-action danger-action" [disabled]="previewPoi.enabled" (click)="deletePoi(previewPoi)">
-                    <span class="preview-action-icon" aria-hidden="true">🗑️</span>
-                    <span>Delete POI</span>
-                  </button>
-                }
-              </div>
-            </aside>
+                  @if (previewPoi && !previewPoi.enabled) {
+                    <button type="button" class="secondary preview-action" (click)="setPoiEnabled(previewPoi, true)">
+                      <span class="preview-action-icon" aria-hidden="true">🌐</span>
+                      <span>Make public</span>
+                    </button>
+                  }
+                  @if (previewPoi && previewPoi.enabled) {
+                    <button type="button" class="secondary preview-action" (click)="setPoiEnabled(previewPoi, false)">
+                      <span class="preview-action-icon" aria-hidden="true">✎</span>
+                      <span>Turn to draft</span>
+                    </button>
+                  }
+                  @if (previewPoi) {
+                    <a class="secondary preview-action" [routerLink]="['/pois', previewPoi.id, 'edit']" target="_blank" rel="noopener">
+                      <span class="preview-action-icon" aria-hidden="true">🗺️</span>
+                      <span>{{ previewPoi.enabled ? 'View info and media' : 'Manage metadata, media and translations' }}</span>
+                    </a>
+                    <button type="button" class="secondary preview-action" [disabled]="duplicatingPoiIds.has(previewPoi.id)" (click)="duplicatePoi(previewPoi)">
+                      <span class="preview-action-icon" aria-hidden="true">📄</span>
+                      <span>{{ duplicatingPoiIds.has(previewPoi.id) ? 'Duplicating...' : 'Duplicate' }}</span>
+                    </button>
+                    <button type="button" class="secondary preview-action danger-action" [disabled]="previewPoi.enabled" (click)="deletePoi(previewPoi)">
+                      <span class="preview-action-icon" aria-hidden="true">🗑️</span>
+                      <span>Delete POI</span>
+                    </button>
+                  }
+                </div>
+              </aside>
+
+              @if (previewPoi) {
+                <aside class="preview-panel preview-media-panel" aria-label="Selected POI media preview">
+                  <header>
+                    <h2>Media preview</h2>
+                  </header>
+                  @if (previewPoiMedia(previewPoi).length > 0) {
+                    <div class="preview-media-strip">
+                      @for (item of previewPoiMedia(previewPoi); track item.id || $index) {
+                        <a
+                          class="preview-media-thumb"
+                          [href]="poiMediaUrl(item)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          [attr.title]="poiMediaLabel(item, $index)"
+                        >
+                          @if (item.media_type === 'image' && poiMediaUrl(item)) {
+                            <img [src]="poiMediaUrl(item)" alt="" />
+                          } @else {
+                            <span>{{ poiMediaTypeLabel(item.media_type) }}</span>
+                          }
+                        </a>
+                      }
+                    </div>
+                  } @else {
+                    <p class="muted preview-media-empty">No media linked to this POI.</p>
+                  }
+                </aside>
+              }
+            </div>
           </div>
         }
       }
@@ -1763,6 +1794,27 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
         position: Number.isFinite(item.position) ? item.position : index,
         is_primary: Boolean(item.is_primary)
       }));
+  }
+
+  previewPoiMedia(poi: Poi): PoiMedia[] {
+    return (poi.media || [])
+      .filter(item => this.poiMediaUrl(item))
+      .sort((left, right) => {
+        if (left.is_primary !== right.is_primary) return left.is_primary ? -1 : 1;
+        return (left.position || 0) - (right.position || 0);
+      });
+  }
+
+  poiMediaUrl(item: PoiMedia): string {
+    return item.file_url || item.image_url || item.url || '';
+  }
+
+  poiMediaTypeLabel(type: PoiMedia['media_type']): string {
+    return type.charAt(0).toUpperCase() + type.slice(1);
+  }
+
+  poiMediaLabel(item: PoiMedia, index: number): string {
+    return item.original_filename || `${this.poiMediaTypeLabel(item.media_type)} ${index + 1}`;
   }
 
   private normalizedCategoryTranslations() {

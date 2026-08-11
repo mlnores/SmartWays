@@ -2018,7 +2018,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
   private itineraryIntersectsBounds(itinerary: Itinerary, bounds: ViewportBounds): boolean {
     const coordinates = this.itineraryCoordinates(itinerary);
-    if (coordinates.length === 0) return false;
+    if (coordinates.length === 0) return true;
     if (coordinates.some(coordinate => this.coordinateInsideBounds(coordinate, bounds))) return true;
 
     for (let index = 0; index < coordinates.length - 1; index += 1) {

@@ -535,7 +535,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
     try {
       const categories = await firstValueFrom(this.api.listAllCategories());
-      this.categories = categories;
+      this.categories = this.sortedUniqueCategories(categories);
       if (this.isNewPoi) {
         this.loadBlankPoi();
       } else if (id) {
@@ -765,9 +765,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   addCategory(categoryId: number): void {
     if (!this.canEditContent()) return;
-    if (!this.categoryIds.includes(categoryId)) {
-      this.categoryIds = [...this.categoryIds, categoryId];
-    }
+    this.categoryIds = this.uniqueCategoryIds([...this.categoryIds, categoryId]);
   }
 
   removeCategory(categoryId: number): void {
@@ -779,7 +777,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     if (!this.canEditContent()) return;
     const ids = new Set(this.categoryIds);
     this.availableCategoryOptions().forEach(category => ids.add(category.id));
-    this.categoryIds = [...ids];
+    this.categoryIds = this.uniqueCategoryIds([...ids]);
   }
 
   removeAllFilteredCategories(): void {
@@ -803,9 +801,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
           name
         }]
       }));
-      this.categories = [...this.categories, category].sort((left, right) =>
-        this.categoryDisplayName(left).localeCompare(this.categoryDisplayName(right))
-      );
+      this.categories = this.sortedUniqueCategories([...this.categories, category]);
       this.addCategory(category.id);
       this.newCategoryName = '';
       this.clearStatus();
@@ -865,7 +861,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         website: this.website.trim(),
         phone: this.phone.trim(),
         email: this.email.trim(),
-        category_ids: this.categoryIds,
+        category_ids: this.uniqueCategoryIds(this.categoryIds),
         translations,
         media
       };
@@ -944,7 +940,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.website = poi.website || '';
     this.phone = poi.phone || '';
     this.email = poi.email || '';
-    this.categoryIds = poi.categories.map(category => category.id);
+    this.categoryIds = this.uniqueCategoryIds(poi.categories.map(category => category.id));
     this.translations = this.translationDraftsFrom(poi.translations, poi.title, poi.description, poi.slug);
     this.activeTranslationIndex = Math.max(0, this.translations.findIndex(translation => translation.is_reference));
     this.media = this.mediaDraftsFrom(poi.media || [], poi.images || []);
@@ -1315,7 +1311,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       website: this.website.trim(),
       phone: this.phone.trim(),
       email: this.email.trim(),
-      category_ids: [...this.categoryIds].sort((left, right) => left - right),
+      category_ids: this.uniqueCategoryIds(this.categoryIds).sort((left, right) => left - right),
       translations: this.normalizedTranslations(),
       media: this.normalizedMedia(),
       pending_media: this.media
@@ -1346,6 +1342,18 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     return categories.filter(category =>
       this.categoryDisplayName(category).toLowerCase().includes(normalizedFilter)
       || category.slug.toLowerCase().includes(normalizedFilter)
+    );
+  }
+
+  private uniqueCategoryIds(categoryIds: number[]): number[] {
+    return [...new Set(categoryIds.filter(id => Number.isFinite(id)))];
+  }
+
+  private sortedUniqueCategories(categories: Category[]): Category[] {
+    const categoriesById = new Map<number, Category>();
+    categories.forEach(category => categoriesById.set(category.id, category));
+    return [...categoriesById.values()].sort((left, right) =>
+      this.categoryDisplayName(left).localeCompare(this.categoryDisplayName(right), undefined, { sensitivity: 'base' }) || left.id - right.id
     );
   }
 
