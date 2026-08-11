@@ -4,7 +4,9 @@ from functools import lru_cache
 from pathlib import Path
 
 from django.conf import settings
-from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.contrib.auth import authenticate, get_user_model, login, logout, update_session_auth_hash
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.gis.geos import GEOSGeometry, Point, Polygon
 from django.db import transaction
 from django.http import JsonResponse
@@ -137,17 +139,42 @@ def current_user_view(request):
     return Response(current_user_payload(request.user))
 
 
+@api_view(["POST"])
+@permission_classes([IsEditorOrAdmin])
+def change_password_view(request):
+    current_password = request.data.get("current_password") or ""
+    new_password = request.data.get("new_password") or ""
+    if not request.user.check_password(current_password):
+        raise ValidationError({"current_password": "Current password is incorrect."})
+    try:
+        validate_password(new_password, request.user)
+    except DjangoValidationError as error:
+        raise ValidationError({"new_password": list(error.messages)})
+    request.user.set_password(new_password)
+    request.user.save(update_fields=["password"])
+    update_session_auth_hash(request, request.user)
+    return Response({"detail": "Password changed."})
+
+
 class UserViewSet(ManagementApiViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAdminRole]
     queryset = get_user_model().objects.order_by("id")
 
-    def destroy(self, request, *args, **kwargs):
+    @action(detail=True, methods=["post"])
+    def deactivate(self, request, *args, **kwargs):
         user = self.get_object()
         if user == request.user:
             raise ValidationError({"detail": "You cannot deactivate your own account."})
         user.is_active = False
         user.save(update_fields=["is_active"])
+        return Response(current_user_payload(user))
+
+    def destroy(self, request, *args, **kwargs):
+        user = self.get_object()
+        if user == request.user:
+            raise ValidationError({"detail": "You cannot delete your own account."})
+        user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

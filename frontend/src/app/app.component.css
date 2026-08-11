@@ -62,6 +62,7 @@ nav a:hover {
   white-space: nowrap;
 }
 
+.account-button,
 .logout-button {
   min-height: 34px;
   padding: 0 10px;
@@ -73,9 +74,155 @@ nav a:hover {
   cursor: pointer;
 }
 
+.account-button:hover,
 .logout-button:hover {
   border-color: #98a2b3;
   color: #111827;
+}
+
+.account-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.36);
+}
+
+.account-dialog {
+  width: min(520px, 100%);
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid #d8dee8;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.22);
+}
+
+.account-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-dialog h2,
+.account-dialog h3 {
+  margin: 0;
+  color: #111827;
+}
+
+.account-dialog h2 {
+  font-size: 1.25rem;
+}
+
+.account-dialog h3 {
+  font-size: 1rem;
+}
+
+.account-icon-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #cfd7e6;
+  border-radius: 8px;
+  color: #344054;
+  background: #ffffff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.account-details {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.account-details div {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.account-details dt {
+  color: #667085;
+  font-weight: 700;
+}
+
+.account-details dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: #111827;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-password-section {
+  display: grid;
+  gap: 12px;
+}
+
+.account-password-section label {
+  display: grid;
+  gap: 5px;
+  color: #475467;
+  font-weight: 700;
+}
+
+.account-password-section input {
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid #cfd7e6;
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+}
+
+.account-status {
+  margin: 0;
+  color: #067647;
+}
+
+.account-status.error {
+  color: #b42318;
+}
+
+.account-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.primary-button,
+.secondary-button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #1f6feb;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #1f6feb;
+  font: inherit;
+  cursor: pointer;
+}
+
+.secondary-button {
+  color: #1f2937;
+  border-color: #cfd7e6;
+  background: #ffffff;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  color: #98a2b3;
+  border-color: #d7deea;
+  background: #f8fafc;
+  cursor: not-allowed;
 }
 
 .app-main {

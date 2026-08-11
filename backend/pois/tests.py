@@ -102,6 +102,67 @@ class AuthAPITests(APITestCase):
         self.assertEqual(admin_response.data["username"], "new-editor")
         self.assertEqual(admin_response.data["role"], "editor")
 
+    def test_admin_can_deactivate_and_delete_users(self):
+        user_model = get_user_model()
+        admin = user_model.objects.create_user(username="admin", password="secret-password", is_staff=True)
+        editor = user_model.objects.create_user(username="editor", password="secret-password")
+        viewer = user_model.objects.create_user(username="viewer", password="secret-password")
+        self.client.force_authenticate(admin)
+
+        deactivate_response = self.client.post(reverse("user-deactivate", args=[editor.id]))
+        editor.refresh_from_db()
+        delete_response = self.client.delete(reverse("user-detail", args=[viewer.id]))
+
+        self.assertEqual(deactivate_response.status_code, status.HTTP_200_OK)
+        self.assertFalse(editor.is_active)
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(user_model.objects.filter(id=viewer.id).exists())
+
+    def test_admin_cannot_deactivate_or_delete_self(self):
+        admin = get_user_model().objects.create_user(username="admin", password="secret-password", is_staff=True)
+        self.client.force_authenticate(admin)
+
+        deactivate_response = self.client.post(reverse("user-deactivate", args=[admin.id]))
+        delete_response = self.client.delete(reverse("user-detail", args=[admin.id]))
+        admin.refresh_from_db()
+
+        self.assertEqual(deactivate_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(delete_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(admin.is_active)
+
+    def test_editor_can_change_own_password(self):
+        user = get_user_model().objects.create_user(
+            username="editor",
+            email="editor@example.com",
+            password="secret-password",
+        )
+        self.client.login(username="editor", password="secret-password")
+
+        response = self.client.post(
+            reverse("auth-change-password"),
+            {"current_password": "secret-password", "new_password": "new-secret-password"},
+            format="json",
+        )
+        user.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(user.check_password("new-secret-password"))
+        self.assertEqual(self.client.get(reverse("auth-me")).status_code, status.HTTP_200_OK)
+
+    def test_change_password_requires_current_password(self):
+        user = get_user_model().objects.create_user(username="editor", password="secret-password")
+        self.client.force_authenticate(user)
+
+        response = self.client.post(
+            reverse("auth-change-password"),
+            {"current_password": "wrong-password", "new_password": "new-secret-password"},
+            format="json",
+        )
+        user.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(user.check_password("secret-password"))
+
 
 class POIAPITests(APITestCase):
     def setUp(self):

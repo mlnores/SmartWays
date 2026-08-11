@@ -16,6 +16,7 @@
         <a routerLink="/users" routerLinkActive="active">Users</a>
       }
       <span class="user-label">{{ currentUser.username }}</span>
+      <button class="account-button" type="button" (click)="openAccountDialog()">My account</button>
       <button class="logout-button" type="button" (click)="logout()">Log out</button>
     } @else {
       <a routerLink="/login" routerLinkActive="active">Log in</a>
@@ -26,3 +27,58 @@
 <main class="app-main">
   <router-outlet></router-outlet>
 </main>
+
+@if (isAccountDialogOpen) {
+  <div class="account-dialog-backdrop" role="presentation">
+    <form class="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-title" (ngSubmit)="changePassword()">
+      <div class="account-dialog-header">
+        <h2 id="account-title">My account</h2>
+        <button type="button" class="account-icon-button" aria-label="Close" (click)="closeAccountDialog()">x</button>
+      </div>
+
+      @if (currentUser$ | async; as currentUser) {
+        <dl class="account-details">
+          <div>
+            <dt>Username</dt>
+            <dd>{{ currentUser.username }}</dd>
+          </div>
+          <div>
+            <dt>Email</dt>
+            <dd>{{ currentUser.email || 'No email set' }}</dd>
+          </div>
+          <div>
+            <dt>Role</dt>
+            <dd>{{ currentUser.role === 'admin' ? 'Admin' : 'Editor' }}</dd>
+          </div>
+        </dl>
+      }
+
+      <section class="account-password-section">
+        <h3>Change password</h3>
+        <label>
+          Current password
+          <input name="currentPassword" type="password" autocomplete="current-password" [(ngModel)]="currentPassword" required autofocus>
+        </label>
+        <label>
+          New password
+          <input name="newPassword" type="password" autocomplete="new-password" [(ngModel)]="newPassword" required>
+        </label>
+        <label>
+          Confirm new password
+          <input name="confirmPassword" type="password" autocomplete="new-password" [(ngModel)]="confirmPassword" required>
+        </label>
+      </section>
+
+      @if (accountMessage) {
+        <p class="account-status" [class.error]="accountMessageIsError">{{ accountMessage }}</p>
+      }
+
+      <div class="account-dialog-actions">
+        <button type="button" class="secondary-button" (click)="closeAccountDialog()" [disabled]="isChangingPassword">Close</button>
+        <button type="submit" class="primary-button" [disabled]="isChangingPassword || !currentPassword || !newPassword || !confirmPassword">
+          {{ isChangingPassword ? 'Changing...' : 'Change password' }}
+        </button>
+      </div>
+    </form>
+  </div>
+}

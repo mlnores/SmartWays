@@ -91,7 +91,23 @@ export class AuthService {
   }
 
   deactivateUser(userId: number): Observable<void> {
+    return this.http.post<CurrentUser>(`${API_BASE_URL}/users/${userId}/deactivate/`, {}).pipe(
+      map(() => undefined)
+    );
+  }
+
+  deleteUser(userId: number): Observable<void> {
     return this.http.delete<void>(`${API_BASE_URL}/users/${userId}/`);
+  }
+
+  changePassword(currentPassword: string, newPassword: string): Observable<void> {
+    return this.ensureCsrf().pipe(
+      switchMap(() => this.http.post<{ detail: string }>(`${API_BASE_URL}/auth/change-password/`, {
+        current_password: currentPassword,
+        new_password: newPassword
+      })),
+      map(() => undefined)
+    );
   }
 
   private ensureCsrf(): Observable<{ detail: string; csrfToken: string }> {

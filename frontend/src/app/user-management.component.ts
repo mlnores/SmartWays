@@ -54,7 +54,7 @@ interface EditableUser extends CurrentUser {
                 <td><input type="password" placeholder="Leave unchanged" [(ngModel)]="user.password" name="password-{{ user.id }}"></td>
                 <td class="actions">
                   <button type="button" (click)="saveUser(user)" [disabled]="user.isSaving">Save</button>
-                  <button type="button" class="secondary" (click)="deactivateUser(user)" [disabled]="user.isSaving || !user.is_active">Deactivate</button>
+                  <button type="button" class="secondary danger" (click)="deleteUser(user)" [disabled]="user.isSaving">Delete</button>
                 </td>
               </tr>
             } @empty {
@@ -90,8 +90,14 @@ interface EditableUser extends CurrentUser {
             </label>
             <label>
               Initial password
-              <input name="newPassword" type="password" placeholder="Initial password" [(ngModel)]="newUser.password">
+              <span class="password-generator-row">
+                <input name="newPassword" type="text" autocomplete="new-password" placeholder="Initial password" [(ngModel)]="newUser.password">
+                <button type="button" class="secondary" (click)="generatePassword()">Generate and copy</button>
+              </span>
             </label>
+            @if (createDialogMessage) {
+              <p class="dialog-status" [class.error]="createDialogMessageIsError">{{ createDialogMessage }}</p>
+            }
             <div class="dialog-actions">
               <button type="button" class="secondary" (click)="closeCreateDialog()">Cancel</button>
               <button type="submit" [disabled]="isCreating || !newUser.username.trim()">Create user</button>
@@ -147,6 +153,15 @@ interface EditableUser extends CurrentUser {
       border-color: #cfd7e6;
       background: #fff;
       color: #344054;
+    }
+
+    button.danger {
+      border-color: #f3b8b2;
+      color: #b42318;
+    }
+
+    button.danger:hover {
+      background: #fff1f0;
     }
 
     button:disabled {
@@ -241,6 +256,27 @@ interface EditableUser extends CurrentUser {
       font-weight: 700;
     }
 
+    .password-generator-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+
+    .password-generator-row input {
+      min-width: 0;
+      width: 100%;
+    }
+
+    .dialog-status {
+      margin: 0;
+      color: #067647;
+      font-weight: 700;
+    }
+
+    .dialog-status.error {
+      color: #b42318;
+    }
+
     .dialog-actions {
       justify-content: flex-end;
     }
@@ -261,6 +297,8 @@ export class UserManagementComponent implements OnInit, OnDestroy {
 
   users: EditableUser[] = [];
   errorMessage = '';
+  createDialogMessage = '';
+  createDialogMessageIsError = false;
   isCreating = false;
   isCreateDialogOpen = false;
   newUser: UserPayload = {
@@ -298,8 +336,35 @@ export class UserManagementComponent implements OnInit, OnDestroy {
 
   openCreateDialog(): void {
     this.errorMessage = '';
+    this.createDialogMessage = '';
+    this.createDialogMessageIsError = false;
     this.newUser = { username: '', email: '', role: 'editor', is_active: true, password: '' };
     this.isCreateDialogOpen = true;
+  }
+
+  async generatePassword(): Promise<void> {
+    const lowercase = 'abcdefghijkmnopqrstuvwxyz';
+    const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const digits = '23456789';
+    const symbols = '!#$%&*+-=?@';
+    const allCharacters = lowercase + uppercase + digits + symbols;
+    const requiredCharacters = [
+      this.randomCharacter(lowercase),
+      this.randomCharacter(uppercase),
+      this.randomCharacter(digits),
+      this.randomCharacter(symbols)
+    ];
+    const remainingCharacters = Array.from({ length: 12 }, () => this.randomCharacter(allCharacters));
+    const password = this.shuffleCharacters([...requiredCharacters, ...remainingCharacters]).join('');
+    this.newUser.password = password;
+    try {
+      await this.copyTextToClipboard(password);
+      this.createDialogMessage = 'Generated password copied to the clipboard.';
+      this.createDialogMessageIsError = false;
+    } catch {
+      this.createDialogMessage = 'Generated password, but could not copy it to the clipboard.';
+      this.createDialogMessageIsError = true;
+    }
   }
 
   closeCreateDialog(): void {
@@ -320,6 +385,8 @@ export class UserManagementComponent implements OnInit, OnDestroy {
       next: user => {
         this.users = [...this.users, { ...user, password: '' }];
         this.newUser = { username: '', email: '', role: 'editor', is_active: true, password: '' };
+        this.createDialogMessage = '';
+        this.createDialogMessageIsError = false;
         this.isCreating = false;
         this.isCreateDialogOpen = false;
       },
@@ -351,15 +418,64 @@ export class UserManagementComponent implements OnInit, OnDestroy {
     });
   }
 
-  deactivateUser(user: EditableUser): void {
+  deleteUser(user: EditableUser): void {
+    if (!confirm(`Delete user "${user.username}"? This cannot be undone.`)) return;
     user.isSaving = true;
     this.errorMessage = '';
-    this.auth.deactivateUser(user.id).subscribe({
-      next: () => Object.assign(user, { is_active: false, isSaving: false }),
+    this.auth.deleteUser(user.id).subscribe({
+      next: () => this.users = this.users.filter(existingUser => existingUser.id !== user.id),
       error: () => {
         user.isSaving = false;
-        this.errorMessage = 'Could not deactivate user.';
+        this.errorMessage = 'Could not delete user.';
       }
     });
+  }
+
+  private randomCharacter(characters: string): string {
+    const cryptoObject = globalThis.crypto;
+    if (cryptoObject?.getRandomValues) {
+      const value = new Uint32Array(1);
+      cryptoObject.getRandomValues(value);
+      return characters[value[0] % characters.length];
+    }
+    return characters[Math.floor(Math.random() * characters.length)];
+  }
+
+  private shuffleCharacters(characters: string[]): string[] {
+    for (let index = characters.length - 1; index > 0; index -= 1) {
+      const swapIndex = this.randomIndex(index + 1);
+      [characters[index], characters[swapIndex]] = [characters[swapIndex], characters[index]];
+    }
+    return characters;
+  }
+
+  private randomIndex(limit: number): number {
+    const cryptoObject = globalThis.crypto;
+    if (cryptoObject?.getRandomValues) {
+      const value = new Uint32Array(1);
+      cryptoObject.getRandomValues(value);
+      return value[0] % limit;
+    }
+    return Math.floor(Math.random() * limit);
+  }
+
+  private async copyTextToClipboard(text: string): Promise<void> {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    if (!copied) {
+      throw new Error('Clipboard copy failed.');
+    }
   }
 }
