@@ -226,12 +226,12 @@ interface EditableUser extends CurrentUser {
     }
 
     .dialog {
-      width: min(460px, 100%);
+      width: min(520px, 100%);
       display: grid;
-      gap: 14px;
-      padding: 20px;
+      gap: 18px;
+      padding: 18px;
       border: 1px solid #d8dee8;
-      border-radius: 8px;
+      border-radius: 10px;
       background: #fff;
       box-shadow: 0 18px 48px rgb(15 23 42 / 0.22);
     }
@@ -251,9 +251,22 @@ interface EditableUser extends CurrentUser {
 
     .dialog label {
       display: grid;
-      gap: 6px;
+      gap: 5px;
       color: #475467;
       font-weight: 700;
+    }
+
+    .dialog input,
+    .dialog select {
+      border-radius: 8px;
+    }
+
+    .dialog button {
+      font-weight: 400;
+    }
+
+    .dialog button[type="submit"] {
+      font-weight: 400;
     }
 
     .password-generator-row {
@@ -283,9 +296,11 @@ interface EditableUser extends CurrentUser {
 
     .icon-button {
       width: 34px;
+      height: 34px;
       min-height: 34px;
       padding: 0;
-      font-size: 1.25rem;
+      font-size: 1rem;
+      font-weight: 400;
       line-height: 1;
     }
   `]
