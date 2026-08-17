@@ -540,9 +540,12 @@ declare const turf: any;
             </section>
           </div>
 
-          <footer class="metadata-dialog-footer">
-            <button type="submit" class="primary">{{ editingCategory ? 'Save category' : 'Create category' }}</button>
-            <button type="button" class="secondary" (click)="closeCategoryManagerDialog()">Close</button>
+          <footer class="metadata-dialog-footer category-manager-footer">
+            <span class="category-count">{{ availableCategories.length }} {{ availableCategories.length === 1 ? 'category' : 'categories' }}</span>
+            <span class="category-footer-actions">
+              <button type="submit" class="primary">{{ editingCategory ? 'Save category' : 'Create category' }}</button>
+              <button type="button" class="secondary" (click)="closeCategoryManagerDialog()">Close</button>
+            </span>
           </footer>
         </form>
       </dialog>
@@ -1112,13 +1115,30 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  openCategoryManagerDialog(): void {
-    if (this.availableCategories.length > 0) {
-      this.selectCategoryForEditing(this.availableCategories[0]);
-    } else {
-      this.startNewCategory();
-    }
+  async openCategoryManagerDialog(): Promise<void> {
+    this.clearCategoryDialogStatus();
     this.categoryManagerDialog?.nativeElement.showModal();
+    try {
+      const selectedCategoryId = this.editingCategory?.id ?? null;
+      await this.reloadCategories();
+      const selectedCategory = selectedCategoryId
+        ? this.availableCategories.find(category => category.id === selectedCategoryId)
+        : null;
+      if (selectedCategory) {
+        this.selectCategoryForEditing(selectedCategory);
+      } else if (this.availableCategories.length > 0) {
+        this.selectCategoryForEditing(this.availableCategories[0]);
+      } else {
+        this.startNewCategory();
+      }
+    } catch (error) {
+      this.showCategoryDialogStatus(`Could not load categories. ${this.requestErrorMessage(error)}`, true);
+      if (this.availableCategories.length > 0) {
+        this.selectCategoryForEditing(this.availableCategories[0]);
+      } else {
+        this.startNewCategory();
+      }
+    }
   }
 
   closeCategoryManagerDialog(): void {
@@ -1210,6 +1230,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       await firstValueFrom(this.api.deleteCategory(deletedId));
       if (this.selectedCategory === String(deletedId)) {
         this.selectedCategory = '';
+        this.syncFiltersToUrl();
       }
       await this.reloadCategories();
       if (this.availableCategories.length > 0) {
@@ -1235,12 +1256,14 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
 
     try {
       const sourceId = this.editingCategory.id;
-      await firstValueFrom(this.api.mergeCategory(sourceId, this.mergeTargetCategoryId));
+      const targetId = this.mergeTargetCategoryId;
+      await firstValueFrom(this.api.mergeCategory(sourceId, targetId));
       if (this.selectedCategory === String(sourceId)) {
-        this.selectedCategory = String(this.mergeTargetCategoryId);
+        this.selectedCategory = String(targetId);
+        this.syncFiltersToUrl();
       }
       await this.reloadCategories();
-      const mergedTarget = this.availableCategories.find(category => category.id === this.mergeTargetCategoryId);
+      const mergedTarget = this.availableCategories.find(category => category.id === targetId);
       if (mergedTarget) {
         this.selectCategoryForEditing(mergedTarget);
       }

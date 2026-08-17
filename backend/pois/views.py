@@ -1162,16 +1162,15 @@ class ItineraryTranslationViewSet(DraftParentOnlyMutationMixin, ManagementApiVie
 
 class CategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
     serializer_class = CategorySerializer
-    queryset = Category.objects.prefetch_related("translations").annotate(poi_count=Count("pois", distinct=True)).all()
+    queryset = (
+        Category.objects
+        .prefetch_related("translations")
+        .annotate(poi_count=Count("pois", distinct=True))
+        .order_by("slug", "id")
+    )
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        language = self.get_language()
-
-        if language:
-            queryset = queryset.filter(translations__language_code=language)
-
-        return queryset.distinct()
+        return super().get_queryset().distinct()
 
     @action(detail=True, methods=["post"], url_path="merge")
     def merge(self, request, pk=None):

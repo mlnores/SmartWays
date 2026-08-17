@@ -241,6 +241,35 @@ class POIAPITests(APITestCase):
         self.assertEqual(category_response.status_code, status.HTTP_200_OK)
         self.assertEqual(category_response.data["count"], 1)
 
+    def test_category_merge_keeps_target_and_moves_poi_links(self):
+        source = Category.objects.create(slug="affittacamere")
+        target = Category.objects.create(slug="bed-and-breakfast")
+        CategoryTranslation.objects.create(category=source, language_code="it", name="Affittacamere")
+        CategoryTranslation.objects.create(category=target, language_code="en", name="Bed and breakfast")
+        self.poi.categories.set([source])
+
+        response = self.client.post(
+            reverse("category-merge", args=[source.id]),
+            {"target": target.id},
+            format="json",
+        )
+        self.poi.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(Category.objects.filter(id=source.id).exists())
+        self.assertTrue(Category.objects.filter(id=target.id).exists())
+        self.assertEqual(list(self.poi.categories.values_list("id", flat=True)), [target.id])
+
+    def test_category_list_language_selects_name_without_filtering_categories(self):
+        english_only = Category.objects.create(slug="bed-and-breakfast")
+        CategoryTranslation.objects.create(category=english_only, language_code="en", name="Bed and breakfast")
+
+        response = self.client.get(reverse("category-list"), {"language": "it"})
+        slugs = {category["slug"] for category in response.data["results"]}
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("bed-and-breakfast", slugs)
+
     def test_poi_list_filters_by_bbox(self):
         response = self.client.get(reverse("poi-list"), {"bbox": "-9,42,-8,43"})
 
