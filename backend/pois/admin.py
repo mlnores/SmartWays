@@ -3,6 +3,14 @@ from django.contrib import admin
 from .models import (
     Category,
     CategoryTranslation,
+    Fest,
+    FestCategory,
+    FestCategoryTranslation,
+    FestDate,
+    FestEdition,
+    FestMedia,
+    FestMediaTranslation,
+    FestTranslation,
     Itinerary,
     ItineraryMedia,
     ItineraryMediaTranslation,
@@ -99,6 +107,115 @@ class POIMediaTranslationAdmin(admin.ModelAdmin):
     list_display = ["id", "media", "language_code", "caption"]
     list_filter = ["language_code"]
     search_fields = ["caption"]
+
+
+class FestTranslationInline(admin.TabularInline):
+    model = FestTranslation
+    fields = ["language_code", "title", "description", "slug", "is_reference"]
+    extra = 1
+
+
+class FestMediaInline(admin.TabularInline):
+    model = FestMedia
+    extra = 1
+
+
+class FestDateInline(admin.TabularInline):
+    model = FestDate
+    fields = ["date"]
+    extra = 1
+
+
+@admin.register(Fest)
+class FestAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "title",
+        "enabled",
+        "country_code",
+        "gps_latitude",
+        "gps_longitude",
+        "has_footprint",
+        "website",
+        "updated_at",
+    ]
+    list_filter = ["enabled", "country_code", "categories"]
+    search_fields = ["translations__title", "translations__slug", "website", "phone", "email"]
+    filter_horizontal = ["categories"]
+    inlines = [FestTranslationInline, FestMediaInline]
+
+    @admin.display(description="title")
+    def title(self, obj):
+        translation = obj.translations.filter(is_reference=True).first() or obj.translations.order_by(
+            "language_code"
+        ).first()
+        return translation.title if translation else ""
+
+    @admin.display(boolean=True, description="footprint")
+    def has_footprint(self, obj):
+        return bool(obj.footprint)
+
+
+class FestCategoryTranslationInline(admin.TabularInline):
+    model = FestCategoryTranslation
+    extra = 1
+
+
+@admin.register(FestCategory)
+class FestCategoryAdmin(admin.ModelAdmin):
+    list_display = ["id", "slug", "created_at"]
+    search_fields = ["slug", "translations__name"]
+    inlines = [FestCategoryTranslationInline]
+
+
+class FestMediaTranslationInline(admin.TabularInline):
+    model = FestMediaTranslation
+    fields = ["language_code", "caption"]
+    extra = 1
+
+
+@admin.register(FestMedia)
+class FestMediaAdmin(admin.ModelAdmin):
+    list_display = ["id", "fest", "media_type", "position", "is_primary", "url"]
+    list_filter = ["media_type", "is_primary"]
+    search_fields = ["url", "translations__caption", "fest__translations__title"]
+    inlines = [FestMediaTranslationInline]
+
+
+@admin.register(FestMediaTranslation)
+class FestMediaTranslationAdmin(admin.ModelAdmin):
+    list_display = ["id", "media", "language_code", "caption"]
+    list_filter = ["language_code"]
+    search_fields = ["caption"]
+
+
+@admin.register(FestTranslation)
+class FestTranslationAdmin(admin.ModelAdmin):
+    list_display = ["id", "fest", "language_code", "title", "slug", "is_reference"]
+    list_filter = ["language_code", "is_reference"]
+    search_fields = ["title", "description", "slug"]
+
+
+@admin.register(FestCategoryTranslation)
+class FestCategoryTranslationAdmin(admin.ModelAdmin):
+    list_display = ["id", "category", "language_code", "name"]
+    list_filter = ["language_code"]
+    search_fields = ["name"]
+
+
+@admin.register(FestEdition)
+class FestEditionAdmin(admin.ModelAdmin):
+    list_display = ["id", "fest", "year", "is_cancelled"]
+    list_filter = ["year", "is_cancelled"]
+    search_fields = ["fest__translations__title", "notes"]
+    inlines = [FestDateInline]
+
+
+@admin.register(FestDate)
+class FestDateAdmin(admin.ModelAdmin):
+    list_display = ["id", "edition", "date"]
+    list_filter = ["date"]
+    search_fields = ["edition__fest__translations__title"]
 
 
 class ItineraryTranslationInline(admin.TabularInline):

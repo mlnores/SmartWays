@@ -12,6 +12,7 @@ from django.db import transaction
 from django.http import JsonResponse
 from django.db.models import Count, Q
 from django.middleware.csrf import get_token
+from django.utils.dateparse import parse_date
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import permissions, status, viewsets
@@ -24,6 +25,12 @@ from .country_codes import alpha3_to_alpha2
 from .models import (
     Category,
     CategoryTranslation,
+    Fest,
+    FestCategory,
+    FestCategoryTranslation,
+    FestEdition,
+    FestMedia,
+    FestTranslation,
     Itinerary,
     ItineraryMedia,
     ItineraryTranslation,
@@ -38,6 +45,11 @@ from .models import (
 from .serializers import (
     CategorySerializer,
     CategoryTranslationSerializer,
+    FestCategorySerializer,
+    FestCategoryTranslationSerializer,
+    FestMediaSerializer,
+    FestSerializer,
+    FestTranslationSerializer,
     ItineraryMediaSerializer,
     ItinerarySerializer,
     ItineraryTranslationSerializer,
@@ -303,6 +315,10 @@ def buffer_geometry_from_geojson(geometry):
 
 
 def poi_spatial_filter(geometry):
+    return Q(location__within=geometry) | Q(footprint__intersects=geometry)
+
+
+def fest_spatial_filter(geometry):
     return Q(location__within=geometry) | Q(footprint__intersects=geometry)
 
 
@@ -879,6 +895,214 @@ class POITranslationViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
         return queryset
 
 
+def parse_iso_date_query(value, field_name):
+    parsed = parse_date(value or "")
+    if parsed is None:
+        raise ValidationError({field_name: "Use YYYY-MM-DD."})
+    return parsed
+
+
+class FestViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiViewSet):
+    draft_label = "fest"
+    serializer_class = FestSerializer
+    map_individual_limit = 250
+    map_cluster_limit = 80
+
+    def get_queryset(self):
+        queryset = (
+            Fest.objects.all()
+            .prefetch_related(
+                "translations",
+                "media",
+                "media__translations",
+                "categories",
+                "categories__translations",
+                "editions",
+                "editions__dates",
+            )
+            .distinct()
+        )
+
+        enabled = self.request.query_params.get("enabled")
+        if enabled is not None:
+            if enabled.lower() not in {"true", "false", "1", "0"}:
+                raise ValidationError({"enabled": "Use true or false."})
+            queryset = queryset.filter(enabled=enabled.lower() in {"true", "1"})
+
+        country = (self.request.query_params.get("country") or self.request.query_params.get("country_code") or "").strip()
+        if country:
+            if len(country) != 2 or not country.isalpha():
+                raise ValidationError({"country": "Use a two-letter ISO 3166-1 alpha-2 country code."})
+            queryset = queryset.filter(country_code=country.upper())
+
+        ids = (self.request.query_params.get("ids") or "").strip()
+        if ids:
+            try:
+                fest_ids = [int(value) for value in ids.split(",") if value.strip()]
+            except ValueError:
+                raise ValidationError({"ids": "Use a comma-separated list of fest ids."})
+            queryset = queryset.filter(id__in=fest_ids)
+
+        language = self.get_language()
+        if language and self.action == "list":
+            queryset = queryset.filter(translations__language_code=language)
+
+        category = self.request.query_params.get("category")
+        if category:
+            if category.isdigit():
+                queryset = queryset.filter(categories__id=int(category))
+            else:
+                queryset = queryset.filter(categories__slug=category)
+
+        query = (self.request.query_params.get("q") or self.request.query_params.get("search") or "").strip()
+        if query:
+            queryset = queryset.filter(
+                Q(translations__title__icontains=query)
+                | Q(categories__slug__icontains=query)
+                | Q(categories__translations__name__icontains=query)
+            )
+
+        year = self.request.query_params.get("year")
+        if year:
+            try:
+                queryset = queryset.filter(editions__year=int(year))
+            except ValueError:
+                raise ValidationError({"year": "Use a numeric year."})
+
+        date_value = self.request.query_params.get("date")
+        if date_value:
+            queryset = queryset.filter(editions__dates__date=parse_iso_date_query(date_value, "date"))
+
+        date_from = self.request.query_params.get("date_from")
+        if date_from:
+            queryset = queryset.filter(editions__dates__date__gte=parse_iso_date_query(date_from, "date_from"))
+
+        date_to = self.request.query_params.get("date_to")
+        if date_to:
+            queryset = queryset.filter(editions__dates__date__lte=parse_iso_date_query(date_to, "date_to"))
+
+        bbox = self.request.query_params.get("bbox")
+        if bbox:
+            queryset = queryset.filter(fest_spatial_filter(parse_bbox(bbox)))
+
+        return queryset.distinct()
+
+    @action(detail=False, methods=["get"])
+    def countries(self, request):
+        country_codes = (
+            Fest.objects.exclude(country_code="")
+            .order_by("country_code")
+            .values_list("country_code", flat=True)
+            .distinct()
+        )
+        return Response({"results": list(country_codes)})
+
+    @action(detail=False, methods=["get"])
+    def map(self, request):
+        bbox_value = request.query_params.get("bbox") or "-180,-90,180,90"
+        min_lon, min_lat, max_lon, max_lat = parse_bbox_values(bbox_value)
+        bbox = Polygon.from_bbox((min_lon, min_lat, max_lon, max_lat))
+        queryset = self.get_queryset().filter(fest_spatial_filter(bbox))
+        total_count = queryset.count()
+        individual_limit = self._positive_int_query_param("individual_limit", self.map_individual_limit, 1, 1000)
+        cluster_limit = self._positive_int_query_param("cluster_limit", self.map_cluster_limit, 4, 400)
+        zoom = self._positive_int_query_param("zoom", 0, 0, 24)
+
+        if total_count <= individual_limit or zoom >= 14:
+            fests = queryset.order_by("id")[:individual_limit]
+            serializer = self.get_serializer(fests, many=True)
+            return Response({
+                "count": total_count,
+                "mode": "fests",
+                "results": [
+                    {
+                        "type": "fest",
+                        "fest": fest,
+                    }
+                    for fest in serializer.data
+                ],
+            })
+
+        clusters = self._cluster_fests_for_bbox(queryset, (min_lon, min_lat, max_lon, max_lat), cluster_limit)
+        return Response({
+            "count": total_count,
+            "mode": "clusters",
+            "results": clusters,
+        })
+
+    def _positive_int_query_param(self, name, default, minimum, maximum):
+        value = self.request.query_params.get(name)
+        if value in {None, ""}:
+            return default
+        try:
+            parsed = int(value)
+        except ValueError:
+            raise ValidationError({name: f"Use an integer between {minimum} and {maximum}."})
+        if parsed < minimum or parsed > maximum:
+            raise ValidationError({name: f"Use an integer between {minimum} and {maximum}."})
+        return parsed
+
+    def _cluster_fests_for_bbox(self, queryset, bbox, cluster_limit):
+        min_lon, min_lat, max_lon, max_lat = bbox
+        columns = max(1, math.ceil(math.sqrt(cluster_limit)))
+        rows = max(1, math.ceil(cluster_limit / columns))
+        lon_span = max_lon - min_lon
+        lat_span = max_lat - min_lat
+        cells = {}
+
+        for fest_id, location in queryset.order_by("id").values_list("id", "location"):
+            if location is None:
+                continue
+            longitude = location.x
+            latitude = location.y
+            column = min(columns - 1, max(0, int((longitude - min_lon) / lon_span * columns))) if lon_span else 0
+            row = min(rows - 1, max(0, int((latitude - min_lat) / lat_span * rows))) if lat_span else 0
+            key = (column, row)
+            cell = cells.setdefault(key, {
+                "type": "cluster",
+                "count": 0,
+                "lat_sum": 0.0,
+                "lng_sum": 0.0,
+                "fest_ids": [],
+            })
+            cell["count"] += 1
+            cell["lat_sum"] += latitude
+            cell["lng_sum"] += longitude
+            if len(cell["fest_ids"]) < 10:
+                cell["fest_ids"].append(fest_id)
+
+        clusters = []
+        for cell in cells.values():
+            count = cell["count"]
+            clusters.append({
+                "type": "cluster",
+                "count": count,
+                "lat": cell["lat_sum"] / count,
+                "lng": cell["lng_sum"] / count,
+                "fest_ids": cell["fest_ids"],
+            })
+        return sorted(clusters, key=lambda cluster: (-cluster["count"], cluster["lat"], cluster["lng"]))
+
+
+class FestTranslationViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
+    draft_label = "fest"
+    parent_attribute = "fest"
+    serializer_class = FestTranslationSerializer
+    queryset = FestTranslation.objects.select_related("fest").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        language = self.request.query_params.get("language") or self.request.query_params.get("lang")
+        fest_id = self.request.query_params.get("fest")
+
+        if language:
+            queryset = queryset.filter(language_code=language)
+        if fest_id:
+            queryset = queryset.filter(fest_id=fest_id)
+
+        return queryset
+
+
 class ItineraryViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiViewSet):
     draft_label = "itinerary"
     serializer_class = ItinerarySerializer
@@ -1220,6 +1444,59 @@ class CategoryTranslationViewSet(ManagementApiViewSet):
         return queryset
 
 
+class FestCategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
+    serializer_class = FestCategorySerializer
+    queryset = (
+        FestCategory.objects
+        .prefetch_related("translations")
+        .annotate(fest_count=Count("fests", distinct=True))
+        .order_by("slug", "id")
+    )
+
+    def get_queryset(self):
+        return super().get_queryset().distinct()
+
+    @action(detail=True, methods=["post"], url_path="merge")
+    def merge(self, request, pk=None):
+        source = self.get_object()
+        target_id = request.data.get("target")
+        if not target_id:
+            raise ValidationError({"target": "Select the category to merge into."})
+
+        try:
+            target = FestCategory.objects.get(pk=target_id)
+        except FestCategory.DoesNotExist as exc:
+            raise ValidationError({"target": "Target category does not exist."}) from exc
+
+        if source.pk == target.pk:
+            raise ValidationError({"target": "Choose a different target category."})
+
+        with transaction.atomic():
+            for fest in source.fests.all():
+                fest.categories.add(target)
+            source.delete()
+
+        serializer = self.get_serializer(target)
+        return Response(serializer.data)
+
+
+class FestCategoryTranslationViewSet(ManagementApiViewSet):
+    serializer_class = FestCategoryTranslationSerializer
+    queryset = FestCategoryTranslation.objects.select_related("category").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        language = self.request.query_params.get("language") or self.request.query_params.get("lang")
+        category_id = self.request.query_params.get("category")
+
+        if language:
+            queryset = queryset.filter(language_code=language)
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+
+        return queryset
+
+
 class POIMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
     draft_label = "POI"
     parent_attribute = "poi"
@@ -1245,6 +1522,33 @@ class POIMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
         media = serializer.save()
         if media.is_primary:
             POIMedia.objects.filter(poi=media.poi, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+
+class FestMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
+    draft_label = "fest"
+    parent_attribute = "fest"
+    serializer_class = FestMediaSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    queryset = FestMedia.objects.select_related("fest").prefetch_related("translations").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        fest_id = self.request.query_params.get("fest")
+
+        if fest_id:
+            queryset = queryset.filter(fest_id=fest_id)
+
+        return queryset
+
+    def perform_create(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            FestMedia.objects.filter(fest=media.fest, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
+
+    def perform_update(self, serializer):
+        media = serializer.save()
+        if media.is_primary:
+            FestMedia.objects.filter(fest=media.fest, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
 
 class RouteMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):

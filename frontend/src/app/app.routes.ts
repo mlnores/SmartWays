@@ -3,6 +3,8 @@ import { Routes } from '@angular/router';
 import { adminGuard, authGuard } from './auth.guard';
 import { ItineraryEditorComponent } from './itinerary-editor.component';
 import { ItineraryListComponent } from './itinerary-list.component';
+import { FestEditorComponent } from './fest-editor.component';
+import { FestListComponent } from './fest-list.component';
 import { LoginComponent } from './login.component';
 import { PoiEditorComponent } from './poi-editor.component';
 import { PoiListComponent } from './poi-list.component';
@@ -23,5 +25,8 @@ export const routes: Routes = [
   { path: 'pois', component: PoiListComponent, canActivate: [authGuard] },
   { path: 'pois/new', component: PoiEditorComponent, canActivate: [authGuard], canDeactivate: [unsavedChangesGuard] },
   { path: 'pois/:id/edit', component: PoiEditorComponent, canActivate: [authGuard], canDeactivate: [unsavedChangesGuard] },
+  { path: 'fests', component: FestListComponent, canActivate: [authGuard] },
+  { path: 'fests/new', component: FestEditorComponent, canActivate: [authGuard], canDeactivate: [unsavedChangesGuard] },
+  { path: 'fests/:id/edit', component: FestEditorComponent, canActivate: [authGuard], canDeactivate: [unsavedChangesGuard] },
   { path: '**', redirectTo: 'itineraries' }
 ];

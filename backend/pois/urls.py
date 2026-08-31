@@ -8,6 +8,11 @@ from .views import (
     csrf_token,
     change_password_view,
     current_user_view,
+    FestCategoryTranslationViewSet,
+    FestCategoryViewSet,
+    FestMediaViewSet,
+    FestTranslationViewSet,
+    FestViewSet,
     ItineraryTranslationViewSet,
     ItineraryMediaViewSet,
     ItineraryViewSet,
@@ -31,6 +36,11 @@ router.register("categories", CategoryViewSet, basename="category")
 router.register("category-translations", CategoryTranslationViewSet, basename="category-translation")
 router.register("poi-media", POIMediaViewSet, basename="poi-media")
 router.register("poi-images", POIMediaViewSet, basename="poi-image")
+router.register("fests", FestViewSet, basename="fest")
+router.register("fest-translations", FestTranslationViewSet, basename="fest-translation")
+router.register("fest-categories", FestCategoryViewSet, basename="fest-category")
+router.register("fest-category-translations", FestCategoryTranslationViewSet, basename="fest-category-translation")
+router.register("fest-media", FestMediaViewSet, basename="fest-media")
 router.register("routes", RouteViewSet, basename="route")
 router.register("route-media", RouteMediaViewSet, basename="route-media")
 router.register("route-translations", RouteTranslationViewSet, basename="route-translation")

@@ -27,6 +27,13 @@ from .management.commands.rurallure_import_romea_strata_official_with_pois impor
 from .models import (
     Category,
     CategoryTranslation,
+    Fest,
+    FestCategory,
+    FestCategoryTranslation,
+    FestDate,
+    FestEdition,
+    FestMedia,
+    FestTranslation,
     Itinerary,
     ItineraryMedia,
     POI,
@@ -1801,6 +1808,122 @@ class POIAPITests(APITestCase):
         self.assertEqual(localized_response.data["results"][0]["title"], "Paseo del castillo")
         self.assertEqual(search_response.status_code, status.HTTP_200_OK)
         self.assertEqual(search_response.data["count"], 1)
+
+
+class FestAPITests(APITestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="editor",
+            email="editor@example.com",
+            password="secret-password",
+        )
+        self.client.login(username="editor", password="secret-password")
+        self.category = FestCategory.objects.create(slug="summer-fest")
+        FestCategoryTranslation.objects.create(
+            category=self.category,
+            language_code="en",
+            name="Summer fest",
+        )
+
+    def test_fest_create_accepts_footprint_and_year_dates(self):
+        payload = {
+            "enabled": False,
+            "country_code": "es",
+            "gps_latitude": 42.2406,
+            "gps_longitude": -8.7207,
+            "footprint": {
+                "type": "Polygon",
+                "coordinates": [[[-8.73, 42.23], [-8.71, 42.23], [-8.71, 42.25], [-8.73, 42.25], [-8.73, 42.23]]],
+            },
+            "category_ids": [self.category.id],
+            "translations": [
+                {
+                    "language_code": "en",
+                    "title": "Harvest Fest",
+                    "description": "Annual celebration.",
+                    "slug": "harvest-fest",
+                }
+            ],
+            "media": [
+                {
+                    "media_type": FestMedia.MediaType.IMAGE,
+                    "url": "https://example.com/fest.jpg",
+                    "position": 1,
+                    "is_primary": True,
+                    "translations": [{"language_code": "en", "caption": "Opening night"}],
+                }
+            ],
+            "editions": [
+                {
+                    "year": 2027,
+                    "dates": ["2027-07-24", "2027-07-25", "2027-07-24"],
+                    "notes": "Weekend edition.",
+                },
+                {
+                    "year": 2028,
+                    "dates": ["2028-08-05"],
+                    "is_cancelled": True,
+                },
+            ],
+        }
+
+        response = self.client.post(reverse("fest-list"), payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        fest = Fest.objects.get(id=response.data["id"])
+        self.assertEqual(fest.country_code, "ES")
+        self.assertEqual(fest.footprint.geom_type, "MultiPolygon")
+        self.assertEqual(fest.translations.count(), 1)
+        self.assertEqual(fest.media.count(), 1)
+        self.assertEqual(fest.categories.get().id, self.category.id)
+        self.assertEqual(FestEdition.objects.filter(fest=fest).count(), 2)
+        self.assertEqual(FestDate.objects.filter(edition__fest=fest).count(), 3)
+        self.assertEqual(response.data["editions"][0]["dates"], ["2027-07-24", "2027-07-25"])
+
+    def test_fest_rejects_dates_outside_edition_year(self):
+        payload = {
+            "gps_latitude": 42.2406,
+            "gps_longitude": -8.7207,
+            "translations": [{"language_code": "en", "title": "Wrong Dates"}],
+            "editions": [{"year": 2027, "dates": ["2028-01-01"]}],
+        }
+
+        response = self.client.post(reverse("fest-list"), payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("editions", response.data)
+
+    def test_fest_list_filters_by_bbox_intersecting_footprint(self):
+        area_fest = Fest.objects.create(
+            enabled=True,
+            location=Point(-7.5000, 43.5000, srid=4326),
+            footprint=MultiPolygon(Polygon(((-8.8, 42.2), (-8.7, 42.2), (-8.7, 42.3), (-8.8, 42.3), (-8.8, 42.2)), srid=4326), srid=4326),
+        )
+        FestTranslation.objects.create(
+            fest=area_fest,
+            language_code="en",
+            title="Footprint Fest",
+            slug="footprint-fest",
+        )
+
+        response = self.client.get(reverse("fest-list"), {"bbox": "-8.85,42.15,-8.65,42.35"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results_by_id = {result["id"]: result for result in response.data["results"]}
+        self.assertIn(area_fest.id, results_by_id)
+        self.assertEqual(results_by_id[area_fest.id]["footprint"]["type"], "MultiPolygon")
+
+    def test_fest_list_filters_by_date_range(self):
+        fest = Fest.objects.create(enabled=True, location=Point(-8.7207, 42.2406, srid=4326))
+        FestTranslation.objects.create(fest=fest, language_code="en", title="July Fest", slug="july-fest")
+        edition = FestEdition.objects.create(fest=fest, year=2027)
+        FestDate.objects.create(edition=edition, date="2027-07-24")
+
+        response = self.client.get(reverse("fest-list"), {"date_from": "2027-07-01", "date_to": "2027-07-31"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], fest.id)
 
 
 class ManagementCommandTests(APITestCase):

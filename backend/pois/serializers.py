@@ -11,6 +11,14 @@ from rest_framework import serializers
 from .models import (
     Category,
     CategoryTranslation,
+    Fest,
+    FestCategory,
+    FestCategoryTranslation,
+    FestDate,
+    FestEdition,
+    FestMedia,
+    FestMediaTranslation,
+    FestTranslation,
     Itinerary,
     ItineraryMedia,
     ItineraryMediaTranslation,
@@ -83,6 +91,24 @@ def unique_poi_slug(language_code, title, slug="", poi=None):
     queryset = POITranslation.objects.filter(language_code=language_code)
     if poi is not None and poi.pk:
         queryset = queryset.exclude(poi=poi)
+
+    while queryset.filter(slug=candidate).exists():
+        suffix_text = f"-{suffix}"
+        candidate = f"{base[: max_length - len(suffix_text)]}{suffix_text}".strip("-_")
+        suffix += 1
+
+    return candidate
+
+
+def unique_fest_slug(language_code, title, slug="", fest=None):
+    max_length = FestTranslation._meta.get_field("slug").max_length
+    base = slugify(slug or title or "") or "fest"
+    base = base[:max_length].strip("-_") or "fest"
+    candidate = base
+    suffix = 2
+    queryset = FestTranslation.objects.filter(language_code=language_code)
+    if fest is not None and fest.pk:
+        queryset = queryset.exclude(fest=fest)
 
     while queryset.filter(slug=candidate).exists():
         suffix_text = f"-{suffix}"
@@ -226,6 +252,34 @@ class NestedCategoryTranslationSerializer(serializers.ModelSerializer):
 class POIMediaTranslationSerializer(serializers.ModelSerializer):
     class Meta:
         model = POIMediaTranslation
+        fields = ["id", "language_code", "caption"]
+        read_only_fields = ["id"]
+
+
+class FestTranslationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FestTranslation
+        fields = ["id", "fest", "language_code", "title", "description", "slug", "is_reference"]
+        read_only_fields = ["id"]
+
+
+class FestCategoryTranslationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FestCategoryTranslation
+        fields = ["id", "category", "language_code", "name"]
+        read_only_fields = ["id"]
+
+
+class NestedFestCategoryTranslationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FestCategoryTranslation
+        fields = ["id", "language_code", "name"]
+        read_only_fields = ["id"]
+
+
+class FestMediaTranslationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FestMediaTranslation
         fields = ["id", "language_code", "caption"]
         read_only_fields = ["id"]
 
@@ -546,6 +600,35 @@ class NestedItineraryMediaSerializer(ItineraryMediaSerializer):
         fields = ParentMediaSerializer.Meta.fields
 
 
+class FestMediaSerializer(ParentMediaSerializer):
+    translations = FestMediaTranslationSerializer(many=True, required=False)
+
+    class Meta(ParentMediaSerializer.Meta):
+        model = FestMedia
+        fields = [
+            "id",
+            "fest",
+            "media_type",
+            "url",
+            "file",
+            "file_url",
+            "image_url",
+            "original_filename",
+            "content_type",
+            "size",
+            "position",
+            "is_primary",
+            "translations",
+        ]
+
+    translation_model = FestMediaTranslation
+
+
+class NestedFestMediaSerializer(FestMediaSerializer):
+    class Meta(FestMediaSerializer.Meta):
+        fields = ParentMediaSerializer.Meta.fields
+
+
 class ItineraryTranslationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItineraryTranslation
@@ -648,6 +731,68 @@ class CategorySerializer(serializers.ModelSerializer):
 
 class NestedCategorySerializer(CategorySerializer):
     class Meta(CategorySerializer.Meta):
+        fields = ["id", "slug", "name", "translations"]
+
+
+class FestCategorySerializer(serializers.ModelSerializer):
+    translations = NestedFestCategoryTranslationSerializer(many=True, required=False)
+    name = serializers.SerializerMethodField()
+    fest_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FestCategory
+        fields = ["id", "slug", "name", "fest_count", "created_at", "translations"]
+        read_only_fields = ["id", "created_at"]
+
+    def get_name(self, obj):
+        language = self.context.get("language")
+        translation = select_translation(obj.translations.all(), language)
+        return translation.name if translation else None
+
+    def get_fest_count(self, obj):
+        if hasattr(obj, "fest_count"):
+            return obj.fest_count
+        return obj.fests.count()
+
+    def validate(self, attrs):
+        slug = attrs.get("slug", self.instance.slug if self.instance else "")
+        if slug:
+            queryset = FestCategory.objects.filter(slug=slug)
+            if self.instance is not None:
+                queryset = queryset.exclude(pk=self.instance.pk)
+            if queryset.exists():
+                raise serializers.ValidationError({"slug": "A fest category with this slug already exists."})
+
+        translations = attrs.get("translations")
+        if translations is not None:
+            language_codes = [translation.get("language_code") for translation in translations]
+            if len(language_codes) != len(set(language_codes)):
+                raise serializers.ValidationError({"translations": "Each language can appear only once."})
+
+        return attrs
+
+    def create(self, validated_data):
+        translations = validated_data.pop("translations", [])
+        category = FestCategory.objects.create(**validated_data)
+        for translation_data in translations:
+            FestCategoryTranslation.objects.create(category=category, **translation_data)
+        return category
+
+    def update(self, instance, validated_data):
+        translations = validated_data.pop("translations", None)
+        instance.slug = validated_data.get("slug", instance.slug)
+        instance.save()
+
+        if translations is not None:
+            instance.translations.all().delete()
+            for translation_data in translations:
+                FestCategoryTranslation.objects.create(category=instance, **translation_data)
+
+        return instance
+
+
+class NestedFestCategorySerializer(FestCategorySerializer):
+    class Meta(FestCategorySerializer.Meta):
         fields = ["id", "slug", "name", "translations"]
 
 
@@ -885,6 +1030,253 @@ class POISerializer(serializers.ModelSerializer):
                 kept_ids.add(media.id)
 
         poi.media.exclude(id__in=kept_ids).delete()
+
+
+class NestedFestTranslationSerializer(serializers.ModelSerializer):
+    slug = serializers.SlugField(required=False, allow_blank=True)
+
+    class Meta:
+        model = FestTranslation
+        fields = ["id", "language_code", "title", "description", "slug", "is_reference"]
+        read_only_fields = ["id"]
+        validators = []
+
+
+class FestEditionSerializer(serializers.ModelSerializer):
+    dates = serializers.ListField(child=serializers.DateField(), required=False)
+
+    class Meta:
+        model = FestEdition
+        fields = ["id", "year", "notes", "is_cancelled", "dates"]
+        read_only_fields = ["id"]
+
+    def to_representation(self, instance):
+        return {
+            "id": instance.id,
+            "year": instance.year,
+            "notes": instance.notes,
+            "is_cancelled": instance.is_cancelled,
+            "dates": [fest_date.date.isoformat() for fest_date in instance.dates.all()],
+        }
+
+    def validate(self, attrs):
+        dates = attrs.get("dates")
+        year = attrs.get("year", self.instance.year if self.instance else None)
+        if year is None:
+            raise serializers.ValidationError({"year": "This field is required."})
+        if dates is not None:
+            unique_dates = []
+            seen = set()
+            for date in dates:
+                if date.year != year:
+                    raise serializers.ValidationError({"dates": "All dates must belong to the edition year."})
+                if date in seen:
+                    continue
+                seen.add(date)
+                unique_dates.append(date)
+            attrs["dates"] = sorted(unique_dates)
+        return attrs
+
+
+class FestSerializer(serializers.ModelSerializer):
+    country_code = serializers.CharField(required=False, allow_blank=True, max_length=2)
+    gps_latitude = serializers.FloatField(required=False)
+    gps_longitude = serializers.FloatField(required=False)
+    footprint = serializers.JSONField(required=False, allow_null=True)
+    title = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
+    slug = serializers.SerializerMethodField()
+    translations = NestedFestTranslationSerializer(many=True, required=False)
+    media = NestedFestMediaSerializer(many=True, required=False)
+    editions = FestEditionSerializer(many=True, required=False)
+    categories = NestedFestCategorySerializer(many=True, read_only=True)
+    category_ids = serializers.PrimaryKeyRelatedField(
+        queryset=FestCategory.objects.all(),
+        source="categories",
+        many=True,
+        write_only=True,
+        required=False,
+    )
+
+    class Meta:
+        model = Fest
+        fields = [
+            "id",
+            "enabled",
+            "country_code",
+            "gps_latitude",
+            "gps_longitude",
+            "footprint",
+            "website",
+            "phone",
+            "email",
+            "created_at",
+            "updated_at",
+            "title",
+            "description",
+            "slug",
+            "translations",
+            "categories",
+            "category_ids",
+            "media",
+            "editions",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_title(self, obj):
+        translation = self._localized_translation(obj)
+        return translation.title if translation else None
+
+    def get_description(self, obj):
+        translation = self._localized_translation(obj)
+        return translation.description if translation else None
+
+    def get_slug(self, obj):
+        translation = self._localized_translation(obj)
+        return translation.slug if translation else None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["footprint"] = geometry_as_geojson(instance.footprint)
+        return data
+
+    def _localized_translation(self, obj):
+        language = self.context.get("language")
+        return select_translation(obj.translations.all(), language)
+
+    def validate(self, attrs):
+        latitude = attrs.pop("gps_latitude", None)
+        longitude = attrs.pop("gps_longitude", None)
+        if "footprint" in attrs:
+            try:
+                attrs["footprint"] = footprint_from_geojson(attrs["footprint"])
+            except serializers.ValidationError as error:
+                raise serializers.ValidationError({"footprint": error.detail})
+        normalize_reference_translation(attrs.get("translations"))
+        if "country_code" in attrs:
+            attrs["country_code"] = (attrs.get("country_code") or "").upper()
+            if attrs["country_code"] and (len(attrs["country_code"]) != 2 or not attrs["country_code"].isalpha()):
+                raise serializers.ValidationError(
+                    {"country_code": "Use a two-letter ISO 3166-1 alpha-2 country code."}
+                )
+        translations = attrs.get("translations")
+        if translations is not None:
+            for translation in translations:
+                title = (translation.get("title") or "").strip()
+                if not title:
+                    raise serializers.ValidationError({"translations": "Each fest translation needs a title."})
+                translation["title"] = title
+                translation["slug"] = unique_fest_slug(
+                    translation.get("language_code"),
+                    title,
+                    translation.get("slug"),
+                    self.instance,
+                )
+
+        editions = attrs.get("editions")
+        if editions is not None:
+            years = [edition.get("year") for edition in editions]
+            if len(years) != len(set(years)):
+                raise serializers.ValidationError({"editions": "Each year can appear only once."})
+
+        if self.instance is None and (latitude is None or longitude is None):
+            raise serializers.ValidationError(
+                {"gps_latitude": "This field is required.", "gps_longitude": "This field is required."}
+            )
+
+        if latitude is not None or longitude is not None:
+            if latitude is None:
+                latitude = self.instance.gps_latitude
+            if longitude is None:
+                longitude = self.instance.gps_longitude
+
+            if not -90 <= latitude <= 90:
+                raise serializers.ValidationError({"gps_latitude": "Latitude must be between -90 and 90."})
+            if not -180 <= longitude <= 180:
+                raise serializers.ValidationError({"gps_longitude": "Longitude must be between -180 and 180."})
+
+            attrs["location"] = Point(longitude, latitude, srid=4326)
+
+        return attrs
+
+    def create(self, validated_data):
+        translations = validated_data.pop("translations", [])
+        media = validated_data.pop("media", None)
+        editions = validated_data.pop("editions", [])
+        categories = validated_data.pop("categories", [])
+        fest = Fest.objects.create(**validated_data)
+        fest.categories.set(categories)
+
+        for translation_data in translations:
+            FestTranslation.objects.create(fest=fest, **translation_data)
+        for media_data in self._media_payload(media):
+            media_translations = media_data.pop("translations", None)
+            fest_media = FestMedia.objects.create(fest=fest, **media_data)
+            sync_media_translations(fest_media, media_translations, FestMediaTranslation)
+        self._sync_editions(fest, editions)
+
+        return fest
+
+    def update(self, instance, validated_data):
+        translations = validated_data.pop("translations", None)
+        media = validated_data.pop("media", None)
+        editions = validated_data.pop("editions", None)
+        categories = validated_data.pop("categories", None)
+
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+
+        if categories is not None:
+            instance.categories.set(categories)
+        if translations is not None:
+            instance.translations.all().delete()
+            for translation_data in translations:
+                FestTranslation.objects.create(fest=instance, **translation_data)
+        if media is not None:
+            self._sync_media(instance, self._media_payload(media))
+        if editions is not None:
+            self._sync_editions(instance, editions)
+
+        return instance
+
+    def _media_payload(self, media):
+        payload = media or []
+        for item in payload:
+            item.setdefault("media_type", FestMedia.MediaType.IMAGE)
+        return payload
+
+    def _sync_media(self, fest, media_payload):
+        kept_ids = set()
+        existing = {item.id: item for item in fest.media.all()}
+        if any(media_data.get("is_primary") for media_data in media_payload):
+            fest.media.filter(is_primary=True).update(is_primary=False)
+        for media_data in media_payload:
+            media_id = media_data.pop("id", None)
+            translations = media_data.pop("translations", None)
+            if media_id and media_id in existing:
+                media = existing[media_id]
+                for field, value in media_data.items():
+                    setattr(media, field, value)
+                media.save()
+                sync_media_translations(media, translations, FestMediaTranslation)
+                kept_ids.add(media.id)
+            else:
+                media = FestMedia.objects.create(fest=fest, **media_data)
+                sync_media_translations(media, translations, FestMediaTranslation)
+                kept_ids.add(media.id)
+
+        fest.media.exclude(id__in=kept_ids).delete()
+
+    def _sync_editions(self, fest, editions_payload):
+        fest.editions.all().delete()
+        for edition_data in editions_payload:
+            dates = edition_data.pop("dates", [])
+            edition = FestEdition.objects.create(fest=fest, **edition_data)
+            FestDate.objects.bulk_create(
+                [FestDate(edition=edition, date=date) for date in dates],
+                ignore_conflicts=True,
+            )
 
 
 class ItinerarySerializer(serializers.ModelSerializer):

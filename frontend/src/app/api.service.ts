@@ -137,6 +137,10 @@ export interface MediaAsset {
 
 export type PoiMedia = MediaAsset;
 
+export type FestMedia = MediaAsset;
+
+export type FestMediaTranslation = PoiMediaTranslation;
+
 export interface PoiMediaTranslation {
   id?: number;
   language_code: string;
@@ -218,6 +222,72 @@ export interface PoiPayload {
   }>;
   media?: PoiMedia[];
   images?: PoiImage[];
+}
+
+export interface FestCategory {
+  id: number;
+  slug: string;
+  name: string | null;
+  fest_count: number;
+  translations: Translation[];
+}
+
+export interface FestCategoryPayload {
+  slug: string;
+  translations: Array<{
+    language_code: string;
+    name: string;
+  }>;
+}
+
+export interface FestEdition {
+  id?: number;
+  year: number;
+  notes?: string;
+  is_cancelled?: boolean;
+  dates: string[];
+}
+
+export interface Fest {
+  id: number;
+  enabled: boolean;
+  country_code: string;
+  gps_latitude: number;
+  gps_longitude: number;
+  footprint: GeoJsonPolygonGeometry | null;
+  website: string;
+  phone: string;
+  email: string;
+  created_at: string;
+  updated_at: string;
+  title: string | null;
+  description: string | null;
+  slug: string | null;
+  categories: Array<{ id: number; slug: string; name: string | null }>;
+  translations: Translation[];
+  media: FestMedia[];
+  editions: FestEdition[];
+}
+
+export interface FestPayload {
+  enabled: boolean;
+  country_code?: string;
+  gps_latitude?: number;
+  gps_longitude?: number;
+  footprint?: GeoJsonPolygonGeometry | null;
+  website?: string;
+  phone?: string;
+  email?: string;
+  category_ids?: number[];
+  translations?: Array<{
+    language_code: string;
+    title: string;
+    description?: string;
+    slug?: string;
+    is_reference?: boolean;
+  }>;
+  media?: FestMedia[];
+  editions?: FestEdition[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -504,6 +574,119 @@ export class ApiService {
     );
   }
 
+  listFests(
+    query = '',
+    language = '',
+    enabled?: boolean,
+    category?: number | string,
+    country?: string,
+    ids?: Array<number | string>,
+    bbox?: string,
+    page?: number,
+    year?: number | string,
+    dateFrom?: string,
+    dateTo?: string
+  ): Observable<ApiPage<Fest>> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
+    if (enabled !== undefined) {
+      params = params.set('enabled', String(enabled));
+    }
+    if (category !== undefined && category !== null && String(category).trim()) {
+      params = params.set('category', String(category).trim());
+    }
+    const countryFilter = (country || '').trim();
+    if (countryFilter) {
+      params = params.set('country', countryFilter.toUpperCase());
+    }
+    if (ids && ids.length > 0) {
+      params = params.set('ids', ids.map(id => String(id)).join(','));
+    }
+    if (bbox) {
+      params = params.set('bbox', bbox);
+    }
+    if (page && page > 1) {
+      params = params.set('page', String(page));
+    }
+    if (year !== undefined && year !== null && String(year).trim()) {
+      params = params.set('year', String(year).trim());
+    }
+    if (dateFrom) {
+      params = params.set('date_from', dateFrom);
+    }
+    if (dateTo) {
+      params = params.set('date_to', dateTo);
+    }
+    if (query.trim()) {
+      params = params.set('q', query.trim());
+    }
+    return this.http.get<ApiPage<Fest>>(`${API_BASE_URL}/fests/`, { params });
+  }
+
+  listAllFests(
+    query = '',
+    language = '',
+    enabled?: boolean,
+    category?: number | string,
+    country?: string,
+    ids?: Array<number | string>,
+    bbox?: string,
+    year?: number | string,
+    dateFrom?: string,
+    dateTo?: string
+  ): Observable<Fest[]> {
+    return this.collectPages(this.listFests(query, language, enabled, category, country, ids, bbox, undefined, year, dateFrom, dateTo));
+  }
+
+  createFest(payload: FestPayload): Observable<Fest> {
+    return this.http.post<Fest>(`${API_BASE_URL}/fests/`, payload);
+  }
+
+  getFest(id: number | string, language = ''): Observable<Fest> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
+    return this.http.get<Fest>(`${API_BASE_URL}/fests/${encodeURIComponent(String(id))}/`, { params });
+  }
+
+  updateFest(id: number, payload: Partial<FestPayload>): Observable<Fest> {
+    return this.http.patch<Fest>(`${API_BASE_URL}/fests/${id}/`, payload);
+  }
+
+  deleteFest(id: number): Observable<void> {
+    return this.http.delete<void>(`${API_BASE_URL}/fests/${id}/`);
+  }
+
+  uploadFestMedia(
+    festId: number,
+    file: File,
+    mediaType: FestMedia['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<FestMedia> {
+    const formData = this.mediaFormData(file, mediaType, position, isPrimary, translations);
+    formData.append('fest', String(festId));
+    return this.http.post<FestMedia>(`${API_BASE_URL}/fest-media/`, formData);
+  }
+
+  updateFestMedia(
+    mediaId: number,
+    file: File,
+    mediaType: FestMedia['media_type'],
+    position: number,
+    isPrimary: boolean,
+    translations: PoiMediaTranslation[] = []
+  ): Observable<FestMedia> {
+    return this.http.patch<FestMedia>(
+      `${API_BASE_URL}/fest-media/${mediaId}/`,
+      this.mediaFormData(file, mediaType, position, isPrimary, translations)
+    );
+  }
+
   listPoiCountries(): Observable<string[]> {
     return this.http.get<{ results: string[] }>(`${API_BASE_URL}/pois/countries/`).pipe(
       map(response => response.results)
@@ -571,6 +754,37 @@ export class ApiService {
 
   mergeCategory(sourceId: number, targetId: number): Observable<Category> {
     return this.http.post<Category>(`${API_BASE_URL}/categories/${sourceId}/merge/`, { target: targetId });
+  }
+
+  listFestCategories(query = '', language = ''): Observable<ApiPage<FestCategory>> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
+    if (query.trim()) {
+      params = params.set('q', query.trim());
+    }
+    return this.http.get<ApiPage<FestCategory>>(`${API_BASE_URL}/fest-categories/`, { params });
+  }
+
+  listAllFestCategories(query = '', language = ''): Observable<FestCategory[]> {
+    return this.collectPages(this.listFestCategories(query, language));
+  }
+
+  createFestCategory(payload: FestCategoryPayload): Observable<FestCategory> {
+    return this.http.post<FestCategory>(`${API_BASE_URL}/fest-categories/`, payload);
+  }
+
+  updateFestCategory(id: number, payload: Partial<FestCategoryPayload>): Observable<FestCategory> {
+    return this.http.patch<FestCategory>(`${API_BASE_URL}/fest-categories/${id}/`, payload);
+  }
+
+  deleteFestCategory(id: number): Observable<void> {
+    return this.http.delete<void>(`${API_BASE_URL}/fest-categories/${id}/`);
+  }
+
+  mergeFestCategory(sourceId: number, targetId: number): Observable<FestCategory> {
+    return this.http.post<FestCategory>(`${API_BASE_URL}/fest-categories/${sourceId}/merge/`, { target: targetId });
   }
 
   private collectPages<T>(firstPage: Observable<ApiPage<T>>): Observable<T[]> {

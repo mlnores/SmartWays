@@ -4,7 +4,7 @@ import { Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 
-import { ApiService, Category, GeoJsonPolygonGeometry, Poi, PoiMedia, PoiMediaTranslation, Translation } from './api.service';
+import { ApiService, Fest, FestCategory, FestEdition, FestMedia, FestMediaTranslation, GeoJsonPolygonGeometry, Translation } from './api.service';
 import { PageInstructionService } from './page-instruction.service';
 
 interface TranslationDraft {
@@ -17,7 +17,7 @@ interface TranslationDraft {
 
 interface MediaDraft {
   id?: number;
-  media_type: PoiMedia['media_type'];
+  media_type: FestMedia['media_type'];
   source: 'local' | 'remote';
   url: string;
   file_url?: string;
@@ -32,6 +32,27 @@ interface MediaDraft {
   is_primary: boolean;
 }
 
+interface FestEditionDraft {
+  id?: number;
+  year: number;
+  notes: string;
+  is_cancelled: boolean;
+  dates: string[];
+  newDate: string;
+}
+
+interface CalendarDay {
+  key: string;
+  day: number | null;
+  date: string | null;
+}
+
+interface CalendarMonth {
+  key: string;
+  name: string;
+  days: CalendarDay[];
+}
+
 type EditorTab = 'basic' | 'translations' | 'media';
 
 interface FootprintPoint {
@@ -42,7 +63,7 @@ interface FootprintPoint {
 declare const L: any;
 
 @Component({
-  selector: 'app-poi-editor',
+  selector: 'app-fest-editor',
   standalone: true,
   imports: [FormsModule],
   template: `
@@ -51,7 +72,7 @@ declare const L: any;
         <div class="poi-editor-heading">
           <div>
             <div class="title-with-switch">
-              <h1>{{ isNewPoi ? 'New POI' : (poi?.title || 'POI editor') }}</h1>
+              <h1>{{ isNewFest ? 'New Fest' : (fest?.title || 'Fest editor') }}</h1>
               <div class="publication-switch">
                 <div class="view-toggle publication-toggle" aria-label="Publication state">
                   <button type="button" [class.active]="!enabled" (click)="setPublicationState(false)">Draft</button>
@@ -62,7 +83,7 @@ declare const L: any;
           </div>
         </div>
         <div class="list-actions poi-save-actions">
-          <button type="button" class="primary" [disabled]="saving || loading || isReadOnlyPublicPoi() || !canSave()" (click)="savePoi()">
+          <button type="button" class="primary" [disabled]="saving || loading || isReadOnlyPublicFest() || !canSave()" (click)="saveFest()">
             {{ saving ? 'Saving...' : 'Save' }}
           </button>
           @if (statusMessage && !statusIsError) {
@@ -76,10 +97,10 @@ declare const L: any;
       }
 
       @if (loading) {
-        <p class="status">Loading POI...</p>
+        <p class="status">Loading Fest...</p>
       } @else if (editorReady) {
         <div class="editor-shell">
-          <nav class="editor-tabs" aria-label="POI editor sections">
+          <nav class="editor-tabs" aria-label="Fest editor sections">
             <button type="button" [class.active]="activeTab === 'basic'" (click)="setActiveTab('basic')">Basic info</button>
             <button type="button" [class.active]="activeTab === 'media'" (click)="setActiveTab('media')">Media</button>
             <button type="button" [class.active]="activeTab === 'translations'" (click)="setActiveTab('translations')">Translations</button>
@@ -130,7 +151,7 @@ declare const L: any;
                   }
 
                   <div class="section-heading spaced-section-heading">
-                    <h2>Location</h2>
+                    <h2>Location and celebration dates</h2>
                   </div>
                   <div class="form-grid location-form-grid">
                     <label>
@@ -163,6 +184,19 @@ declare const L: any;
                       <span>Email</span>
                       <input type="email" [(ngModel)]="email" name="email" [disabled]="!canEditContent()" />
                     </label>
+                    <div class="metadata-full-row fest-dates-field">
+                      <span>Dates</span>
+                      <div class="fest-dates-summary-row">
+                        <div class="date-badge-list" aria-label="Celebration dates">
+                          @for (date of editionDateBadges(); track date) {
+                            <span class="date-badge">{{ date }}</span>
+                          } @empty {
+                            <p class="muted">No dates selected.</p>
+                          }
+                        </div>
+                        <button type="button" class="secondary" [disabled]="!canEditContent()" (click)="openDateDialog()">See/edit dates</button>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="section-heading spaced-section-heading">
@@ -180,8 +214,8 @@ declare const L: any;
                           [disabled]="!canEditContent()"
                         />
                         <div class="category-options" aria-label="Available categories">
-                          @for (category of availableCategoryOptions(); track category.id) {
-                            <button type="button" [disabled]="!canEditContent()" (click)="addCategory(category.id)">
+                          @for (category of availableFestCategoryOptions(); track category.id) {
+                            <button type="button" [disabled]="!canEditContent()" (click)="addFestCategory(category.id)">
                               {{ categoryDisplayName(category) }}
                             </button>
                           } @empty {
@@ -193,11 +227,11 @@ declare const L: any;
                           <input
                             type="text"
                             placeholder="New category"
-                            [(ngModel)]="newCategoryName"
-                            name="newCategoryName"
+                            [(ngModel)]="newFestCategoryName"
+                            name="newFestCategoryName"
                             [disabled]="!canEditContent()"
                           />
-                          <button type="button" class="primary" title="Create category" aria-label="Create category" [disabled]="!canEditContent()" (click)="createCategoryFromEditor()">+</button>
+                          <button type="button" class="primary" title="Create category" aria-label="Create category" [disabled]="!canEditContent()" (click)="createFestCategoryFromEditor()">+</button>
                         </div>
                       </section>
 
@@ -216,8 +250,8 @@ declare const L: any;
                           [disabled]="!canEditContent()"
                         />
                         <div class="category-options" aria-label="Chosen categories">
-                          @for (category of chosenCategoryOptions(); track category.id) {
-                            <button type="button" [disabled]="!canEditContent()" (click)="removeCategory(category.id)">
+                          @for (category of chosenFestCategoryOptions(); track category.id) {
+                            <button type="button" [disabled]="!canEditContent()" (click)="removeFestCategory(category.id)">
                               {{ categoryDisplayName(category) }}
                             </button>
                           } @empty {
@@ -235,11 +269,11 @@ declare const L: any;
 
                 <div class="location-picker">
                   @if (canEditContent()) {
-                    <h2>{{ isEditingFootprint ? "Edit the POI's footprint" : 'Pick location on map' }}</h2>
+                    <h2>{{ isEditingFootprint ? "Edit the Fest's footprint" : 'Pick location on map' }}</h2>
                   }
                   <div class="location-map-shell" [class.editing-area]="isEditingFootprint">
                     @if (isEditingFootprint) {
-                      <aside class="footprint-edit-column" aria-label="POI area editing controls">
+                      <aside class="footprint-edit-column" aria-label="Fest area editing controls">
                         <button type="button" class="secondary" [disabled]="!hasValidCoordinates()" (click)="addFootprintPolygon()">Add polygon</button>
                         <button type="button" class="secondary danger-action" [disabled]="selectedFootprintPolygonIndex === null" (click)="removeSelectedFootprintPolygon()">Remove polygon</button>
                         <button type="button" class="secondary" (click)="fitFootprintView()">Fit view</button>
@@ -256,7 +290,7 @@ declare const L: any;
                   </div>
                   <section class="basic-media-preview">
                     <h2>Media preview</h2>
-                    <div class="basic-media-strip" aria-label="POI media preview">
+                    <div class="basic-media-strip" aria-label="Fest media preview">
                       @for (item of media; track $index) {
                         <a
                           class="basic-media-thumb"
@@ -272,7 +306,7 @@ declare const L: any;
                           }
                         </a>
                       } @empty {
-                        <p class="muted">No media linked to this POI.</p>
+                        <p class="muted">No media linked to this Fest.</p>
                       }
                     </div>
                   </section>
@@ -284,7 +318,7 @@ declare const L: any;
           @if (activeTab === 'translations') {
             <section class="editor-panel">
               <div class="translation-tabs-panel">
-                <div class="translation-tabs" role="tablist" aria-label="POI translation languages">
+                <div class="translation-tabs" role="tablist" aria-label="Fest translation languages">
                   @for (translation of translations; track $index) {
                     <button
                       type="button"
@@ -503,7 +537,7 @@ declare const L: any;
                     <button type="button" class="secondary danger-action" [disabled]="!canEditContent()" (click)="removeMedia($index)">Remove</button>
                   </article>
                 } @empty {
-                  <p class="muted">No media linked to this POI yet.</p>
+                  <p class="muted">No media linked to this Fest yet.</p>
                 }
               </div>
             </section>
@@ -511,10 +545,100 @@ declare const L: any;
         </div>
       }
     </section>
+
+    @if (isDateDialogOpen) {
+      <div class="account-dialog-backdrop" role="presentation">
+        <section class="account-dialog fest-date-dialog" role="dialog" aria-modal="true" aria-labelledby="fest-dates-title">
+          <div class="account-dialog-header">
+            <h2 id="fest-dates-title">Celebration dates</h2>
+            <button type="button" class="icon-button" aria-label="Close celebration dates dialog" (click)="closeDateDialog()">✖</button>
+          </div>
+
+          <div class="fest-date-dialog-body">
+            <aside class="fest-year-tabs" aria-label="Celebration years">
+              @for (year of dateDialogYears(); track year) {
+                <button
+                  type="button"
+                  class="translation-tab"
+                  [class.has-dates]="editionHasDates(year)"
+                  [class.not-held]="editionNotHeld(year)"
+                  [class.active]="selectedDateEditionIndex === $index"
+                  (click)="selectedDateEditionIndex = $index"
+                >
+                  {{ year }}
+                </button>
+              }
+            </aside>
+
+            @if (activeDateEdition(); as edition) {
+              <article class="fest-edition-row">
+                <header>
+                  <h3>{{ edition.year }}</h3>
+                  <label class="checkbox-label">
+                    <input
+                      type="checkbox"
+                      [ngModel]="edition.is_cancelled"
+                      (ngModelChange)="setEditionNotHeld(edition, $event)"
+                      [name]="'editionCancelled' + edition.year"
+                      [disabled]="!canEditContent()"
+                    />
+                    <span>Not held</span>
+                  </label>
+                </header>
+                <div class="edition-calendar" [attr.aria-label]="'Calendar for ' + edition.year">
+                  @for (month of calendarMonthsForEdition(edition); track month.key) {
+                    <section class="calendar-month">
+                      <h4>{{ month.name }}</h4>
+                      <div class="calendar-weekdays" aria-hidden="true">
+                        @for (weekday of weekdayLabels; track weekday) {
+                          <span>{{ weekday }}</span>
+                        }
+                      </div>
+                      <div class="calendar-grid">
+                        @for (day of month.days; track day.key) {
+                          @if (day.date) {
+                            <button
+                              type="button"
+                              class="calendar-day"
+                              [class.selected]="isEditionDateSelected(edition, day.date)"
+                              [disabled]="!canEditContent() || edition.is_cancelled"
+                              (click)="toggleEditionDate(edition, day.date)"
+                            >
+                              {{ day.day }}
+                            </button>
+                          } @else {
+                            <span class="calendar-day empty" aria-hidden="true"></span>
+                          }
+                        }
+                      </div>
+                    </section>
+                  }
+                </div>
+                <div class="date-chip-list">
+                  @for (date of edition.dates; track date) {
+                    <button type="button" class="date-chip" [disabled]="!canEditContent()" (click)="removeDateFromEdition(edition, date)">
+                      {{ date }}
+                    </button>
+                  } @empty {
+                    <p class="muted">No dates selected for this year.</p>
+                  }
+                </div>
+              </article>
+            } @else {
+              <p class="muted">No celebration years yet.</p>
+            }
+          </div>
+
+          <div class="account-dialog-actions">
+            <button type="button" class="primary" (click)="closeDateDialog()">Done</button>
+          </div>
+        </section>
+      </div>
+    }
   `,
   styleUrls: ['./resource-list.css', './poi-editor.component.css']
 })
-export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
+export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('locationMap') private readonly locationMapElement?: ElementRef<HTMLDivElement>;
 
   private readonly api = inject(ApiService);
@@ -530,16 +654,15 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   private footprintDragPointerId: number | null = null;
   private locationResizeObserver: ResizeObserver | null = null;
   private countryRequestId = 0;
-  private readonly poiSaveChannelName = 'smartways-poi-editor-saved';
   private readonly footprintPointerDownHandler = (event: PointerEvent) => this.handleFootprintPointerDown(event);
   private readonly footprintPointerMoveHandler = (event: PointerEvent) => this.handleFootprintPointerMove(event);
   private readonly footprintPointerUpHandler = (event: PointerEvent) => this.handleFootprintPointerUp(event);
   private readonly footprintDoubleClickHandler = (event: MouseEvent) => this.handleFootprintDoubleClick(event);
 
-  poi: Poi | null = null;
-  isNewPoi = false;
+  fest: Fest | null = null;
+  isNewFest = false;
   editorReady = false;
-  categories: Category[] = [];
+  categories: FestCategory[] = [];
   loading = true;
   saving = false;
   statusMessage = '';
@@ -564,30 +687,48 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   categoryIds: number[] = [];
   categoryAvailableFilter = '';
   categoryChosenFilter = '';
-  newCategoryName = '';
+  newFestCategoryName = '';
   translations: TranslationDraft[] = [];
   media: MediaDraft[] = [];
+  editions: FestEditionDraft[] = [];
+  isDateDialogOpen = false;
+  selectedDateEditionIndex = 0;
   private savedSnapshot = '';
 
-  readonly mediaTypes: PoiMedia['media_type'][] = ['image', 'video', 'audio', 'document', 'link', 'other'];
+  readonly mediaTypes: FestMedia['media_type'][] = ['image', 'video', 'audio', 'document', 'link', 'other'];
+  readonly weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  private readonly monthLabels = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December'
+  ];
 
   async ngOnInit(): Promise<void> {
     const id = this.route.snapshot.paramMap.get('id');
-    this.isNewPoi = !id || id === 'new';
-    this.pageInstruction.setInstruction(this.isNewPoi ? 'Create a draft point of interest.' : 'View/edit metadata, translations, and linked media.');
-    this.title.setTitle(this.isNewPoi ? 'SW POI New' : `SW POI ${id}`);
+    this.isNewFest = !id || id === 'new';
+    this.pageInstruction.setInstruction(this.isNewFest ? 'Create a draft fest.' : 'View/edit fest metadata, dates, translations, and linked media.');
+    this.title.setTitle(this.isNewFest ? 'SW Fest New' : `SW Fest ${id}`);
 
     try {
-      const categories = await firstValueFrom(this.api.listAllCategories());
+      const categories = await firstValueFrom(this.api.listAllFestCategories());
       this.categories = this.sortedUniqueCategories(categories);
-      if (this.isNewPoi) {
-        this.loadBlankPoi();
+      if (this.isNewFest) {
+        this.loadBlankFest();
       } else if (id) {
-        const poi = await firstValueFrom(this.api.getPoi(id));
-        this.loadPoi(poi);
+        const fest = await firstValueFrom(this.api.getFest(id));
+        this.loadFest(fest);
       }
     } catch (error) {
-      this.showStatus(`Could not load POI #${id}. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showStatus(`Could not load Fest #${id}. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     } finally {
       this.loading = false;
       window.setTimeout(() => this.initializeLocationMap(), 0);
@@ -760,7 +901,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }));
   }
 
-  mediaTypeLabel(type: PoiMedia['media_type']): string {
+  mediaTypeLabel(type: FestMedia['media_type']): string {
     return type.charAt(0).toUpperCase() + type.slice(1);
   }
 
@@ -800,26 +941,26 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     return item.original_filename || `${this.mediaTypeLabel(item.media_type)} ${index + 1}`;
   }
 
-  categoryDisplayName(category: Category): string {
+  categoryDisplayName(category: FestCategory): string {
     return category.name || category.slug;
   }
 
-  availableCategoryOptions(): Category[] {
+  availableFestCategoryOptions(): FestCategory[] {
     const chosen = new Set(this.categoryIds);
     return this.filterCategories(this.categories.filter(category => !chosen.has(category.id)), this.categoryAvailableFilter);
   }
 
-  chosenCategoryOptions(): Category[] {
+  chosenFestCategoryOptions(): FestCategory[] {
     const chosen = new Set(this.categoryIds);
     return this.filterCategories(this.categories.filter(category => chosen.has(category.id)), this.categoryChosenFilter);
   }
 
-  addCategory(categoryId: number): void {
+  addFestCategory(categoryId: number): void {
     if (!this.canEditContent()) return;
-    this.categoryIds = this.uniqueCategoryIds([...this.categoryIds, categoryId]);
+    this.categoryIds = this.uniqueFestCategoryIds([...this.categoryIds, categoryId]);
   }
 
-  removeCategory(categoryId: number): void {
+  removeFestCategory(categoryId: number): void {
     if (!this.canEditContent()) return;
     this.categoryIds = this.categoryIds.filter(id => id !== categoryId);
   }
@@ -827,25 +968,25 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   chooseAllFilteredCategories(): void {
     if (!this.canEditContent()) return;
     const ids = new Set(this.categoryIds);
-    this.availableCategoryOptions().forEach(category => ids.add(category.id));
-    this.categoryIds = this.uniqueCategoryIds([...ids]);
+    this.availableFestCategoryOptions().forEach(category => ids.add(category.id));
+    this.categoryIds = this.uniqueFestCategoryIds([...ids]);
   }
 
   removeAllFilteredCategories(): void {
     if (!this.canEditContent()) return;
-    const filteredIds = new Set(this.chosenCategoryOptions().map(category => category.id));
+    const filteredIds = new Set(this.chosenFestCategoryOptions().map(category => category.id));
     this.categoryIds = this.categoryIds.filter(id => !filteredIds.has(id));
   }
 
-  async createCategoryFromEditor(): Promise<void> {
+  async createFestCategoryFromEditor(): Promise<void> {
     if (!this.canEditContent()) return;
-    const name = this.newCategoryName.trim();
+    const name = this.newFestCategoryName.trim();
     if (!name) {
       this.showStatus('Enter a category name before creating it.', true);
       return;
     }
     try {
-      const category = await firstValueFrom(this.api.createCategory({
+      const category = await firstValueFrom(this.api.createFestCategory({
         slug: this.slugFromText(name),
         translations: [{
           language_code: this.referenceTranslation()?.language_code || 'en',
@@ -853,29 +994,139 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         }]
       }));
       this.categories = this.sortedUniqueCategories([...this.categories, category]);
-      this.addCategory(category.id);
-      this.newCategoryName = '';
+      this.addFestCategory(category.id);
+      this.newFestCategoryName = '';
       this.clearStatus();
     } catch (error) {
       this.showStatus(`Could not create category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     }
   }
 
-  async savePoi(): Promise<void> {
+  openDateDialog(): void {
+    this.isDateDialogOpen = true;
+    this.ensureDateDialogEditionDrafts();
+    this.selectedDateEditionIndex = Math.min(this.selectedDateEditionIndex, this.dateDialogYears().length - 1);
+  }
+
+  closeDateDialog(): void {
+    this.isDateDialogOpen = false;
+  }
+
+  activeDateEdition(): FestEditionDraft | null {
+    const year = this.dateDialogYears()[this.selectedDateEditionIndex];
+    return year ? this.ensureEditionDraft(year) : null;
+  }
+
+  dateDialogYears(): number[] {
+    const firstYear = new Date().getFullYear();
+    return Array.from({ length: 10 }, (_, index) => firstYear + index);
+  }
+
+  editionHasDates(year: number): boolean {
+    return Boolean(this.editions.find(edition => edition.year === year)?.dates.length);
+  }
+
+  editionNotHeld(year: number): boolean {
+    return Boolean(this.editions.find(edition => edition.year === year)?.is_cancelled);
+  }
+
+  setEditionNotHeld(edition: FestEditionDraft, notHeld: boolean): void {
+    if (!this.canEditContent()) return;
+    edition.is_cancelled = Boolean(notHeld);
+    if (edition.is_cancelled) {
+      edition.dates = [];
+    }
+    this.clearStatus();
+  }
+
+  calendarMonthsForEdition(edition: FestEditionDraft): CalendarMonth[] {
+    const year = Number(edition.year);
+    if (!Number.isInteger(year) || year < 1 || year > 9999) return [];
+    return this.monthLabels.map((name, monthIndex) => ({
+      key: `${year}-${monthIndex}`,
+      name,
+      days: this.calendarDays(year, monthIndex)
+    }));
+  }
+
+  isEditionDateSelected(edition: FestEditionDraft, date: string | null): boolean {
+    return Boolean(date && edition.dates.includes(date));
+  }
+
+  toggleEditionDate(edition: FestEditionDraft, date: string | null): void {
+    if (!this.canEditContent() || !date || edition.is_cancelled) return;
+    edition.is_cancelled = false;
+    if (edition.dates.includes(date)) {
+      edition.dates = edition.dates.filter(item => item !== date);
+    } else {
+      edition.dates = [...edition.dates, date].sort();
+    }
+    this.clearStatus();
+  }
+
+  addDateToEdition(edition: FestEditionDraft): void {
+    if (!this.canEditContent()) return;
+    const date = (edition.newDate || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      this.showStatus('Choose a valid celebration date.', true);
+      return;
+    }
+    if (!date.startsWith(`${edition.year}-`)) {
+      this.showStatus('The celebration date must belong to its edition year.', true);
+      return;
+    }
+    edition.dates = [...new Set([...edition.dates, date])].sort();
+    this.clearStatus();
+  }
+
+  removeDateFromEdition(edition: FestEditionDraft, date: string): void {
+    if (!this.canEditContent()) return;
+    edition.dates = edition.dates.filter(item => item !== date);
+  }
+
+  editionDateSummary(): string {
+    const dates = this.normalizedEditions().flatMap(edition => edition.dates);
+    if (dates.length === 0) return 'No dates selected.';
+    if (dates.length <= 4) return dates.join(', ');
+    return `${dates.slice(0, 4).join(', ')} and ${dates.length - 4} more`;
+  }
+
+  editionDateBadges(): string[] {
+    return this.normalizedEditions().flatMap(edition => edition.dates);
+  }
+
+  private calendarDays(year: number, monthIndex: number): CalendarDay[] {
+    const firstDay = new Date(Date.UTC(year, monthIndex, 1));
+    const leadingEmptyDays = (firstDay.getUTCDay() + 6) % 7;
+    const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+    const days: CalendarDay[] = [];
+    for (let index = 0; index < leadingEmptyDays; index += 1) {
+      days.push({ key: `${year}-${monthIndex}-empty-${index}`, day: null, date: null });
+    }
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      days.push({
+        key: `${year}-${monthIndex}-${day}`,
+        day,
+        date: `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      });
+    }
+    return days;
+  }
+
+  async saveFest(): Promise<void> {
     if (!this.canSave()) {
       this.showStatus('There are no editable changes to save.', true);
       return;
     }
 
-    if (this.poi?.enabled && !this.enabled) {
+    if (this.fest?.enabled && !this.enabled) {
       this.saving = true;
       try {
-        const updated = await firstValueFrom(this.api.updatePoi(this.poi.id, { enabled: false }));
-        this.loadPoi(updated);
-        this.notifyItineraryEditorPoiSaved(updated);
-        this.showStatus('POI saved as draft.', false);
+        const updated = await firstValueFrom(this.api.updateFest(this.fest.id, { enabled: false }));
+        this.loadFest(updated);
+        this.showStatus('Fest saved as draft.', false);
       } catch (error) {
-        this.showStatus(`Could not save POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+        this.showStatus(`Could not save Fest. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
       } finally {
         this.saving = false;
       }
@@ -884,7 +1135,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
     const translations = this.normalizedTranslations();
     if (translations.length === 0 || translations.some(translation => !translation.language_code || !translation.title)) {
-      this.showStatus('Every POI translation needs a language and title.', true);
+      this.showStatus('Every Fest translation needs a language and title.', true);
       return;
     }
     if (!Number.isFinite(this.latitude) || !Number.isFinite(this.longitude)) {
@@ -912,33 +1163,33 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         website: this.website.trim(),
         phone: this.phone.trim(),
         email: this.email.trim(),
-        category_ids: this.uniqueCategoryIds(this.categoryIds),
+        category_ids: this.uniqueFestCategoryIds(this.categoryIds),
         translations,
-        media
+        media,
+        editions: this.normalizedEditions()
       };
-      const updated = this.poi
-        ? await firstValueFrom(this.api.updatePoi(this.poi.id, payload))
-        : await firstValueFrom(this.api.createPoi(payload));
-      const finalPoi = await this.uploadPendingMedia(updated);
-      this.loadPoi(finalPoi);
-      this.notifyItineraryEditorPoiSaved(finalPoi);
-      if (this.isNewPoi) {
-        this.isNewPoi = false;
-        void this.router.navigate(['/pois', finalPoi.id, 'edit'], {
+      const updated = this.fest
+        ? await firstValueFrom(this.api.updateFest(this.fest.id, payload))
+        : await firstValueFrom(this.api.createFest(payload));
+      const finalFest = await this.uploadPendingMedia(updated);
+      this.loadFest(finalFest);
+      if (this.isNewFest) {
+        this.isNewFest = false;
+        void this.router.navigate(['/fests', finalFest.id, 'edit'], {
           replaceUrl: true,
           queryParams: this.route.snapshot.queryParams
         });
       }
-      this.showStatus(this.enabled ? 'POI saved as public.' : 'POI saved as draft.', false);
+      this.showStatus(this.enabled ? 'Fest saved as public.' : 'Fest saved as draft.', false);
     } catch (error) {
-      this.showStatus(`Could not save POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showStatus(`Could not save Fest. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
     } finally {
       this.saving = false;
     }
   }
 
   canEditContent(): boolean {
-    return this.isNewPoi || !this.poi || !this.poi.enabled || !this.enabled;
+    return this.isNewFest || !this.fest || !this.fest.enabled || !this.enabled;
   }
 
   setPublicationState(enabled: boolean): void {
@@ -948,25 +1199,23 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private confirmPublicationStateChange(enabled: boolean): boolean {
-    if (!this.poi) return true;
+    if (!this.fest) return true;
     if (enabled) {
-      return window.confirm(`Really make POI "${this.poi.title || 'Untitled POI'}" public?`);
+      return window.confirm(`Really make Fest "${this.fest.title || 'Untitled Fest'}" public?`);
     }
-    return window.confirm(
-      `Really turn POI "${this.poi.title || 'Untitled POI'}" to draft?\n\nItineraries containing this POI, and routes containing those itineraries, will also be turned to draft.`
-    );
+    return window.confirm(`Really turn Fest "${this.fest.title || 'Untitled Fest'}" to draft?`);
   }
 
   canSave(): boolean {
-    if (this.isReadOnlyPublicPoi()) {
+    if (this.isReadOnlyPublicFest()) {
       return false;
     }
     return this.currentSnapshot() !== this.savedSnapshot
-      && (this.canEditContent() || Boolean(this.poi && this.poi.enabled !== this.enabled));
+      && (this.canEditContent() || Boolean(this.fest && this.fest.enabled !== this.enabled));
   }
 
-  isReadOnlyPublicPoi(): boolean {
-    return Boolean(this.poi?.enabled && this.enabled);
+  isReadOnlyPublicFest(): boolean {
+    return Boolean(this.fest?.enabled && this.enabled);
   }
 
   hasUnsavedChanges(): boolean {
@@ -980,34 +1229,42 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     event.returnValue = '';
   }
 
-  private loadPoi(poi: Poi): void {
+  @HostListener('document:keydown.escape')
+  handleEscapeKey(): void {
+    if (this.isDateDialogOpen) {
+      this.closeDateDialog();
+    }
+  }
+
+  private loadFest(fest: Fest): void {
     this.revokeMediaPreviewUrls();
-    this.poi = poi;
-    this.title.setTitle(`SW POI ${this.titlePart(poi.title || `POI ${poi.id}`)}`);
-    this.enabled = poi.enabled;
-    this.countryCode = poi.country_code || '';
-    this.latitude = poi.gps_latitude;
-    this.longitude = poi.gps_longitude;
-    this.footprint = this.normalizedFootprint(poi.footprint);
+    this.fest = fest;
+    this.title.setTitle(`SW Fest ${this.titlePart(fest.title || `Fest ${fest.id}`)}`);
+    this.enabled = fest.enabled;
+    this.countryCode = fest.country_code || '';
+    this.latitude = fest.gps_latitude;
+    this.longitude = fest.gps_longitude;
+    this.footprint = this.normalizedFootprint(fest.footprint);
     this.resetFootprintEditorState();
-    this.website = poi.website || '';
-    this.phone = poi.phone || '';
-    this.email = poi.email || '';
-    this.categoryIds = this.uniqueCategoryIds(poi.categories.map(category => category.id));
-    this.translations = this.translationDraftsFrom(poi.translations, poi.title, poi.description, poi.slug);
+    this.website = fest.website || '';
+    this.phone = fest.phone || '';
+    this.email = fest.email || '';
+    this.categoryIds = this.uniqueFestCategoryIds(fest.categories.map(category => category.id));
+    this.translations = this.translationDraftsFrom(fest.translations, fest.title, fest.description, fest.slug);
     this.activeTranslationIndex = Math.max(0, this.translations.findIndex(translation => translation.is_reference));
-    this.media = this.mediaDraftsFrom(poi.media || [], poi.images || []);
+    this.media = this.mediaDraftsFrom(fest.media || []);
+    this.editions = this.editionDraftsFrom(fest.editions || []);
     this.titleNeedsRefresh = false;
     this.editorReady = true;
     this.savedSnapshot = this.currentSnapshot();
     window.setTimeout(() => this.updateLocationMap(true), 0);
   }
 
-  private loadBlankPoi(): void {
+  private loadBlankFest(): void {
     const latitude = this.queryNumber('latitude') ?? this.queryNumber('lat');
     const longitude = this.queryNumber('longitude') ?? this.queryNumber('lng') ?? this.queryNumber('lon');
-    this.poi = null;
-    this.title.setTitle('SW POI New');
+    this.fest = null;
+    this.title.setTitle('SW Fest New');
     this.enabled = false;
     this.countryCode = '';
     this.latitude = latitude;
@@ -1027,6 +1284,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }];
     this.activeTranslationIndex = 0;
     this.media = [];
+    this.editions = [];
     this.titleNeedsRefresh = false;
     this.editorReady = true;
     this.savedSnapshot = (Number.isFinite(this.latitude) && Number.isFinite(this.longitude)) || Boolean(this.translations[0].title)
@@ -1046,34 +1304,6 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     if (rawValue === null) return null;
     const value = Number(rawValue);
     return Number.isFinite(value) ? value : null;
-  }
-
-  private notifyItineraryEditorPoiSaved(poi: Poi): void {
-    const editorToken = this.route.snapshot.queryParamMap.get('itineraryEditorToken');
-    const pointId = this.route.snapshot.queryParamMap.get('convertPointId');
-    if (!editorToken || !pointId) return;
-
-    const message = {
-      editorToken,
-      pointId,
-      poi: {
-        id: poi.id,
-        label: poi.title || `POI ${poi.id}`,
-        lat: poi.gps_latitude,
-        lng: poi.gps_longitude,
-        enabled: poi.enabled
-      }
-    };
-
-    if ('BroadcastChannel' in window) {
-      const channel = new BroadcastChannel(this.poiSaveChannelName);
-      channel.postMessage(message);
-      channel.close();
-    }
-    localStorage.setItem(this.poiSaveChannelName, JSON.stringify({
-      ...message,
-      sentAt: Date.now()
-    }));
   }
 
   private featureProperties(feature: unknown): Record<string, string> | null {
@@ -1383,7 +1613,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     const point = { lat: Number(this.latitude), lng: Number(this.longitude) };
     return this.pointInAnyFootprintPolygon(point, this.editFootprintPolygons)
       ? ''
-      : 'POI coordinates are outside the area.';
+      : 'Fest coordinates are outside the area.';
   }
 
   private selectFootprintPolygon(index: number): void {
@@ -1786,16 +2016,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     return drafts;
   }
 
-  private mediaDraftsFrom(media: PoiMedia[], images: Array<{ image_url: string; position: number; is_primary: boolean }>): MediaDraft[] {
-    const source: PoiMedia[] = media.length > 0
-      ? media
-      : images.map(image => ({
-        media_type: 'image' as const,
-        url: image.image_url,
-        position: image.position,
-        is_primary: image.is_primary
-    }));
-    return source.map(item => ({
+  private mediaDraftsFrom(media: FestMedia[]): MediaDraft[] {
+    return media.map(item => ({
       id: item.id,
       media_type: item.media_type || 'image',
       source: 'remote',
@@ -1810,7 +2032,51 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }));
   }
 
-  private mediaCaptionsFrom(translations: PoiMediaTranslation[]): Record<string, string> {
+  private editionDraftsFrom(editions: FestEdition[]): FestEditionDraft[] {
+    return this.sortedEditions(editions.map(edition => ({
+      id: edition.id,
+      year: edition.year,
+      notes: '',
+      is_cancelled: Boolean(edition.is_cancelled),
+      dates: edition.is_cancelled ? [] : [...new Set(edition.dates || [])].sort(),
+      newDate: `${edition.year}-01-01`
+    })));
+  }
+
+  private ensureDateDialogEditionDrafts(): void {
+    const existingYears = new Set(this.editions.map(edition => edition.year));
+    const additions = this.dateDialogYears()
+      .filter(year => !existingYears.has(year))
+      .map(year => this.blankEditionDraft(year));
+    if (additions.length > 0) {
+      this.editions = this.sortedEditions([...this.editions, ...additions]);
+    }
+  }
+
+  private ensureEditionDraft(year: number): FestEditionDraft {
+    let edition = this.editions.find(item => item.year === year);
+    if (!edition) {
+      edition = this.blankEditionDraft(year);
+      this.editions = this.sortedEditions([...this.editions, edition]);
+    }
+    return edition;
+  }
+
+  private blankEditionDraft(year: number): FestEditionDraft {
+    return {
+      year,
+      notes: '',
+      is_cancelled: false,
+      dates: [],
+      newDate: `${year}-01-01`
+    };
+  }
+
+  private sortedEditions(editions: FestEditionDraft[]): FestEditionDraft[] {
+    return [...editions].sort((left, right) => left.year - right.year);
+  }
+
+  private mediaCaptionsFrom(translations: FestMediaTranslation[]): Record<string, string> {
     return Object.fromEntries(
       translations
         .filter(translation => translation.language_code)
@@ -1831,17 +2097,17 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  private async uploadPendingMedia(poi: Poi): Promise<Poi> {
+  private async uploadPendingMedia(fest: Fest): Promise<Fest> {
     const pending = this.media
       .map((item, index) => ({ item, index }))
       .filter(({ item }) => item.selectedFile);
-    if (pending.length === 0) return poi;
+    if (pending.length === 0) return fest;
 
     for (const { item, index } of pending) {
       if (!item.selectedFile) continue;
       item.uploading = true;
       if (item.id) {
-        await firstValueFrom(this.api.updatePoiMedia(
+        await firstValueFrom(this.api.updateFestMedia(
           item.id,
           item.selectedFile,
           item.media_type,
@@ -1850,8 +2116,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
           this.mediaTranslationsForPayload(item)
         ));
       } else {
-        await firstValueFrom(this.api.uploadPoiMedia(
-          poi.id,
+        await firstValueFrom(this.api.uploadFestMedia(
+          fest.id,
           item.selectedFile,
           item.media_type,
           Number.isFinite(Number(item.position)) ? Number(item.position) : index,
@@ -1862,10 +2128,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       item.uploading = false;
     }
 
-    return firstValueFrom(this.api.getPoi(poi.id));
+    return firstValueFrom(this.api.getFest(fest.id));
   }
 
-  private mediaTypeFromFile(file: File): PoiMedia['media_type'] {
+  private mediaTypeFromFile(file: File): FestMedia['media_type'] {
     if (file.type.startsWith('image/')) return 'image';
     if (file.type.startsWith('video/')) return 'video';
     if (file.type.startsWith('audio/')) return 'audio';
@@ -1889,7 +2155,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     return translations;
   }
 
-  private normalizedMedia(): PoiMedia[] {
+  private normalizedMedia(): FestMedia[] {
     const media = this.media
       .map((item, index) => ({
         id: item.id,
@@ -1910,6 +2176,21 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     return media;
   }
 
+  private normalizedEditions(): FestEdition[] {
+    return this.sortedEditions(this.editions)
+      .map(edition => ({
+        id: edition.id,
+        year: Number(edition.year),
+        notes: '',
+        is_cancelled: Boolean(edition.is_cancelled),
+        dates: edition.is_cancelled ? [] : [...new Set(edition.dates)]
+          .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date) && date.startsWith(`${edition.year}-`))
+          .sort()
+      }))
+      .filter(edition => Number.isInteger(edition.year))
+      .filter(edition => Boolean(edition.id || edition.dates.length > 0 || edition.notes || edition.is_cancelled));
+  }
+
   private currentSnapshot(): string {
     return JSON.stringify({
       enabled: Boolean(this.enabled),
@@ -1920,9 +2201,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       website: this.website.trim(),
       phone: this.phone.trim(),
       email: this.email.trim(),
-      category_ids: this.uniqueCategoryIds(this.categoryIds).sort((left, right) => left - right),
+      category_ids: this.uniqueFestCategoryIds(this.categoryIds).sort((left, right) => left - right),
       translations: this.normalizedTranslations(),
       media: this.normalizedMedia(),
+      editions: this.normalizedEditions(),
       pending_media: this.media
         .filter(item => item.selectedFile)
         .map(item => ({
@@ -1936,7 +2218,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     });
   }
 
-  private mediaTranslationsForPayload(item: MediaDraft): PoiMediaTranslation[] {
+  private mediaTranslationsForPayload(item: MediaDraft): FestMediaTranslation[] {
     return Object.entries(item.captions)
       .map(([language_code, caption]) => ({
         language_code: language_code.trim(),
@@ -1945,7 +2227,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       .filter(translation => translation.language_code && translation.caption);
   }
 
-  private filterCategories(categories: Category[], filter: string): Category[] {
+  private filterCategories(categories: FestCategory[], filter: string): FestCategory[] {
     const normalizedFilter = filter.trim().toLowerCase();
     if (!normalizedFilter) return categories;
     return categories.filter(category =>
@@ -1954,12 +2236,12 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     );
   }
 
-  private uniqueCategoryIds(categoryIds: number[]): number[] {
+  private uniqueFestCategoryIds(categoryIds: number[]): number[] {
     return [...new Set(categoryIds.filter(id => Number.isFinite(id)))];
   }
 
-  private sortedUniqueCategories(categories: Category[]): Category[] {
-    const categoriesById = new Map<number, Category>();
+  private sortedUniqueCategories(categories: FestCategory[]): FestCategory[] {
+    const categoriesById = new Map<number, FestCategory>();
     categories.forEach(category => categoriesById.set(category.id, category));
     return [...categoriesById.values()].sort((left, right) =>
       this.categoryDisplayName(left).localeCompare(this.categoryDisplayName(right), undefined, { sensitivity: 'base' }) || left.id - right.id

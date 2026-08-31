@@ -170,6 +170,12 @@
   border-top: 1px solid #edf1f7;
 }
 
+.spaced-section-heading {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid #edf1f7;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(180px, 1fr));
@@ -783,6 +789,246 @@
   color: #2563eb;
 }
 
+.fest-dates-field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  align-content: start;
+}
+
+.fest-dates-field > span {
+  color: #475467;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.fest-dates-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  width: 100%;
+  padding: 5px;
+  border: 1px solid #d7deea;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.date-badge-list {
+  flex: 1;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+
+.date-badge-list p {
+  flex: 1;
+  margin: 0;
+  color: #4a5568;
+}
+
+.date-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.account-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.account-dialog {
+  width: min(1080px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+}
+
+.account-dialog-header,
+.account-dialog-actions,
+.fest-edition-row header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.account-dialog-header {
+  justify-content: space-between;
+}
+
+.account-dialog-header h2,
+.fest-edition-row h3 {
+  margin: 0;
+}
+
+.account-dialog-actions {
+  justify-content: flex-end;
+}
+
+.fest-edition-list,
+.fest-edition-row {
+  display: grid;
+  gap: 12px;
+}
+
+.fest-date-dialog-body {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 360px;
+}
+
+.fest-year-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  border-right: 1px solid #d7deea;
+  padding-right: 10px;
+}
+
+.fest-year-tabs .translation-tab {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.fest-year-tabs .translation-tab.has-dates {
+  border-color: #0f766e;
+  background: #ccfbf1;
+  color: #0f3f3a;
+  font-weight: 800;
+}
+
+.fest-year-tabs .translation-tab.has-dates.active {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #fff;
+}
+
+.fest-year-tabs .translation-tab.not-held {
+  border-color: #d97706;
+  background: #fffbeb;
+  color: #92400e;
+  font-weight: 800;
+}
+
+.fest-year-tabs .translation-tab.not-held.active {
+  border-color: #d97706;
+  background: #d97706;
+  color: #fff;
+}
+
+.fest-edition-row {
+  padding: 12px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.fest-edition-row header {
+  justify-content: space-between;
+}
+
+.edition-calendar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(188px, 1fr));
+  gap: 12px;
+}
+
+.calendar-month {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.calendar-month h4 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 0.92rem;
+}
+
+.calendar-weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.calendar-weekdays span {
+  color: #667085;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.calendar-day {
+  aspect-ratio: 1;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid #d7deea;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #1f2937;
+  font-size: 0.78rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.calendar-day:hover:not(:disabled),
+.calendar-day.selected {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.calendar-day.empty {
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+}
+
+.date-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.date-chip {
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+}
+
 @media (max-width: 900px) {
   .basic-editor-panel {
     overflow: auto;
@@ -803,6 +1049,23 @@
   .media-fields,
   .category-picker-grid {
     grid-template-columns: 1fr;
+  }
+
+  .fest-date-dialog-body {
+    grid-template-columns: 1fr;
+  }
+
+  .fest-year-tabs {
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: 0;
+    border-bottom: 1px solid #d7deea;
+    padding-right: 0;
+    padding-bottom: 10px;
+  }
+
+  .fest-year-tabs .translation-tab {
+    width: auto;
   }
 
   .category-transfer {
