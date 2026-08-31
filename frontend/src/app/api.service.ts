@@ -267,6 +267,28 @@ export interface Fest {
   translations: Translation[];
   media: FestMedia[];
   editions: FestEdition[];
+  itinerary_traversals: FestItineraryTraversal[];
+}
+
+export interface FestMapFestResult {
+  type: 'fest';
+  fest: Fest;
+}
+
+export interface FestMapClusterResult {
+  type: 'cluster';
+  count: number;
+  lat: number;
+  lng: number;
+  fest_ids: number[];
+}
+
+export type FestMapResult = FestMapFestResult | FestMapClusterResult;
+
+export interface FestMapResponse {
+  count: number;
+  mode: 'fests' | 'clusters';
+  results: FestMapResult[];
 }
 
 export interface FestPayload {
@@ -288,6 +310,14 @@ export interface FestPayload {
   }>;
   media?: FestMedia[];
   editions?: FestEdition[];
+}
+
+export interface FestItineraryTraversal {
+  itinerary: number;
+  itinerary_title: string | null;
+  route: number | null;
+  route_title: string | null;
+  stage_number: number | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -640,6 +670,41 @@ export class ApiService {
     return this.collectPages(this.listFests(query, language, enabled, category, country, ids, bbox, undefined, year, dateFrom, dateTo));
   }
 
+  mapFests(
+    query = '',
+    language = '',
+    enabled?: boolean,
+    category?: number | string,
+    country?: string,
+    bbox?: string,
+    zoom?: number
+  ): Observable<FestMapResponse> {
+    let params = new HttpParams();
+    if (language) {
+      params = params.set('language', language);
+    }
+    if (enabled !== undefined) {
+      params = params.set('enabled', String(enabled));
+    }
+    if (category !== undefined && category !== null && String(category).trim()) {
+      params = params.set('category', String(category).trim());
+    }
+    const countryFilter = (country || '').trim();
+    if (countryFilter) {
+      params = params.set('country', countryFilter.toUpperCase());
+    }
+    if (bbox) {
+      params = params.set('bbox', bbox);
+    }
+    if (zoom !== undefined) {
+      params = params.set('zoom', String(Math.round(zoom)));
+    }
+    if (query.trim()) {
+      params = params.set('q', query.trim());
+    }
+    return this.http.get<FestMapResponse>(`${API_BASE_URL}/fests/map/`, { params });
+  }
+
   createFest(payload: FestPayload): Observable<Fest> {
     return this.http.post<Fest>(`${API_BASE_URL}/fests/`, payload);
   }
@@ -658,6 +723,12 @@ export class ApiService {
 
   deleteFest(id: number): Observable<void> {
     return this.http.delete<void>(`${API_BASE_URL}/fests/${id}/`);
+  }
+
+  listFestCountries(): Observable<string[]> {
+    return this.http.get<{ results: string[] }>(`${API_BASE_URL}/fests/countries/`).pipe(
+      map(response => response.results)
+    );
   }
 
   uploadFestMedia(

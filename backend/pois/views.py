@@ -1002,7 +1002,7 @@ class FestViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiVie
         bbox_value = request.query_params.get("bbox") or "-180,-90,180,90"
         min_lon, min_lat, max_lon, max_lat = parse_bbox_values(bbox_value)
         bbox = Polygon.from_bbox((min_lon, min_lat, max_lon, max_lat))
-        queryset = self.get_queryset().filter(fest_spatial_filter(bbox))
+        queryset = self.get_queryset().filter(location__within=bbox)
         total_count = queryset.count()
         individual_limit = self._positive_int_query_param("individual_limit", self.map_individual_limit, 1, 1000)
         cluster_limit = self._positive_int_query_param("cluster_limit", self.map_cluster_limit, 4, 400)

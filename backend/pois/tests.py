@@ -1913,6 +1913,40 @@ class FestAPITests(APITestCase):
         self.assertIn(area_fest.id, results_by_id)
         self.assertEqual(results_by_id[area_fest.id]["footprint"]["type"], "MultiPolygon")
 
+    def test_fest_map_filters_by_marker_location_not_hidden_footprint(self):
+        area_fest = Fest.objects.create(
+            enabled=True,
+            location=Point(-7.5000, 43.5000, srid=4326),
+            footprint=MultiPolygon(Polygon(((-8.8, 42.2), (-8.7, 42.2), (-8.7, 42.3), (-8.8, 42.3), (-8.8, 42.2)), srid=4326), srid=4326),
+        )
+        FestTranslation.objects.create(
+            fest=area_fest,
+            language_code="en",
+            title="Footprint Fest",
+            slug="footprint-fest",
+        )
+        marker_fest = Fest.objects.create(
+            enabled=True,
+            location=Point(-8.7207, 42.2406, srid=4326),
+        )
+        FestTranslation.objects.create(
+            fest=marker_fest,
+            language_code="en",
+            title="Marker Fest",
+            slug="marker-fest",
+        )
+
+        response = self.client.get(reverse("fest-map"), {"bbox": "-8.85,42.15,-8.65,42.35", "zoom": 14})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result_ids = {
+            result["fest"]["id"]
+            for result in response.data["results"]
+            if result["type"] == "fest"
+        }
+        self.assertNotIn(area_fest.id, result_ids)
+        self.assertIn(marker_fest.id, result_ids)
+
     def test_fest_list_filters_by_date_range(self):
         fest = Fest.objects.create(enabled=True, location=Point(-8.7207, 42.2406, srid=4326))
         FestTranslation.objects.create(fest=fest, language_code="en", title="July Fest", slug="july-fest")
@@ -1924,6 +1958,64 @@ class FestAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["id"], fest.id)
+
+    def test_fest_list_returns_itineraries_traversing_footprint(self):
+        fest = Fest.objects.create(
+            enabled=True,
+            location=Point(-8.7207, 42.2406, srid=4326),
+            footprint=MultiPolygon(
+                Polygon(
+                    (
+                        (-8.73, 42.23),
+                        (-8.71, 42.23),
+                        (-8.71, 42.25),
+                        (-8.73, 42.25),
+                        (-8.73, 42.23),
+                    ),
+                    srid=4326,
+                ),
+                srid=4326,
+            ),
+        )
+        FestTranslation.objects.create(fest=fest, language_code="en", title="Footprint Fest", slug="footprint-fest")
+        route = Route.objects.create(enabled=True)
+        RouteTranslation.objects.create(route=route, language_code="en", title="Crossing Route", slug="crossing-route", is_reference=True)
+        itinerary = Itinerary.objects.create(
+            itinerary_json={
+                "points": [],
+                "segments": [
+                    {
+                        "selectedWalkingRoute": {
+                            "geometry": {
+                                "type": "LineString",
+                                "coordinates": [[-8.75, 42.24], [-8.70, 42.24]],
+                            }
+                        }
+                    }
+                ],
+            }
+        )
+        itinerary.translations.create(language_code="en", title="Crossing Stage", slug="crossing-stage", is_reference=True)
+        RouteStage.objects.create(route=route, itinerary=itinerary, stage_number=2)
+        outside_itinerary = Itinerary.objects.create(
+            itinerary_json={
+                "points": [{"lat": 42.5, "lng": -8.5}, {"lat": 42.6, "lng": -8.6}],
+                "segments": [],
+            }
+        )
+        outside_itinerary.translations.create(language_code="en", title="Outside Stage", slug="outside-stage", is_reference=True)
+
+        response = self.client.get(reverse("fest-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result = next(item for item in response.data["results"] if item["id"] == fest.id)
+        self.assertEqual(len(result["itinerary_traversals"]), 1)
+        traversal = result["itinerary_traversals"][0]
+        self.assertEqual(traversal["itinerary"], itinerary.id)
+        self.assertEqual(traversal["itinerary_title"], "Crossing Stage")
+        self.assertEqual(traversal["route"], route.id)
+        self.assertEqual(traversal["route_title"], "Crossing Route")
+        self.assertEqual(traversal["stage_number"], 2)
 
 
 class ManagementCommandTests(APITestCase):

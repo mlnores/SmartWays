@@ -124,6 +124,92 @@ def geometry_as_geojson(geometry):
     return json.loads(geometry.geojson)
 
 
+def itinerary_point_coordinate(point):
+    if not isinstance(point, dict):
+        return None
+    coordinates = point.get("coordinates") if isinstance(point.get("coordinates"), dict) else {}
+    latitude = coordinates.get("lat", point.get("lat"))
+    longitude = coordinates.get("lng", point.get("lng"))
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+    except (TypeError, ValueError):
+        return None
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        return None
+    return [longitude, latitude]
+
+
+def itinerary_geometry_coordinate(value):
+    if not isinstance(value, (list, tuple)) or len(value) < 2:
+        return None
+    try:
+        longitude = float(value[0])
+        latitude = float(value[1])
+    except (TypeError, ValueError):
+        return None
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        return None
+    return [longitude, latitude]
+
+
+def itinerary_line_coordinates_from_geometry(geometry):
+    if not isinstance(geometry, dict):
+        return []
+    geometry_type = geometry.get("type")
+    coordinates = geometry.get("coordinates")
+    if geometry_type == "LineString" and isinstance(coordinates, list):
+        line = [itinerary_geometry_coordinate(coordinate) for coordinate in coordinates]
+        line = [coordinate for coordinate in line if coordinate is not None]
+        return [line] if len(line) >= 2 else []
+    if geometry_type == "MultiLineString" and isinstance(coordinates, list):
+        lines = []
+        for raw_line in coordinates:
+            if not isinstance(raw_line, list):
+                continue
+            line = [itinerary_geometry_coordinate(coordinate) for coordinate in raw_line]
+            line = [coordinate for coordinate in line if coordinate is not None]
+            if len(line) >= 2:
+                lines.append(line)
+        return lines
+    return []
+
+
+def line_geometry_from_coordinates(coordinates):
+    if len(coordinates) < 2:
+        return None
+    try:
+        return GEOSGeometry(json.dumps({"type": "LineString", "coordinates": coordinates}), srid=4326)
+    except (GEOSException, TypeError, ValueError):
+        return None
+
+
+def itinerary_line_geometries(itinerary_json):
+    if not isinstance(itinerary_json, dict):
+        return []
+
+    points = [itinerary_point_coordinate(point) for point in itinerary_json.get("points") or []]
+    segments = itinerary_json.get("segments") or []
+    geometries = []
+    segment_count = max(max(len(points) - 1, 0), len(segments))
+
+    for index in range(segment_count):
+        segment = segments[index] if index < len(segments) and isinstance(segments[index], dict) else {}
+        selected_route = segment.get("selectedWalkingRoute") if isinstance(segment.get("selectedWalkingRoute"), dict) else {}
+        lines = itinerary_line_coordinates_from_geometry(selected_route.get("geometry"))
+        if not lines:
+            start = points[index] if index < len(points) else None
+            end = points[index + 1] if index + 1 < len(points) else None
+            lines = [[start, end]] if start and end else []
+
+        for line in lines:
+            geometry = line_geometry_from_coordinates(line)
+            if geometry is not None:
+                geometries.append(geometry)
+
+    return geometries
+
+
 def validate_geojson_position(position):
     if not isinstance(position, (list, tuple)) or len(position) < 2:
         raise serializers.ValidationError("Each footprint coordinate must be a [longitude, latitude] position.")
@@ -1089,6 +1175,7 @@ class FestSerializer(serializers.ModelSerializer):
     translations = NestedFestTranslationSerializer(many=True, required=False)
     media = NestedFestMediaSerializer(many=True, required=False)
     editions = FestEditionSerializer(many=True, required=False)
+    itinerary_traversals = serializers.SerializerMethodField()
     categories = NestedFestCategorySerializer(many=True, read_only=True)
     category_ids = serializers.PrimaryKeyRelatedField(
         queryset=FestCategory.objects.all(),
@@ -1120,6 +1207,7 @@ class FestSerializer(serializers.ModelSerializer):
             "category_ids",
             "media",
             "editions",
+            "itinerary_traversals",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
@@ -1140,9 +1228,44 @@ class FestSerializer(serializers.ModelSerializer):
         data["footprint"] = geometry_as_geojson(instance.footprint)
         return data
 
+    def get_itinerary_traversals(self, obj):
+        traversal_map = self.context.get("fest_itinerary_traversals")
+        if traversal_map is None:
+            traversal_map = self._build_fest_itinerary_traversals()
+            self.context["fest_itinerary_traversals"] = traversal_map
+        return traversal_map.get(obj.id, [])
+
     def _localized_translation(self, obj):
         language = self.context.get("language")
         return select_translation(obj.translations.all(), language)
+
+    def _build_fest_itinerary_traversals(self):
+        traversals = {}
+        language = self.context.get("language")
+        fests = list(Fest.objects.exclude(footprint__isnull=True).only("id", "footprint"))
+        if not fests:
+            return traversals
+
+        itineraries = Itinerary.objects.prefetch_related("translations", "route_stages", "route_stages__route", "route_stages__route__translations")
+        for itinerary in itineraries:
+            line_geometries = itinerary_line_geometries(itinerary.itinerary_json)
+            if not line_geometries:
+                continue
+            translation = select_translation(itinerary.translations.all(), language)
+            stages = list(getattr(itinerary, "_prefetched_objects_cache", {}).get("route_stages", []))
+            stage = stages[0] if stages else None
+            route_translation = select_translation(stage.route.translations.all(), language) if stage else None
+            traversal = {
+                "itinerary": itinerary.id,
+                "itinerary_title": translation.title if translation else None,
+                "route": stage.route_id if stage else None,
+                "route_title": route_translation.title if route_translation else None,
+                "stage_number": stage.stage_number if stage else None,
+            }
+            for fest in fests:
+                if any(fest.footprint.intersects(line_geometry) for line_geometry in line_geometries):
+                    traversals.setdefault(fest.id, []).append(traversal)
+        return traversals
 
     def validate(self, attrs):
         latitude = attrs.pop("gps_latitude", None)
