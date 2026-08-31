@@ -4,7 +4,7 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
-from django.contrib.gis.geos import Point
+from django.contrib.gis.geos import MultiPolygon, Point, Polygon
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -276,6 +276,20 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
 
+    def test_poi_list_filters_by_bbox_intersecting_footprint(self):
+        area_poi = POI.objects.create(
+            enabled=True,
+            location=Point(-7.5000, 43.5000, srid=4326),
+            footprint=MultiPolygon(Polygon(((-8.8, 42.2), (-8.7, 42.2), (-8.7, 42.3), (-8.8, 42.3), (-8.8, 42.2)), srid=4326), srid=4326),
+        )
+
+        response = self.client.get(reverse("poi-list"), {"bbox": "-8.85,42.15,-8.65,42.35"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results_by_id = {result["id"]: result for result in response.data["results"]}
+        self.assertIn(area_poi.id, results_by_id)
+        self.assertEqual(results_by_id[area_poi.id]["footprint"]["type"], "MultiPolygon")
+
     def test_poi_map_returns_individual_pois_for_small_result_sets(self):
         response = self.client.get(reverse("poi-map"), {"bbox": "-9,42,-8,43"})
 
@@ -445,6 +459,37 @@ class POIAPITests(APITestCase):
         self.assertFalse(results_by_id[str(disabled_poi.id)]["enabled"])
         self.assertEqual(result["categories"], [{"slug": "heritage", "name": "Heritage"}])
 
+    def test_buffer_poi_lookup_returns_pois_with_intersecting_footprint(self):
+        area_poi = POI.objects.create(
+            enabled=True,
+            location=Point(-7.5000, 43.5000, srid=4326),
+            footprint=MultiPolygon(Polygon(((-8.8, 42.2), (-8.7, 42.2), (-8.7, 42.3), (-8.8, 42.3), (-8.8, 42.2)), srid=4326), srid=4326),
+        )
+        POITranslation.objects.create(
+            poi=area_poi,
+            language_code="en",
+            title="Area POI",
+            description="Footprint intersects the buffer.",
+            slug="area-poi",
+        )
+
+        response = self.client.post(
+            reverse("buffer-poi-lookup"),
+            {
+                "language": "en",
+                "buffer": {
+                    "type": "Polygon",
+                    "coordinates": [[[-8.85, 42.15], [-8.65, 42.15], [-8.65, 42.35], [-8.85, 42.35], [-8.85, 42.15]]],
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results_by_id = {result["id"]: result for result in response.json()["results"]}
+        self.assertIn(str(area_poi.id), results_by_id)
+        self.assertEqual(results_by_id[str(area_poi.id)]["footprint"]["type"], "MultiPolygon")
+
     def test_poi_create_accepts_coordinates_and_nested_content(self):
         payload = {
             "enabled": True,
@@ -454,6 +499,10 @@ class POIAPITests(APITestCase):
             "website": "https://example.com/new",
             "phone": "+351 000 000 000",
             "email": "hello@example.com",
+            "footprint": {
+                "type": "Polygon",
+                "coordinates": [[[-8.61, 42.09], [-8.59, 42.09], [-8.59, 42.11], [-8.61, 42.11], [-8.61, 42.09]]],
+            },
             "category_ids": [self.category.id],
             "translations": [
                 {
@@ -486,6 +535,8 @@ class POIAPITests(APITestCase):
         self.assertEqual(poi.gps_longitude, -8.6)
         self.assertEqual(poi.phone, "+351 000 000 000")
         self.assertEqual(poi.email, "hello@example.com")
+        self.assertEqual(poi.footprint.geom_type, "MultiPolygon")
+        self.assertEqual(response.data["footprint"]["type"], "MultiPolygon")
         self.assertEqual(poi.translations.count(), 1)
         self.assertEqual(poi.media.count(), 1)
         media = poi.media.get()

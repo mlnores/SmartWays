@@ -1,7 +1,7 @@
 from pois.models import Itinerary, POI, Route
 
 from .common import reference_translation
-from .geometry import itinerary_coordinates, line_geometry, point_coordinates, route_coordinates
+from .geometry import geometry_as_geojson, itinerary_coordinates, line_geometry, point_coordinates, route_coordinates
 from .identifiers import entity_uri
 from .jsonld import filtered_queryset
 
@@ -11,6 +11,7 @@ def poi_feature(poi, request=None):
     if not coordinates:
         return None
     translation = reference_translation(poi)
+    footprint = geometry_as_geojson(poi.footprint)
     return {
         "type": "Feature",
         "id": entity_uri("poi", poi.id, request),
@@ -22,6 +23,7 @@ def poi_feature(poi, request=None):
             "country_code": poi.country_code,
             "enabled": poi.enabled,
             "categories": [category.slug for category in poi.categories.all()],
+            "footprint": footprint,
         },
     }
 
@@ -83,4 +85,3 @@ def itineraries_geojson(request=None, include_drafts=False):
 def routes_geojson(request=None, include_drafts=False):
     queryset = filtered_queryset(Route, include_drafts).prefetch_related("translations", "stages", "stages__itinerary")
     return feature_collection(route_feature(route, request) for route in queryset)
-

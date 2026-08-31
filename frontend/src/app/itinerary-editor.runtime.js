@@ -61,6 +61,7 @@
             disableClusteringAtZoom: 17
           }).addTo(map)
           : L.layerGroup().addTo(map);
+        const temporaryPoiFootprintLayer = L.layerGroup().addTo(map);
         const DEFAULT_SEGMENT_BUFFER_METERS = 2000;
         const WALKING_SPEED_METERS_PER_SECOND = 1.333;
         const MAX_POI_CACHE_SIZE = 100;
@@ -304,6 +305,7 @@
           poiLookupSegmentIndex = null;
           window.clearTimeout(poiLookupTimer);
           temporaryPoiLayer.clearLayers();
+          temporaryPoiFootprintLayer.clearLayers();
           displayedPois = [];
           displayedPoiSegmentIndex = null;
           displayedPoiMarkers = new Map();
@@ -1629,12 +1631,32 @@
             categories: [{ slug: "mock", name: "Mock POIs" }]
           };
         }
+
+        function isFootprintGeometry(value) {
+          return Boolean(
+            value &&
+            (value.type === "Polygon" || value.type === "MultiPolygon") &&
+            Array.isArray(value.coordinates)
+          );
+        }
+
+        function poiIntersectsBuffer(poi, segmentBuffer) {
+          const pointMatches = turf.booleanPointInPolygon(turf.point([poi.lng, poi.lat]), segmentBuffer);
+          if (pointMatches || !isFootprintGeometry(poi.footprint) || typeof turf.booleanIntersects !== "function") {
+            return pointMatches;
+          }
+          try {
+            return turf.booleanIntersects({ type: "Feature", properties: {}, geometry: poi.footprint }, segmentBuffer);
+          } catch {
+            return pointMatches;
+          }
+        }
     
         function reconcilePoiCache(segmentBuffer, receivedPois) {
           const receivedIds = new Set(receivedPois.map(poi => poi.id));
     
           poiCache = poiCache.filter(poi => (
-            !turf.booleanPointInPolygon(turf.point([poi.lng, poi.lat]), segmentBuffer) ||
+            !poiIntersectsBuffer(poi, segmentBuffer) ||
             receivedIds.has(poi.id)
           ));
     
@@ -1650,7 +1672,7 @@
     
         function cachedPoisInBuffer(segmentBuffer) {
           return poiCache.filter(poi => (
-            turf.booleanPointInPolygon(turf.point([poi.lng, poi.lat]), segmentBuffer)
+            poiIntersectsBuffer(poi, segmentBuffer)
           ));
         }
     
@@ -1837,6 +1859,7 @@
     
         function renderTemporaryPois(segmentIndex, pois) {
           temporaryPoiLayer.clearLayers();
+          temporaryPoiFootprintLayer.clearLayers();
           displayedPoiMarkers = new Map();
           displayedPois = pois.filter(poi => !poiAlreadyInItinerary(poi.id));
           displayedPoiSegmentIndex = segmentIndex;
@@ -1846,6 +1869,18 @@
           renderPoiBrowser();
     
           displayedPois.forEach(poi => {
+            if (isFootprintGeometry(poi.footprint)) {
+              L.geoJSON(poi.footprint, {
+                style: {
+                  color: poi.enabled === false ? "#b45309" : "#0f766e",
+                  fillColor: poi.enabled === false ? "#f59e0b" : "#14b8a6",
+                  fillOpacity: 0.18,
+                  opacity: 0.85,
+                  weight: 2
+                },
+                interactive: false
+              }).addTo(temporaryPoiFootprintLayer);
+            }
             const marker = L.marker([poi.lat, poi.lng], {
               icon: L.divIcon({
                 className: "",

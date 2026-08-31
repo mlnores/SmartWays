@@ -48,6 +48,7 @@ from .serializers import (
     RouteSerializer,
     RouteTranslationSerializer,
     UserSerializer,
+    geometry_as_geojson,
     select_translation,
     user_role,
 )
@@ -301,6 +302,10 @@ def buffer_geometry_from_geojson(geometry):
     return buffer_geometry
 
 
+def poi_spatial_filter(geometry):
+    return Q(location__within=geometry) | Q(footprint__intersects=geometry)
+
+
 @csrf_exempt
 def buffer_poi_lookup(request):
     if request.method == "OPTIONS":
@@ -323,7 +328,7 @@ def buffer_poi_lookup(request):
         return cors_json_response({"detail": str(error)}, status=400)
 
     queryset = (
-        POI.objects.filter(location__within=buffer_geometry)
+        POI.objects.filter(poi_spatial_filter(buffer_geometry))
         .prefetch_related("translations", "media", "media__translations", "categories", "categories__translations")
         .order_by("id")[:limit]
     )
@@ -360,6 +365,7 @@ def poi_for_buffer_response(poi, language_code):
         ],
         "lat": poi.gps_latitude,
         "lng": poi.gps_longitude,
+        "footprint": geometry_as_geojson(poi.footprint),
         "website": poi.website,
         "phone": poi.phone,
         "email": poi.email,
@@ -714,7 +720,7 @@ class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiView
 
         bbox = self.request.query_params.get("bbox")
         if bbox:
-            queryset = queryset.filter(location__within=parse_bbox(bbox))
+            queryset = queryset.filter(poi_spatial_filter(parse_bbox(bbox)))
 
         return queryset.distinct()
 
@@ -732,7 +738,8 @@ class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiView
     def map(self, request):
         bbox_value = request.query_params.get("bbox") or "-180,-90,180,90"
         min_lon, min_lat, max_lon, max_lat = parse_bbox_values(bbox_value)
-        queryset = self.get_queryset().filter(location__within=Polygon.from_bbox((min_lon, min_lat, max_lon, max_lat)))
+        bbox = Polygon.from_bbox((min_lon, min_lat, max_lon, max_lat))
+        queryset = self.get_queryset().filter(poi_spatial_filter(bbox))
         total_count = queryset.count()
         individual_limit = self._positive_int_query_param("individual_limit", self.map_individual_limit, 1, 1000)
         cluster_limit = self._positive_int_query_param("cluster_limit", self.map_cluster_limit, 4, 400)

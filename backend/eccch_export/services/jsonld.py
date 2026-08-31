@@ -1,7 +1,7 @@
 from pois.models import Category, Itinerary, POI, Route
 
 from .common import annotations_for, mapping_terms, media_items, reference_translation, translations_as_language_map
-from .geometry import itinerary_coordinates, line_geometry, point_coordinates, route_coordinates
+from .geometry import geometry_as_geojson, itinerary_coordinates, line_geometry, point_coordinates, route_coordinates
 from .identifiers import api_uri, entity_uri, media_uri
 
 
@@ -42,6 +42,7 @@ def category_jsonld(category, request=None):
 
 def poi_jsonld(poi, request=None):
     coordinates = point_coordinates(poi.location)
+    footprint = geometry_as_geojson(poi.footprint)
     categories = [
         {
             "@id": entity_uri("category", category.slug, request),
@@ -69,6 +70,7 @@ def poi_jsonld(poi, request=None):
             "schema:latitude": coordinates[1] if coordinates else None,
         },
         "geojson:geometry": {"type": "Point", "coordinates": coordinates} if coordinates else None,
+        "smartways:footprint": footprint,
         "dcterms:type": categories,
         "schema:associatedMedia": media,
         "smartways:vocabularyMapping": mapping_terms("poi", poi.id),

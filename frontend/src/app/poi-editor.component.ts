@@ -4,7 +4,7 @@ import { Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 
-import { ApiService, Category, Poi, PoiMedia, PoiMediaTranslation, Translation } from './api.service';
+import { ApiService, Category, GeoJsonPolygonGeometry, Poi, PoiMedia, PoiMediaTranslation, Translation } from './api.service';
 import { PageInstructionService } from './page-instruction.service';
 
 interface TranslationDraft {
@@ -33,6 +33,11 @@ interface MediaDraft {
 }
 
 type EditorTab = 'basic' | 'translations' | 'media';
+
+interface FootprintPoint {
+  lat: number;
+  lng: number;
+}
 
 declare const L: any;
 
@@ -140,6 +145,12 @@ declare const L: any;
                       <span>Country</span>
                       <span class="country-value">{{ countryCode || 'Pending location' }}</span>
                     </label>
+                    <div class="area-edit-cell">
+                      <span>Area</span>
+                      <button type="button" class="secondary" [class.active]="isEditingFootprint" [disabled]="!canEditContent() || !hasValidCoordinates()" (click)="openFootprintEditor()">
+                        Edit area
+                      </button>
+                    </div>
                     <label class="metadata-full-row">
                       <span>Website</span>
                       <input type="url" [(ngModel)]="website" name="website" [disabled]="!canEditContent()" />
@@ -221,9 +232,25 @@ declare const L: any;
 
                 <div class="location-picker">
                   @if (canEditContent()) {
-                    <h2>Pick location on map</h2>
+                    <h2>{{ isEditingFootprint ? "Edit the POI's footprint" : 'Pick location on map' }}</h2>
                   }
-                  <div class="location-map" #locationMap></div>
+                  <div class="location-map-shell" [class.editing-area]="isEditingFootprint">
+                    @if (isEditingFootprint) {
+                      <aside class="footprint-edit-column" aria-label="POI area editing controls">
+                        <button type="button" class="secondary" [disabled]="!hasValidCoordinates()" (click)="addFootprintPolygon()">Add polygon</button>
+                        <button type="button" class="secondary danger-action" [disabled]="selectedFootprintPolygonIndex === null" (click)="removeSelectedFootprintPolygon()">Remove polygon</button>
+                        <button type="button" class="secondary" (click)="fitFootprintView()">Fit view</button>
+                        <button type="button" class="secondary" [disabled]="!canUndoFootprint()" (click)="undoFootprintEdit()">Undo</button>
+                        <button type="button" class="secondary" [disabled]="!canRedoFootprint()" (click)="redoFootprintEdit()">Redo</button>
+                        <button type="button" class="primary" (click)="saveFootprintEditor()">Done</button>
+                        <button type="button" class="secondary danger-action" [disabled]="editFootprintPolygons.length === 0" (click)="clearFootprintEditor()">Clear</button>
+                        @if (footprintPointWarning()) {
+                          <p class="footprint-warning">{{ footprintPointWarning() }}</p>
+                        }
+                      </aside>
+                    }
+                    <div class="location-map" #locationMap></div>
+                  </div>
                   <section class="basic-media-preview">
                     <h2>Media preview</h2>
                     <div class="basic-media-strip" aria-label="POI media preview">
@@ -494,9 +521,17 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   private readonly title = inject(Title);
   private locationMap: any = null;
   private locationMarker: any = null;
+  private footprintLayer: any = null;
+  private footprintVertexLayer: any = null;
+  private footprintDragStart: { latLng: { lat: number; lng: number }; polygons: FootprintPoint[][] } | null = null;
+  private footprintDragPointerId: number | null = null;
   private locationResizeObserver: ResizeObserver | null = null;
   private countryRequestId = 0;
   private readonly poiSaveChannelName = 'smartways-poi-editor-saved';
+  private readonly footprintPointerDownHandler = (event: PointerEvent) => this.handleFootprintPointerDown(event);
+  private readonly footprintPointerMoveHandler = (event: PointerEvent) => this.handleFootprintPointerMove(event);
+  private readonly footprintPointerUpHandler = (event: PointerEvent) => this.handleFootprintPointerUp(event);
+  private readonly footprintDoubleClickHandler = (event: MouseEvent) => this.handleFootprintDoubleClick(event);
 
   poi: Poi | null = null;
   isNewPoi = false;
@@ -514,6 +549,12 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   countryCode = '';
   latitude: number | null = null;
   longitude: number | null = null;
+  footprint: GeoJsonPolygonGeometry | null = null;
+  isEditingFootprint = false;
+  editFootprintPolygons: FootprintPoint[][] = [];
+  selectedFootprintPolygonIndex: number | null = null;
+  private footprintUndoStack: FootprintPoint[][][] = [];
+  private footprintRedoStack: FootprintPoint[][][] = [];
   website = '';
   phone = '';
   email = '';
@@ -573,11 +614,18 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   private destroyLocationMap(): void {
     this.locationResizeObserver?.disconnect();
     this.locationResizeObserver = null;
+    const container = this.locationMap?.getContainer?.();
+    container?.removeEventListener('pointerdown', this.footprintPointerDownHandler, true);
+    container?.removeEventListener('dblclick', this.footprintDoubleClickHandler, true);
+    document.removeEventListener('pointermove', this.footprintPointerMoveHandler);
+    document.removeEventListener('pointerup', this.footprintPointerUpHandler);
     if (this.locationMap) {
       this.locationMap.remove();
       this.locationMap = null;
     }
     this.locationMarker = null;
+    this.footprintLayer = null;
+    this.footprintVertexLayer = null;
   }
 
   referenceTranslation(): TranslationDraft | null {
@@ -840,7 +888,6 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       this.showStatus('Latitude and longitude are required.', true);
       return;
     }
-
     const media = this.normalizedMedia();
     if (this.media.some(item => item.source === 'remote' && !item.url.trim())) {
       this.showStatus('Every remote media item needs a URL.', true);
@@ -858,6 +905,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         country_code: this.countryCode.trim().toUpperCase(),
         gps_latitude: Number(this.latitude),
         gps_longitude: Number(this.longitude),
+        footprint: this.footprintForPayload(),
         website: this.website.trim(),
         phone: this.phone.trim(),
         email: this.email.trim(),
@@ -937,6 +985,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.countryCode = poi.country_code || '';
     this.latitude = poi.gps_latitude;
     this.longitude = poi.gps_longitude;
+    this.footprint = this.normalizedFootprint(poi.footprint);
+    this.resetFootprintEditorState();
     this.website = poi.website || '';
     this.phone = poi.phone || '';
     this.email = poi.email || '';
@@ -947,7 +997,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.titleNeedsRefresh = false;
     this.editorReady = true;
     this.savedSnapshot = this.currentSnapshot();
-    window.setTimeout(() => this.updateLocationMarker(true), 0);
+    window.setTimeout(() => this.updateLocationMap(true), 0);
   }
 
   private loadBlankPoi(): void {
@@ -959,6 +1009,8 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.countryCode = '';
     this.latitude = latitude;
     this.longitude = longitude;
+    this.footprint = null;
+    this.resetFootprintEditorState();
     this.website = '';
     this.phone = '';
     this.email = '';
@@ -1034,7 +1086,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   coordinatesChanged(): void {
     if (!this.canEditContent()) return;
-    this.updateLocationMarker(false);
+    this.updateLocationMap(false);
     void this.updateCountryFromCoordinates();
     if (!this.referenceTranslation()?.title.trim()) {
       void this.refreshTitleFromGeocoder();
@@ -1081,7 +1133,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   private initializeLocationMap(): void {
     if (this.activeTab !== 'basic' || !this.locationMapElement || this.locationMap) {
       this.locationMap?.invalidateSize(false);
-      this.updateLocationMarker(false);
+      this.updateLocationMap(false);
       return;
     }
 
@@ -1094,19 +1146,49 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }).addTo(this.locationMap);
     this.locationMap.on('click', (event: any) => {
       if (!this.canEditContent()) return;
+      if (this.isEditingFootprint) return;
       this.latitude = Number(event.latlng.lat.toFixed(7));
       this.longitude = Number(event.latlng.lng.toFixed(7));
       this.coordinatesChanged();
     });
+    this.locationMap.on('mousedown', (event: any) => this.handleFootprintMapMouseDown(event));
+    this.locationMap.on('mousemove', (event: any) => this.handleFootprintPolygonDrag(event.latlng));
+    this.locationMap.on('mouseup', () => this.finishFootprintPolygonDrag());
+    this.locationMap.on('dblclick', (event: any) => this.handleFootprintMapDoubleClick(event));
+    const container = this.locationMap.getContainer();
+    container.addEventListener('pointerdown', this.footprintPointerDownHandler, true);
+    container.addEventListener('dblclick', this.footprintDoubleClickHandler, true);
+    document.addEventListener('pointermove', this.footprintPointerMoveHandler);
+    document.addEventListener('pointerup', this.footprintPointerUpHandler);
     this.locationResizeObserver = new ResizeObserver(() => this.locationMap?.invalidateSize(false));
     this.locationResizeObserver.observe(this.locationMapElement.nativeElement);
     window.requestAnimationFrame(() => {
       this.locationMap?.invalidateSize(false);
-      this.updateLocationMarker(true);
+      this.updateLocationMap(true);
     });
   }
 
-  private updateLocationMarker(shouldFit: boolean): void {
+  private updateLocationMap(shouldFit: boolean): void {
+    if (!this.locationMap) return;
+    this.updateLocationMarker();
+    this.updateFootprintLayer();
+    if (!shouldFit) return;
+
+    const bounds = L.latLngBounds([]);
+    if (this.footprintLayer?.getBounds?.()?.isValid?.()) {
+      bounds.extend(this.footprintLayer.getBounds());
+    }
+    if (Number.isFinite(this.latitude) && Number.isFinite(this.longitude)) {
+      bounds.extend([Number(this.latitude), Number(this.longitude)]);
+    }
+    if (bounds.isValid()) {
+      this.locationMap.fitBounds(bounds.pad(0.2), { animate: false, maxZoom: 17 });
+    } else {
+      this.locationMap.invalidateSize(false);
+    }
+  }
+
+  private updateLocationMarker(): void {
     if (!this.locationMap) return;
     if (!Number.isFinite(this.latitude) || !Number.isFinite(this.longitude)) {
       if (this.locationMarker) {
@@ -1124,9 +1206,532 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         icon: this.locationMarkerIcon()
       }).addTo(this.locationMap);
     }
-    if (shouldFit) {
-      this.locationMap.setView(latLng, 14, { animate: false });
+  }
+
+  private updateFootprintLayer(): void {
+    if (!this.locationMap) return;
+    if (this.footprintLayer) {
+      this.footprintLayer.remove();
+      this.footprintLayer = null;
     }
+    if (this.footprintVertexLayer) {
+      this.footprintVertexLayer.remove();
+      this.footprintVertexLayer = null;
+    }
+
+    this.footprintLayer = L.featureGroup().addTo(this.locationMap);
+
+    if (!this.isEditingFootprint) {
+      if (this.footprint) {
+        L.geoJSON(this.footprint, {
+          style: {
+            color: '#0f766e',
+            fillColor: '#14b8a6',
+            fillOpacity: 0.22,
+            opacity: 0.9,
+            weight: 2
+          },
+          interactive: false
+        }).addTo(this.footprintLayer);
+      }
+      this.locationMap.dragging?.enable?.();
+      this.locationMap.doubleClickZoom?.enable?.();
+      return;
+    }
+    this.locationMap.dragging?.enable?.();
+
+    const polygons = this.editFootprintPolygons;
+    polygons.forEach((points, index) => {
+      const selected = this.isEditingFootprint && this.selectedFootprintPolygonIndex === index;
+      const polygon = L.polygon(points.map(point => [point.lat, point.lng]), {
+        color: selected ? '#1d4ed8' : '#0f766e',
+        fillColor: selected ? '#60a5fa' : '#14b8a6',
+        fillOpacity: selected ? 0.28 : 0.2,
+        opacity: 0.9,
+        weight: selected ? 3 : 2
+      }).addTo(this.footprintLayer);
+
+      polygon.on('click', (event: any) => {
+        if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
+      });
+    });
+
+    if (this.isEditingFootprint) {
+      this.locationMap.doubleClickZoom?.disable?.();
+    } else {
+      this.locationMap.doubleClickZoom?.enable?.();
+    }
+
+    if (!this.canEditContent() || !this.isEditingFootprint || this.selectedFootprintPolygonIndex === null) return;
+    const selectedPoints = this.editFootprintPolygons[this.selectedFootprintPolygonIndex] || [];
+    if (selectedPoints.length === 0) return;
+    this.footprintVertexLayer = L.layerGroup().addTo(this.locationMap);
+    selectedPoints.forEach((point, index) => {
+      L.marker([point.lat, point.lng], {
+        draggable: true,
+        icon: this.footprintVertexIcon()
+      })
+        .on('dragstart', () => this.rememberFootprintEdit())
+        .on('dragend', (event: any) => this.updateFootprintVertex(index, event.target.getLatLng()))
+        .on('dblclick contextmenu', (event: any) => {
+          if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
+          this.removeFootprintVertex(index);
+        })
+        .addTo(this.footprintVertexLayer);
+    });
+  }
+
+  private footprintVertexIcon(): any {
+    return L.divIcon({
+      className: 'poi-footprint-vertex',
+      html: '<span></span>',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8]
+    });
+  }
+
+  openFootprintEditor(): void {
+    if (!this.canEditContent() || !this.hasValidCoordinates() || this.isEditingFootprint) return;
+    this.isEditingFootprint = true;
+    this.editFootprintPolygons = this.polygonsFromFootprint(this.footprint);
+    this.selectedFootprintPolygonIndex = this.editFootprintPolygons.length > 0 ? 0 : null;
+    this.footprintUndoStack = [];
+    this.footprintRedoStack = [];
+    this.footprintDragStart = null;
+    this.clearStatus();
+    this.updateLocationMap(true);
+  }
+
+  addFootprintPolygon(): void {
+    if (!this.canEditContent() || !this.hasValidCoordinates()) return;
+    if (!this.isEditingFootprint) {
+      this.openFootprintEditor();
+    }
+    const polygon = this.triangleAroundPoi();
+    if (polygon.length < 3) return;
+    this.rememberFootprintEdit();
+    this.editFootprintPolygons.push(polygon);
+    this.selectedFootprintPolygonIndex = this.editFootprintPolygons.length - 1;
+    this.updateLocationMap(false);
+  }
+
+  removeSelectedFootprintPolygon(): void {
+    if (this.selectedFootprintPolygonIndex === null) return;
+    this.rememberFootprintEdit();
+    this.editFootprintPolygons.splice(this.selectedFootprintPolygonIndex, 1);
+    this.selectedFootprintPolygonIndex = this.editFootprintPolygons.length > 0
+      ? Math.min(this.selectedFootprintPolygonIndex, this.editFootprintPolygons.length - 1)
+      : null;
+    this.updateLocationMap(false);
+  }
+
+  clearFootprintEditor(): void {
+    if (this.editFootprintPolygons.length === 0) return;
+    this.rememberFootprintEdit();
+    this.editFootprintPolygons = [];
+    this.selectedFootprintPolygonIndex = null;
+    this.updateLocationMap(false);
+  }
+
+  saveFootprintEditor(): void {
+    this.footprint = this.footprintFromPolygons(this.editFootprintPolygons);
+    this.resetFootprintEditorState();
+    this.clearStatus();
+    this.updateLocationMap(true);
+  }
+
+  fitFootprintView(): void {
+    this.updateLocationMap(true);
+  }
+
+  canUndoFootprint(): boolean {
+    return this.footprintUndoStack.length > 0;
+  }
+
+  canRedoFootprint(): boolean {
+    return this.footprintRedoStack.length > 0;
+  }
+
+  undoFootprintEdit(): void {
+    const previous = this.footprintUndoStack.pop();
+    if (!previous) return;
+    this.footprintRedoStack.push(this.cloneFootprintPolygons(this.editFootprintPolygons));
+    this.editFootprintPolygons = previous;
+    this.selectedFootprintPolygonIndex = this.editFootprintPolygons.length > 0
+      ? Math.min(this.selectedFootprintPolygonIndex ?? 0, this.editFootprintPolygons.length - 1)
+      : null;
+    this.updateLocationMap(false);
+  }
+
+  redoFootprintEdit(): void {
+    const next = this.footprintRedoStack.pop();
+    if (!next) return;
+    this.footprintUndoStack.push(this.cloneFootprintPolygons(this.editFootprintPolygons));
+    this.editFootprintPolygons = next;
+    this.selectedFootprintPolygonIndex = this.editFootprintPolygons.length > 0
+      ? Math.min(this.selectedFootprintPolygonIndex ?? 0, this.editFootprintPolygons.length - 1)
+      : null;
+    this.updateLocationMap(false);
+  }
+
+  footprintPointWarning(): string {
+    if (!this.isEditingFootprint || this.editFootprintPolygons.length === 0) return '';
+    if (!Number.isFinite(this.latitude) || !Number.isFinite(this.longitude)) return '';
+    const point = { lat: Number(this.latitude), lng: Number(this.longitude) };
+    return this.pointInAnyFootprintPolygon(point, this.editFootprintPolygons)
+      ? ''
+      : 'POI coordinates are outside the area.';
+  }
+
+  private selectFootprintPolygon(index: number): void {
+    this.selectedFootprintPolygonIndex = index;
+    this.updateLocationMap(false);
+  }
+
+  private handleFootprintMapMouseDown(event: any): void {
+    if (!this.isEditingFootprint || this.footprintDragStart) return;
+    if (this.isFootprintVertexEvent(event)) return;
+    const polygonIndex = this.footprintPolygonIndexAt(event.latlng);
+    if (polygonIndex === null) return;
+    if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
+    if (this.selectedFootprintPolygonIndex !== polygonIndex) {
+      this.selectFootprintPolygon(polygonIndex);
+      return;
+    }
+    this.startFootprintPolygonDrag(polygonIndex, event);
+  }
+
+  private handleFootprintPointerDown(event: PointerEvent): void {
+    if (!this.isEditingFootprint || this.footprintDragStart || !this.locationMap) return;
+    if (this.isFootprintVertexDomTarget(event.target)) return;
+    const latLng = this.latLngFromDomEvent(event);
+    if (!latLng) return;
+    const polygonIndex = this.footprintPolygonIndexAt(latLng);
+    if (polygonIndex === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    if (this.selectedFootprintPolygonIndex !== polygonIndex) {
+      this.selectFootprintPolygon(polygonIndex);
+      return;
+    }
+    this.rememberFootprintEdit();
+    this.footprintDragStart = {
+      latLng,
+      polygons: this.cloneFootprintPolygons(this.editFootprintPolygons)
+    };
+    this.footprintDragPointerId = event.pointerId;
+  }
+
+  private handleFootprintPointerMove(event: PointerEvent): void {
+    if (!this.footprintDragStart || this.footprintDragPointerId !== event.pointerId) return;
+    const latLng = this.latLngFromDomEvent(event);
+    if (!latLng) return;
+    event.preventDefault();
+    this.handleFootprintPolygonDrag(latLng);
+  }
+
+  private handleFootprintPointerUp(event: PointerEvent): void {
+    if (!this.footprintDragStart || this.footprintDragPointerId !== event.pointerId) return;
+    event.preventDefault();
+    this.footprintDragPointerId = null;
+    this.finishFootprintPolygonDrag();
+  }
+
+  private handleFootprintDoubleClick(event: MouseEvent): void {
+    if (!this.isEditingFootprint || this.selectedFootprintPolygonIndex === null || !this.locationMap) return;
+    if (this.isFootprintVertexDomTarget(event.target)) return;
+    const latLng = this.latLngFromDomEvent(event);
+    if (!latLng) return;
+    const selectedPolygon = this.editFootprintPolygons[this.selectedFootprintPolygonIndex];
+    if (!selectedPolygon || !this.pointInFootprintPolygon(latLng, selectedPolygon)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    this.insertFootprintVertex(this.selectedFootprintPolygonIndex, latLng);
+  }
+
+  private handleFootprintMapDoubleClick(event: any): void {
+    if (!this.isEditingFootprint || this.selectedFootprintPolygonIndex === null) return;
+    if (this.isFootprintVertexEvent(event)) return;
+    const selectedPolygon = this.editFootprintPolygons[this.selectedFootprintPolygonIndex];
+    if (!selectedPolygon || !this.pointInFootprintPolygon(event.latlng, selectedPolygon)) return;
+    if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
+    this.insertFootprintVertex(this.selectedFootprintPolygonIndex, event.latlng);
+  }
+
+  private footprintPolygonIndexAt(latLng: { lat: number; lng: number }): number | null {
+    for (let index = this.editFootprintPolygons.length - 1; index >= 0; index -= 1) {
+      if (this.pointInFootprintPolygon(latLng, this.editFootprintPolygons[index])) {
+        return index;
+      }
+    }
+    return null;
+  }
+
+  private isFootprintVertexEvent(event: any): boolean {
+    return this.isFootprintVertexDomTarget(event?.originalEvent?.target);
+  }
+
+  private isFootprintVertexDomTarget(target: EventTarget | null | undefined): boolean {
+    return Boolean(target instanceof Element && target.closest('.poi-footprint-vertex'));
+  }
+
+  private latLngFromDomEvent(event: MouseEvent | PointerEvent): { lat: number; lng: number } | null {
+    if (!this.locationMap) return null;
+    const container = this.locationMap.getContainer();
+    const bounds = container.getBoundingClientRect();
+    const point = L.point(event.clientX - bounds.left, event.clientY - bounds.top);
+    return this.locationMap.containerPointToLatLng(point);
+  }
+
+  private startFootprintPolygonDrag(index: number, event: any): void {
+    if (!this.isEditingFootprint) return;
+    if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
+    if (this.selectedFootprintPolygonIndex !== index) {
+      this.selectFootprintPolygon(index);
+      return;
+    }
+    this.rememberFootprintEdit();
+    this.footprintDragStart = {
+      latLng: { lat: event.latlng.lat, lng: event.latlng.lng },
+      polygons: this.cloneFootprintPolygons(this.editFootprintPolygons)
+    };
+  }
+
+  private handleFootprintPolygonDrag(latLng: { lat: number; lng: number }): void {
+    if (!this.footprintDragStart || this.selectedFootprintPolygonIndex === null) return;
+    const deltaLat = latLng.lat - this.footprintDragStart.latLng.lat;
+    const deltaLng = latLng.lng - this.footprintDragStart.latLng.lng;
+    this.editFootprintPolygons = this.footprintDragStart.polygons.map((polygon, index) => (
+      index === this.selectedFootprintPolygonIndex
+        ? polygon.map(point => ({
+          lat: this.roundCoordinate(point.lat + deltaLat),
+          lng: this.roundCoordinate(point.lng + deltaLng)
+        }))
+        : polygon.map(point => ({ ...point }))
+    ));
+    this.updateFootprintLayer();
+  }
+
+  private finishFootprintPolygonDrag(): void {
+    if (!this.footprintDragStart) return;
+    this.footprintDragStart = null;
+    this.updateLocationMap(false);
+  }
+
+  private updateFootprintVertex(vertexIndex: number, latLng: { lat: number; lng: number }): void {
+    if (this.selectedFootprintPolygonIndex === null) return;
+    const polygon = this.editFootprintPolygons[this.selectedFootprintPolygonIndex];
+    if (!polygon?.[vertexIndex]) return;
+    polygon[vertexIndex] = {
+      lat: this.roundCoordinate(latLng.lat),
+      lng: this.roundCoordinate(latLng.lng)
+    };
+    this.updateLocationMap(false);
+  }
+
+  private removeFootprintVertex(vertexIndex: number): void {
+    if (this.selectedFootprintPolygonIndex === null) return;
+    const polygon = this.editFootprintPolygons[this.selectedFootprintPolygonIndex];
+    if (!polygon?.[vertexIndex]) return;
+    this.rememberFootprintEdit();
+    if (polygon.length <= 3) {
+      this.editFootprintPolygons.splice(this.selectedFootprintPolygonIndex, 1);
+      this.selectedFootprintPolygonIndex = this.editFootprintPolygons.length > 0
+        ? Math.min(this.selectedFootprintPolygonIndex, this.editFootprintPolygons.length - 1)
+        : null;
+    } else {
+      polygon.splice(vertexIndex, 1);
+    }
+    this.updateLocationMap(false);
+  }
+
+  private insertFootprintVertex(polygonIndex: number, latLng: { lat: number; lng: number }): void {
+    const polygon = this.editFootprintPolygons[polygonIndex];
+    if (!polygon || polygon.length < 3) return;
+    this.selectedFootprintPolygonIndex = polygonIndex;
+    const insertion = this.nearestFootprintSegmentInsertion(polygon, latLng);
+    if (!insertion) return;
+    this.rememberFootprintEdit();
+    polygon.splice(insertion.index, 0, insertion.point);
+    this.updateLocationMap(false);
+  }
+
+  private nearestFootprintSegmentInsertion(
+    polygon: FootprintPoint[],
+    latLng: { lat: number; lng: number }
+  ): { index: number; point: FootprintPoint } | null {
+    if (!this.locationMap) return null;
+    const clickPoint = this.locationMap.latLngToLayerPoint(latLng);
+    let best: { distance: number; index: number; point: FootprintPoint } | null = null;
+    polygon.forEach((start, index) => {
+      const end = polygon[(index + 1) % polygon.length];
+      const startPoint = this.locationMap.latLngToLayerPoint([start.lat, start.lng]);
+      const endPoint = this.locationMap.latLngToLayerPoint([end.lat, end.lng]);
+      const dx = endPoint.x - startPoint.x;
+      const dy = endPoint.y - startPoint.y;
+      const lengthSquared = dx * dx + dy * dy;
+      if (lengthSquared === 0) return;
+      const ratio = Math.max(0, Math.min(1, ((clickPoint.x - startPoint.x) * dx + (clickPoint.y - startPoint.y) * dy) / lengthSquared));
+      const projected = L.point(startPoint.x + ratio * dx, startPoint.y + ratio * dy);
+      const distance = clickPoint.distanceTo(projected);
+      const projectedLatLng = this.locationMap.layerPointToLatLng(projected);
+      const candidate = {
+        distance,
+        index: index + 1,
+        point: {
+          lat: this.roundCoordinate(projectedLatLng.lat),
+          lng: this.roundCoordinate(projectedLatLng.lng)
+        }
+      };
+      if (!best || candidate.distance < best.distance) {
+        best = candidate;
+      }
+    });
+    return best;
+  }
+
+  private footprintForPayload(): GeoJsonPolygonGeometry | null {
+    if (this.isEditingFootprint) {
+      return this.footprintFromPolygons(this.editFootprintPolygons);
+    }
+    return this.normalizedFootprint(this.footprint);
+  }
+
+  private normalizedFootprint(value: unknown): GeoJsonPolygonGeometry | null {
+    if (!value || typeof value !== 'object') return null;
+    const geometry = value as { type?: unknown; coordinates?: unknown };
+    if ((geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon') || !Array.isArray(geometry.coordinates)) {
+      return null;
+    }
+    return JSON.parse(JSON.stringify({
+      type: geometry.type,
+      coordinates: geometry.coordinates
+    })) as GeoJsonPolygonGeometry;
+  }
+
+  private polygonsFromFootprint(value: unknown): FootprintPoint[][] {
+    if (!value || typeof value !== 'object') return [];
+    const geometry = value as { type?: unknown; coordinates?: unknown };
+    if ((geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon') || !Array.isArray(geometry.coordinates)) {
+      return [];
+    }
+    const polygons = geometry.type === 'Polygon'
+      ? [geometry.coordinates]
+      : geometry.coordinates;
+    return (polygons as unknown[])
+      .map(polygon => this.pointsFromPolygonCoordinates(polygon))
+      .filter(points => points.length >= 3);
+  }
+
+  private pointsFromPolygonCoordinates(value: unknown): FootprintPoint[] {
+    if (!Array.isArray(value) || !Array.isArray(value[0])) return [];
+    const ring = value[0] as unknown[];
+    const points = ring
+      .map(position => this.footprintPointFromPosition(position))
+      .filter((point): point is FootprintPoint => Boolean(point));
+    if (points.length > 1) {
+      const first = points[0];
+      const last = points[points.length - 1];
+      if (first.lat === last.lat && first.lng === last.lng) {
+        points.pop();
+      }
+    }
+    return points;
+  }
+
+  private footprintPointFromPosition(position: unknown): FootprintPoint | null {
+    if (!Array.isArray(position) || position.length < 2) return null;
+    const lng = Number(position[0]);
+    const lat = Number(position[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  }
+
+  private footprintFromPolygons(polygons: FootprintPoint[][]): GeoJsonPolygonGeometry | null {
+    const validPolygons = polygons.filter(points => points.length >= 3);
+    if (validPolygons.length === 0) return null;
+    const coordinates = validPolygons.map(points => [this.closedFootprintRing(points)]);
+    if (coordinates.length === 1) {
+      return {
+        type: 'Polygon',
+        coordinates: coordinates[0]
+      };
+    }
+    return {
+      type: 'MultiPolygon',
+      coordinates
+    };
+  }
+
+  private closedFootprintRing(points: FootprintPoint[]): number[][] {
+    const ring = points.map(point => [this.roundCoordinate(point.lng), this.roundCoordinate(point.lat)]);
+    ring.push([this.roundCoordinate(points[0].lng), this.roundCoordinate(points[0].lat)]);
+    return ring;
+  }
+
+  private triangleAroundPoi(): FootprintPoint[] {
+    if (!this.locationMap) return [];
+    const center = this.locationMap.latLngToLayerPoint([Number(this.latitude), Number(this.longitude)]);
+    const mapSize = this.locationMap.getSize();
+    const height = Math.max(60, mapSize.y * 0.75);
+    const halfSide = height / Math.sqrt(3);
+    const vertices = [
+      L.point(center.x, center.y - height * 2 / 3),
+      L.point(center.x + halfSide, center.y + height / 3),
+      L.point(center.x - halfSide, center.y + height / 3)
+    ];
+    return vertices.map((point: any) => {
+      const latLng = this.locationMap.layerPointToLatLng(point);
+      return {
+        lat: this.roundCoordinate(latLng.lat),
+        lng: this.roundCoordinate(latLng.lng)
+      };
+    });
+  }
+
+  private pointInAnyFootprintPolygon(point: FootprintPoint, polygons: FootprintPoint[][]): boolean {
+    return polygons.some(polygon => this.pointInFootprintPolygon(point, polygon));
+  }
+
+  private pointInFootprintPolygon(point: FootprintPoint, polygon: FootprintPoint[]): boolean {
+    let inside = false;
+    for (let current = 0, previous = polygon.length - 1; current < polygon.length; previous = current, current += 1) {
+      const currentPoint = polygon[current];
+      const previousPoint = polygon[previous];
+      const crossesLatitude = (currentPoint.lat > point.lat) !== (previousPoint.lat > point.lat);
+      if (!crossesLatitude) continue;
+      const crossingLng = ((previousPoint.lng - currentPoint.lng) * (point.lat - currentPoint.lat)) / (previousPoint.lat - currentPoint.lat) + currentPoint.lng;
+      if (point.lng < crossingLng) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  private rememberFootprintEdit(): void {
+    this.footprintUndoStack.push(this.cloneFootprintPolygons(this.editFootprintPolygons));
+    this.footprintRedoStack = [];
+  }
+
+  private resetFootprintEditorState(): void {
+    this.isEditingFootprint = false;
+    this.editFootprintPolygons = [];
+    this.selectedFootprintPolygonIndex = null;
+    this.footprintUndoStack = [];
+    this.footprintRedoStack = [];
+    this.footprintDragStart = null;
+    this.locationMap?.dragging?.enable?.();
+    this.locationMap?.doubleClickZoom?.enable?.();
+  }
+
+  private cloneFootprintPolygons(polygons: FootprintPoint[][]): FootprintPoint[][] {
+    return polygons.map(polygon => polygon.map(point => ({ ...point })));
+  }
+
+  private roundCoordinate(value: number): number {
+    return Number(value.toFixed(7));
   }
 
   private locationMarkerIcon(): any {
@@ -1308,6 +1913,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       country_code: this.countryCode.trim().toUpperCase(),
       gps_latitude: Number.isFinite(Number(this.latitude)) ? Number(this.latitude) : null,
       gps_longitude: Number.isFinite(Number(this.longitude)) ? Number(this.longitude) : null,
+      footprint: this.footprintForPayload(),
       website: this.website.trim(),
       phone: this.phone.trim(),
       email: this.email.trim(),

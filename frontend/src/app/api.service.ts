@@ -143,12 +143,18 @@ export interface PoiMediaTranslation {
   caption: string;
 }
 
+export interface GeoJsonPolygonGeometry {
+  type: 'Polygon' | 'MultiPolygon';
+  coordinates: unknown[];
+}
+
 export interface Poi {
   id: number;
   enabled: boolean;
   country_code: string;
   gps_latitude: number;
   gps_longitude: number;
+  footprint: GeoJsonPolygonGeometry | null;
   website: string;
   phone: string;
   email: string;
@@ -198,6 +204,7 @@ export interface PoiPayload {
   country_code?: string;
   gps_latitude?: number;
   gps_longitude?: number;
+  footprint?: GeoJsonPolygonGeometry | null;
   website?: string;
   phone?: string;
   email?: string;

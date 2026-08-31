@@ -3,7 +3,8 @@ import json
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from django.contrib.gis.geos import Point
+from django.contrib.gis.geos import GEOSGeometry, MultiPolygon, Point
+from django.contrib.gis.geos.error import GEOSException
 from django.utils.text import slugify
 from rest_framework import serializers
 
@@ -89,6 +90,63 @@ def unique_poi_slug(language_code, title, slug="", poi=None):
         suffix += 1
 
     return candidate
+
+
+def geometry_as_geojson(geometry):
+    if not geometry:
+        return None
+    return json.loads(geometry.geojson)
+
+
+def validate_geojson_position(position):
+    if not isinstance(position, (list, tuple)) or len(position) < 2:
+        raise serializers.ValidationError("Each footprint coordinate must be a [longitude, latitude] position.")
+    try:
+        longitude = float(position[0])
+        latitude = float(position[1])
+    except (TypeError, ValueError):
+        raise serializers.ValidationError("Footprint coordinates must be numeric.")
+    if not -180 <= longitude <= 180:
+        raise serializers.ValidationError("Footprint longitude values must be between -180 and 180.")
+    if not -90 <= latitude <= 90:
+        raise serializers.ValidationError("Footprint latitude values must be between -90 and 90.")
+
+
+def validate_geojson_positions(value):
+    if not isinstance(value, list):
+        raise serializers.ValidationError("Footprint coordinates must be arrays.")
+    if value and isinstance(value[0], (int, float)):
+        validate_geojson_position(value)
+        return
+    for child in value:
+        validate_geojson_positions(child)
+
+
+def footprint_from_geojson(value):
+    if value in (None, ""):
+        return None
+    if not isinstance(value, dict):
+        raise serializers.ValidationError("Footprint must be a GeoJSON Polygon or MultiPolygon.")
+
+    geometry = value.get("geometry") if value.get("type") == "Feature" else value
+    if not isinstance(geometry, dict) or geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+        raise serializers.ValidationError("Footprint must be a GeoJSON Polygon or MultiPolygon.")
+    validate_geojson_positions(geometry.get("coordinates"))
+
+    try:
+        footprint = GEOSGeometry(json.dumps(geometry), srid=4326)
+    except (GEOSException, TypeError, ValueError) as error:
+        raise serializers.ValidationError(f"Footprint is not valid GeoJSON: {error}")
+
+    if footprint.empty:
+        raise serializers.ValidationError("Footprint must not be empty.")
+    if footprint.geom_type == "Polygon":
+        footprint = MultiPolygon(footprint, srid=4326)
+    if footprint.geom_type != "MultiPolygon":
+        raise serializers.ValidationError("Footprint must be a Polygon or MultiPolygon.")
+    if not footprint.valid:
+        raise serializers.ValidationError(f"Footprint geometry is invalid: {footprint.valid_reason}.")
+    return footprint
 
 
 def normalize_reference_translation(translations):
@@ -597,6 +655,7 @@ class POISerializer(serializers.ModelSerializer):
     country_code = serializers.CharField(required=False, allow_blank=True, max_length=2)
     gps_latitude = serializers.FloatField(required=False)
     gps_longitude = serializers.FloatField(required=False)
+    footprint = serializers.JSONField(required=False, allow_null=True)
     title = serializers.SerializerMethodField()
     description = serializers.SerializerMethodField()
     slug = serializers.SerializerMethodField()
@@ -621,6 +680,7 @@ class POISerializer(serializers.ModelSerializer):
             "country_code",
             "gps_latitude",
             "gps_longitude",
+            "footprint",
             "website",
             "phone",
             "email",
@@ -649,6 +709,11 @@ class POISerializer(serializers.ModelSerializer):
     def get_slug(self, obj):
         translation = self._localized_translation(obj)
         return translation.slug if translation else None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["footprint"] = geometry_as_geojson(instance.footprint)
+        return data
 
     def get_itinerary_inclusions(self, obj):
         inclusion_map = self.context.get("poi_itinerary_inclusions")
@@ -709,6 +774,11 @@ class POISerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         latitude = attrs.pop("gps_latitude", None)
         longitude = attrs.pop("gps_longitude", None)
+        if "footprint" in attrs:
+            try:
+                attrs["footprint"] = footprint_from_geojson(attrs["footprint"])
+            except serializers.ValidationError as error:
+                raise serializers.ValidationError({"footprint": error.detail})
         normalize_reference_translation(attrs.get("translations"))
         if "country_code" in attrs:
             attrs["country_code"] = (attrs.get("country_code") or "").upper()

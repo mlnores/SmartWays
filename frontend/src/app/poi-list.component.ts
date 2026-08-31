@@ -6,7 +6,7 @@ import { Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, finalize, firstValueFrom, forkJoin, map, Observable, of, startWith, switchMap } from 'rxjs';
 
-import { ApiService, Category, Itinerary, Poi, PoiMapClusterResult, PoiMapResponse, PoiMedia, Translation } from './api.service';
+import { ApiService, Category, GeoJsonPolygonGeometry, Itinerary, Poi, PoiMapClusterResult, PoiMapResponse, PoiMedia, Translation } from './api.service';
 import { MediaManagerDialogComponent } from './media-manager-dialog.component';
 import { PageInstructionService } from './page-instruction.service';
 
@@ -1348,13 +1348,23 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
+    const bounds = L.latLngBounds([]);
+    const footprintBounds = this.drawPoiFootprint(poi, true);
     const latLng = [poi.gps_latitude, poi.gps_longitude];
+    if (footprintBounds?.isValid?.()) {
+      bounds.extend(footprintBounds);
+    }
+    bounds.extend(latLng);
     L.marker(latLng, {
       icon: this.previewMarkerIcon()
     }).addTo(this.previewLayer);
 
     this.previewMessage = `${Number(poi.gps_latitude).toFixed(5)}, ${Number(poi.gps_longitude).toFixed(5)}`;
-    void this.fitPreviewMap(latLng, poi.country_code);
+    if (footprintBounds?.isValid?.() && bounds.isValid()) {
+      this.fitPreviewBounds(bounds);
+    } else {
+      void this.fitPreviewMap(latLng, poi.country_code);
+    }
   }
 
   private renderSelectedPoiPreviewIfNeeded(shouldFit = true): void {
@@ -1452,8 +1462,15 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) return;
       const latLng = [poi.gps_latitude, poi.gps_longitude];
       validCoordinateCount += 1;
+      const footprintBounds = this.drawPoiFootprint(poi, this.selectedPoiIds.has(poi.id));
+      if (footprintBounds?.isValid?.()) {
+        bounds.extend(footprintBounds);
+      }
       bounds.extend(latLng);
       if (!fitPoiIds || fitPoiIds.has(poi.id)) {
+        if (footprintBounds?.isValid?.()) {
+          fitBounds.extend(footprintBounds);
+        }
         fitBounds.extend(latLng);
       }
       L.marker(latLng, {
@@ -1495,6 +1512,10 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
       if (!Number.isFinite(poi.gps_latitude) || !Number.isFinite(poi.gps_longitude)) return;
       const latLng = [poi.gps_latitude, poi.gps_longitude];
       validCoordinateCount += 1;
+      const footprintBounds = this.drawPoiFootprint(poi, false);
+      if (footprintBounds?.isValid?.()) {
+        bounds.extend(footprintBounds);
+      }
       bounds.extend(latLng);
       const marker = L.marker(latLng, {
         icon: this.previewMarkerIcon(false)
@@ -1629,6 +1650,33 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
     }
 
     return bounds;
+  }
+
+  private drawPoiFootprint(poi: Poi, selected = false): any | null {
+    if (!this.previewLayer || !this.isFootprintGeometry(poi.footprint)) return null;
+    const layer = L.geoJSON(poi.footprint, {
+      style: {
+        color: selected ? '#1d4ed8' : '#0f766e',
+        fillColor: selected ? '#60a5fa' : '#14b8a6',
+        fillOpacity: selected ? 0.25 : 0.18,
+        opacity: 0.85,
+        weight: selected ? 3 : 2
+      },
+      interactive: false
+    }).addTo(this.previewLayer);
+    const layerBounds = layer.getBounds();
+    if (layerBounds?.isValid?.()) {
+      return layerBounds;
+    }
+    return null;
+  }
+
+  private isFootprintGeometry(value: GeoJsonPolygonGeometry | null | undefined): value is GeoJsonPolygonGeometry {
+    return Boolean(
+      value &&
+      (value.type === 'Polygon' || value.type === 'MultiPolygon') &&
+      Array.isArray(value.coordinates)
+    );
   }
 
   private previewMarkerIcon(selected = false): any {

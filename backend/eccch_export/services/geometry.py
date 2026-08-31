@@ -1,3 +1,12 @@
+import json
+
+
+def geometry_as_geojson(geometry):
+    if not geometry:
+        return None
+    return json.loads(geometry.geojson)
+
+
 def point_coordinates(point):
     if not point:
         return None
@@ -93,4 +102,3 @@ def line_geometry(coordinates):
         "type": "LineString",
         "coordinates": coordinates,
     }
-

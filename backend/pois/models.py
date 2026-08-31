@@ -23,6 +23,7 @@ class POI(models.Model):
     enabled = models.BooleanField(default=True)
     country_code = models.CharField(max_length=2, blank=True, validators=[country_code_validator])
     location = models.PointField(srid=4326)
+    footprint = models.MultiPolygonField(srid=4326, null=True, blank=True)
     website = models.URLField(blank=True)
     phone = models.CharField(max_length=50, blank=True)
     email = models.EmailField(blank=True)
