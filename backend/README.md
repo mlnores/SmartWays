@@ -210,6 +210,8 @@ python manage.py rurallure_import_via_romea_del_santo
 python manage.py rurallure_import_romea_strata_official --include-variants
 python manage.py rurallure_import_romea_strata_official_with_pois --dry-run --language-report
 python manage.py rurallure_import_romea_strata_official_with_pois --include-variants
+python manage.py rurallure_import_via_francigena_official --dry-run
+python manage.py rurallure_import_via_francigena_official --include-variants
 ```
 
 The `rurallure_import_romea_strata_official_with_pois` command is the bootstrap variant for an empty
@@ -226,6 +228,10 @@ During dry-run, it reports potential duplicate unique GPX waypoint POI pairs wit
 When importing, unique GPX waypoint POIs up to 1.5 m apart are merged into one POI using the first
 encountered name and coordinates, all categories, and the longest description. Pairs beyond 1.5 m remain
 separate POIs.
+
+The `rurallure_import_via_francigena_official` command imports the path-only official GPX files under
+`routes_data/via_francigena_official` as one route with one numbered itinerary per GPX stage. It does not
+create POIs or categories from the current source files.
 
 Import POIs:
 

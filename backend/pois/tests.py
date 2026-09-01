@@ -950,6 +950,34 @@ class POIAPITests(APITestCase):
 
         self.assertEqual(lookup.country_code_for_point(Point(-8.7, 42.2, srid=4326)), "ES")
 
+    def test_country_boundary_lookup_splits_geojson_multipolygon(self):
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {"shapeName": "Spain"},
+                    "geometry": {
+                        "type": "MultiPolygon",
+                        "coordinates": [
+                            [[[-10, 35], [-7, 35], [-7, 38], [-10, 38], [-10, 35]]],
+                            [[[-9, 41], [-6, 41], [-6, 44], [-9, 44], [-9, 41]]],
+                        ],
+                    },
+                }
+            ],
+        }
+        with NamedTemporaryFile("w+", suffix=".geojson") as geojson_file:
+            json.dump(payload, geojson_file)
+            geojson_file.flush()
+            lookup = CountryBoundaryLookup.from_geojson(
+                Path(geojson_file.name),
+                {"spain": "ES"},
+            )
+
+        self.assertEqual(len(lookup.features), 2)
+        self.assertEqual(lookup.country_code_for_point(Point(-8.7, 42.2, srid=4326)), "ES")
+
     def test_rurallure_import_merges_duplicate_categories_by_english_name(self):
         command = Command()
         categories_by_source_id, stats = command.import_categories(
@@ -2239,17 +2267,22 @@ class FestAPITests(APITestCase):
 
 
 class ManagementCommandTests(APITestCase):
-    def write_gpx(self, path, title, coordinates):
+    def write_gpx(self, path, title, coordinates, include_waypoint=True):
         points = "\n".join(
             f'        <trkpt lon="{lon}" lat="{lat}"></trkpt>'
             for lon, lat in coordinates
+        )
+        waypoint = (
+            f'  <wpt lon="{coordinates[0][0]}" lat="{coordinates[0][1]}"><name>Waypoint</name></wpt>\n'
+            if include_waypoint
+            else ""
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             f"""<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata><name>{title}</name></metadata>
-  <wpt lon="{coordinates[0][0]}" lat="{coordinates[0][1]}"><name>Waypoint</name></wpt>
+{waypoint.rstrip()}
   <trk>
     <name>{title}</name>
     <trkseg>
@@ -2410,6 +2443,52 @@ class ManagementCommandTests(APITestCase):
             "LineString",
         )
         self.assertEqual(itinerary.itinerary_json["source"]["waypointCount"], 1)
+
+    def test_rurallure_import_via_francigena_official_imports_path_only_gpx_stages(self):
+        with TemporaryDirectory() as temporary_directory:
+            source_dir = Path(temporary_directory)
+            self.write_gpx(
+                source_dir / "0_BRITANNICA" / "VFEB - 01 - Da Southwark a Lesnes Abbey.gpx",
+                "VFEB - 01 - Da Southwark a Lesnes Abbey",
+                [[-0.0900, 51.5000], [0.1200, 51.4700]],
+                include_waypoint=False,
+            )
+            self.write_gpx(
+                source_dir / "1_INGHILTERRA" / "VFE_002_shepherdswell-dover.gpx",
+                "VFE 002 - Shepherdswell to Dover",
+                [[1.2300, 51.1900], [1.3100, 51.1300]],
+                include_waypoint=False,
+            )
+            self.write_gpx(
+                source_dir / "2_FRANCIA" / "VFF_003_calais-wissant.gpx",
+                "VFF 003 - Calais to Wissant",
+                [[1.8500, 50.9500], [1.6600, 50.8900]],
+                include_waypoint=False,
+            )
+            self.write_gpx(
+                source_dir / "2_FRANCIA" / "VFF_004_1_variante-calais.gpx",
+                "VFF 004 - Calais variant",
+                [[1.8400, 50.9400], [1.6500, 50.8800]],
+                include_waypoint=False,
+            )
+
+            call_command("rurallure_import_via_francigena_official", "--source-dir", str(source_dir))
+
+        route = RouteTranslation.objects.get(slug="via-francigena-official").route
+        stages = list(route.stages.select_related("itinerary").order_by("stage_number"))
+        self.assertEqual(len(stages), 3)
+        self.assertEqual([stage.stage_number for stage in stages], [1, 2, 3])
+        self.assertEqual(Route.objects.count(), 1)
+        self.assertEqual(Itinerary.objects.count(), 3)
+        self.assertEqual(POI.objects.count(), 0)
+        first_itinerary = stages[0].itinerary
+        self.assertEqual(first_itinerary.translations.get().title, "VFEB - 01 - Da Southwark a Lesnes Abbey")
+        self.assertEqual(first_itinerary.itinerary_json["source"]["kind"], "via-francigena-official-gpx-import")
+        self.assertEqual(first_itinerary.itinerary_json["source"]["waypointCount"], 0)
+        self.assertEqual(
+            first_itinerary.itinerary_json["segments"][0]["selectedWalkingRoute"]["source"],
+            "via_francigena_official_gpx",
+        )
 
     def test_rurallure_import_romea_strata_official_with_pois_links_only_on_track_wpts_as_itinerary_pois(self):
         with TemporaryDirectory() as temporary_directory:

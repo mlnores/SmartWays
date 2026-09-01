@@ -201,6 +201,21 @@ class CountryBoundaryLookup:
     def __init__(self, features):
         self.features = features
 
+    @staticmethod
+    def iter_polygon_geometries(geometry):
+        geometry_type = geometry.get("type")
+        coordinates = geometry.get("coordinates")
+        if geometry_type == "Polygon" and coordinates:
+            yield geometry
+            return
+        if geometry_type == "MultiPolygon" and coordinates:
+            for polygon_coordinates in coordinates:
+                yield {"type": "Polygon", "coordinates": polygon_coordinates}
+            return
+        if geometry_type == "GeometryCollection":
+            for child_geometry in geometry.get("geometries") or []:
+                yield from CountryBoundaryLookup.iter_polygon_geometries(child_geometry)
+
     @classmethod
     def from_geojson(cls, path, country_codes_by_name):
         with path.open(encoding="utf-8") as geojson_file:
@@ -215,10 +230,11 @@ class CountryBoundaryLookup:
             if not country_code or not geometry:
                 continue
 
-            boundary = GEOSGeometry(json.dumps(geometry), srid=4326)
-            if boundary.empty:
-                continue
-            features.append((country_code, boundary.extent, boundary))
+            for polygon_geometry in cls.iter_polygon_geometries(geometry):
+                boundary = GEOSGeometry(json.dumps(polygon_geometry), srid=4326)
+                if boundary.empty:
+                    continue
+                features.append((country_code, boundary.extent, boundary))
 
         return cls(features)
 

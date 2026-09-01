@@ -357,12 +357,14 @@ http://localhost:8000/admin/
 
 ### Import Deployment Data
 
-The recommended import pipeline uses the two most developed importers, in this order:
+The recommended import pipeline uses the most developed importers, in this order:
 
 1. `rurallure_import_romea_strata_official_with_pois`
    Imports official Romea Strata GPX routes, creates itineraries from `<trkpt>` geometry, creates and links POIs from `<wpt>` elements, bootstraps categories, annotates countries, and merges GPX waypoint POIs up to 1.5 m apart.
-2. `import_rurallure_dump_near_itineraries`
-   Imports RurAllure dump POIs near the itineraries created in step 1, discards placeholder first-title `...` entries, merges duplicate dump POIs into existing Romea Strata POIs, and imports the remaining nearby POIs with translations, categories, media, and country codes.
+2. `rurallure_import_via_francigena_official`
+   Imports official Via Francigena GPX paths as one route with numbered itineraries. These GPX files are path-only in the current dataset, so no POIs or categories are created.
+3. `import_rurallure_dump_near_itineraries`
+   Imports RurAllure dump POIs near the itineraries created in the previous steps, discards placeholder first-title `...` entries, merges duplicate dump POIs into existing Romea Strata POIs, and imports the remaining nearby POIs with translations, categories, media, and country codes.
 
 `MAX_DISTANCE_KM` defaults to `25`.
 
@@ -382,11 +384,14 @@ Override paths if your ZIP extraction layout differs:
 
 ```bash
 ROUTES_SOURCE_DIR=/data/routes_data/romea_strata_official \
+VIA_FRANCIGENA_SOURCE_DIR=/data/routes_data/via_francigena_official \
 POI_DUMP_PATH=/data/POI_data/dump-rurallure_db.sql \
 COUNTRY_BOUNDARIES_PATH=/data/geoboundaries_adm0.geojson \
 MAX_DISTANCE_KM=25 \
 ./scripts/import_deployment_data.sh
 ```
+
+The helper imports Via Francigena only when `VIA_FRANCIGENA_SOURCE_DIR` exists in the backend container, so deployments with only the Romea Strata data keep working.
 
 You can also run individual commands manually:
 
@@ -395,6 +400,11 @@ docker compose run --rm backend \
   python manage.py rurallure_import_romea_strata_official_with_pois \
   --source-dir /data/routes_data/romea_strata_official \
   --country-boundaries /data/geoboundaries_adm0.geojson \
+  --include-variants
+
+docker compose run --rm backend \
+  python manage.py rurallure_import_via_francigena_official \
+  --source-dir /data/routes_data/via_francigena_official \
   --include-variants
 
 docker compose run --rm backend \
@@ -520,10 +530,10 @@ If unset, request-based URLs are used for API responses, and management commands
 
 ## Importing POIs
 
-### Recommended Two-Step Import
+### Recommended Import
 
-For the current Romea Strata + RurAllure workflow, prefer the two most developed importers and run them
-in sequence:
+For the current official GPX + RurAllure workflow, prefer the most developed importers and run them in
+sequence:
 
 1. Bootstrap routes, itineraries, and POIs from the official Romea Strata GPX files:
 
@@ -535,7 +545,15 @@ in sequence:
      --include-variants
    ```
 
-2. Import RurAllure dump POIs near the itineraries created in step 1:
+2. Import the official Via Francigena GPX files as route geometry:
+
+   ```bash
+   python manage.py rurallure_import_via_francigena_official \
+     --source-dir /path/to/routes_data/via_francigena_official \
+     --include-variants
+   ```
+
+3. Import RurAllure dump POIs near the itineraries created in steps 1 and 2:
 
    ```bash
    python manage.py import_rurallure_dump_near_itineraries \
@@ -554,6 +572,11 @@ python manage.py rurallure_import_romea_strata_official_with_pois \
   --dry-run \
   --language-report
 
+python manage.py rurallure_import_via_francigena_official \
+  --source-dir /path/to/routes_data/via_francigena_official \
+  --include-variants \
+  --dry-run
+
 python manage.py import_rurallure_dump_near_itineraries \
   /path/to/dump-rurallure_db.sql \
   --country-boundaries /path/to/geoboundaries_adm0.geojson \
@@ -566,6 +589,9 @@ after exact deduplication, unique waypoint POIs after the 1.5 m merge, distinct 
 country-boundary configuration, potential duplicate waypoint POI pairs within 2 m, 5 m, and 10 m, and
 language-detection confidence/examples when `--language-report` is present. Override the duplicate
 threshold report with `--poi-duplicate-distance-meters 2,5,10`.
+
+The Via Francigena GPX dry run reports route/stage counts and skips waypoint/category import because the
+official source files currently contain only path geometry.
 
 The RurAllure near-itineraries dry run reports table counts after distance filtering, POIs matching the
 itinerary-distance range, POIs skipped by the distance filter, existing-POI proximity counts at 2 m, 5 m,
@@ -586,6 +612,12 @@ Important options:
 --country-boundaries /path/to/geoboundaries_adm0.geojson
 --skip-country-annotation
 --poi-duplicate-distance-meters 2,5,10
+--dry-run
+
+# Via Francigena official GPX path importer
+--source-dir /path/to/routes_data/via_francigena_official
+--include-variants
+--replace
 --dry-run
 
 # RurAllure dump near-itineraries importer
@@ -712,12 +744,18 @@ python manage.py rurallure_import_via_francigena_per_alps
 python manage.py rurallure_import_via_romea_del_santo
 ```
 
-Official Romea Strata GPX command:
+Official GPX path commands:
 
 ```bash
 python manage.py rurallure_import_romea_strata_official --dry-run
 python manage.py rurallure_import_romea_strata_official
+python manage.py rurallure_import_via_francigena_official --dry-run
+python manage.py rurallure_import_via_francigena_official
 ```
+
+The Via Francigena official importer reads the path-only GPX files under
+`routes_data/via_francigena_official`, creates one route, and creates one numbered itinerary per imported
+GPX stage.
 
 Official Romea Strata GPX bootstrap command, including POIs from `<wpt>` elements:
 
@@ -749,6 +787,7 @@ Include variants:
 ```bash
 python manage.py rurallure_import_romea_strata_official --include-variants
 python manage.py rurallure_import_romea_strata_official_with_pois --include-variants
+python manage.py rurallure_import_via_francigena_official --include-variants
 ```
 
 Replace existing imported route content:
@@ -756,6 +795,7 @@ Replace existing imported route content:
 ```bash
 python manage.py rurallure_import_romea_strata_official --replace
 python manage.py rurallure_import_romea_strata_official_with_pois --replace
+python manage.py rurallure_import_via_francigena_official --replace
 ```
 
 Clear existing POIs and categories before re-running the POI bootstrap command:

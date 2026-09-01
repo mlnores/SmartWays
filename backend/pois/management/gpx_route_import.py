@@ -139,7 +139,7 @@ def parse_gpx_stage(path):
     )
 
 
-def itinerary_json_for_stage(stage, route_title, source_dir):
+def itinerary_json_for_stage(stage, route_title, source_dir, source_key="romea_strata_official_gpx", source_kind="romea-strata-official-gpx-import"):
     start_lon, start_lat = stage.coordinates[0]
     end_lon, end_lat = stage.coordinates[-1]
     distance_meters = round(line_distance_meters(stage.coordinates))
@@ -171,7 +171,7 @@ def itinerary_json_for_stage(stage, route_title, source_dir):
                 "toPoint": 2,
                 "bufferDistanceMeters": 1000,
                 "selectedWalkingRoute": {
-                    "source": "romea_strata_official_gpx",
+                    "source": source_key,
                     "geometry": {
                         "type": "LineString",
                         "coordinates": stage.coordinates,
@@ -181,7 +181,7 @@ def itinerary_json_for_stage(stage, route_title, source_dir):
             }
         ],
         "source": {
-            "kind": "romea-strata-official-gpx-import",
+            "kind": source_kind,
             "routeTitle": route_title,
             "sourceDirectory": str(source_dir),
             "path": str(stage.path),
@@ -198,12 +198,14 @@ class BaseGpxRouteImportCommand(BaseCommand):
     source_dir = None
     base_route_title = ""
     base_route_slug = ""
+    source_key = "romea_strata_official_gpx"
+    source_kind = "romea-strata-official-gpx-import"
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--source-dir",
             default=str(self.source_dir),
-            help="Directory containing the official Romea Strata GPX files.",
+            help="Directory containing the GPX files to import.",
         )
         parser.add_argument(
             "--language",
@@ -284,7 +286,7 @@ class BaseGpxRouteImportCommand(BaseCommand):
                     if itinerary is None:
                         itinerary = Itinerary.objects.create(
                             enabled=not stage.is_variant,
-                            itinerary_json=itinerary_json_for_stage(stage, plan.title, source_dir),
+                            itinerary_json=itinerary_json_for_stage(stage, plan.title, source_dir, self.source_key, self.source_kind),
                         )
                         itinerary.itinerary_json.setdefault("source", {})["fingerprint"] = fingerprint
                         itinerary.save(update_fields=["itinerary_json", "updated_at"])

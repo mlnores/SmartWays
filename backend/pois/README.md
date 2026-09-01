@@ -271,6 +271,17 @@ python manage.py rurallure_import_romea_strata_official --replace
 
 The official importer reuses matching itinerary stages where possible, allowing the same itinerary to belong to several routes.
 
+Official Via Francigena GPX path import:
+
+```bash
+python manage.py rurallure_import_via_francigena_official --dry-run
+python manage.py rurallure_import_via_francigena_official --include-variants
+python manage.py rurallure_import_via_francigena_official --replace
+```
+
+The Via Francigena importer reads path-only GPX files from `routes_data/via_francigena_official`, creates
+one route, and creates one numbered itinerary per imported GPX stage.
+
 ## Admin
 
 The Django admin exposes:
