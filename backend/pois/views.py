@@ -66,6 +66,7 @@ from .serializers import (
 )
 
 DEFAULT_COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parent / "data" / "geoboundaries_adm0.geojson"
+POI_LOCATION_ROUTE_INVALIDATION_METERS = 5
 COUNTRY_CODE_PROPERTY_NAMES = (
     "ISO_A2",
     "iso_a2",
@@ -525,6 +526,79 @@ def point_lat_lng(point, poi):
     return lat, lng
 
 
+def distance_between_points_meters(start, end):
+    if not start or not end:
+        return 0
+    earth_radius_meters = 6371008.8
+    start_lat = math.radians(start.y)
+    end_lat = math.radians(end.y)
+    delta_lat = end_lat - start_lat
+    delta_lng = math.radians(end.x - start.x)
+    haversine = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(start_lat) * math.cos(end_lat) * math.sin(delta_lng / 2) ** 2
+    )
+    return earth_radius_meters * 2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine))
+
+
+def invalidate_segment_route(segment):
+    if not isinstance(segment, dict):
+        return False
+    changed = False
+    if segment.get("selectedWalkingRoute") is not None:
+        segment["selectedWalkingRoute"] = None
+        changed = True
+    return changed
+
+
+def itinerary_json_with_moved_poi(itinerary_json, poi, invalidate_routes=False):
+    if not isinstance(itinerary_json, dict):
+        return itinerary_json, False
+    points = itinerary_json.get("points")
+    if not isinstance(points, list):
+        return itinerary_json, False
+
+    changed = False
+    cleaned = json.loads(json.dumps(itinerary_json))
+    cleaned_points = cleaned.get("points") if isinstance(cleaned.get("points"), list) else []
+    segments = cleaned.get("segments") if isinstance(cleaned.get("segments"), list) else []
+    latitude = float(poi.location.y)
+    longitude = float(poi.location.x)
+
+    for index, point in enumerate(cleaned_points):
+        if not point_references_poi(point, poi.id):
+            continue
+        coordinates = point.get("coordinates") if isinstance(point.get("coordinates"), dict) else {}
+        if point.get("lat") != latitude:
+            point["lat"] = latitude
+            changed = True
+        if point.get("lng") != longitude:
+            point["lng"] = longitude
+            changed = True
+        if coordinates.get("lat") != latitude or coordinates.get("lng") != longitude:
+            point["coordinates"] = {"lat": latitude, "lng": longitude}
+            changed = True
+        if invalidate_routes and index > 0 and index - 1 < len(segments):
+            changed = invalidate_segment_route(segments[index - 1]) or changed
+        if invalidate_routes and index < len(segments):
+            changed = invalidate_segment_route(segments[index]) or changed
+
+    return cleaned, changed
+
+
+def update_itineraries_for_moved_poi(poi, previous_location):
+    distance_meters = distance_between_points_meters(previous_location, poi.location)
+    if distance_meters == 0:
+        return
+    invalidate_routes = distance_meters > POI_LOCATION_ROUTE_INVALIDATION_METERS
+    for itinerary in Itinerary.objects.only("id", "itinerary_json"):
+        itinerary_json, changed = itinerary_json_with_moved_poi(itinerary.itinerary_json, poi, invalidate_routes)
+        if not changed:
+            continue
+        itinerary.itinerary_json = itinerary_json
+        itinerary.save(update_fields=["itinerary_json", "updated_at"])
+
+
 def deleted_poi_waypoint(point, poi, index):
     lat, lng = point_lat_lng(point, poi)
     title = (
@@ -646,6 +720,15 @@ class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiView
             remove_deleted_poi_from_itineraries(poi)
             self.perform_destroy(poi)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def update(self, request, *args, **kwargs):
+        with transaction.atomic():
+            poi = self.get_object()
+            previous_location = poi.location.clone()
+            response = super().update(request, *args, **kwargs)
+            poi.refresh_from_db(fields=["location"])
+            update_itineraries_for_moved_poi(poi, previous_location)
+            return response
 
     def get_queryset(self):
         queryset = (

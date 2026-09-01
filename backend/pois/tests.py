@@ -759,6 +759,70 @@ class POIAPITests(APITestCase):
         self.assertTrue(itinerary.enabled)
         self.assertTrue(route.enabled)
 
+    def test_poi_location_move_over_five_meters_invalidates_adjacent_itinerary_paths(self):
+        self.poi.enabled = False
+        self.poi.save(update_fields=["enabled"])
+        itinerary = Itinerary.objects.create(
+            enabled=True,
+            itinerary_json={
+                "points": [
+                    {"type": "waypoint", "label": "Start", "coordinates": {"lat": 42.2300, "lng": -8.7300}},
+                    {"type": "poi", "id": self.poi.id, "label": "Castle", "coordinates": {"lat": 42.2406, "lng": -8.7207}},
+                    {"type": "waypoint", "label": "Next", "coordinates": {"lat": 42.2500, "lng": -8.7100}},
+                    {"type": "waypoint", "label": "End", "coordinates": {"lat": 42.2600, "lng": -8.7000}},
+                ],
+                "segments": [
+                    {"bufferMeters": 2000, "selectedWalkingRoute": {"distanceMeters": 100, "geometry": {"type": "LineString", "coordinates": []}}},
+                    {"bufferMeters": 2000, "selectedWalkingRoute": {"distanceMeters": 200, "geometry": {"type": "LineString", "coordinates": []}}},
+                    {"bufferMeters": 2000, "selectedWalkingRoute": {"distanceMeters": 300, "geometry": {"type": "LineString", "coordinates": []}}},
+                ],
+            },
+        )
+
+        response = self.client.patch(
+            reverse("poi-detail", args=[self.poi.id]),
+            {"gps_latitude": 42.2407, "gps_longitude": -8.7207},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        itinerary.refresh_from_db()
+        points = itinerary.itinerary_json["points"]
+        segments = itinerary.itinerary_json["segments"]
+        self.assertEqual(points[1]["coordinates"], {"lat": 42.2407, "lng": -8.7207})
+        self.assertEqual(points[1]["lat"], 42.2407)
+        self.assertEqual(points[1]["lng"], -8.7207)
+        self.assertIsNone(segments[0]["selectedWalkingRoute"])
+        self.assertIsNone(segments[1]["selectedWalkingRoute"])
+        self.assertIsNotNone(segments[2]["selectedWalkingRoute"])
+
+    def test_poi_location_move_within_five_meters_updates_itinerary_point_without_invalidating_paths(self):
+        self.poi.enabled = False
+        self.poi.save(update_fields=["enabled"])
+        itinerary = Itinerary.objects.create(
+            enabled=True,
+            itinerary_json={
+                "points": [
+                    {"type": "poi", "id": self.poi.id, "label": "Castle", "coordinates": {"lat": 42.2406, "lng": -8.7207}},
+                    {"type": "waypoint", "label": "Next", "coordinates": {"lat": 42.2500, "lng": -8.7100}},
+                ],
+                "segments": [
+                    {"bufferMeters": 2000, "selectedWalkingRoute": {"distanceMeters": 200, "geometry": {"type": "LineString", "coordinates": []}}},
+                ],
+            },
+        )
+
+        response = self.client.patch(
+            reverse("poi-detail", args=[self.poi.id]),
+            {"gps_latitude": 42.24063, "gps_longitude": -8.7207},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        itinerary.refresh_from_db()
+        self.assertEqual(itinerary.itinerary_json["points"][0]["coordinates"], {"lat": 42.24063, "lng": -8.7207})
+        self.assertIsNotNone(itinerary.itinerary_json["segments"][0]["selectedWalkingRoute"])
+
     def test_poi_list_includes_itinerary_poi_ids_in_inclusions(self):
         itinerary = Itinerary.objects.create(
             enabled=True,

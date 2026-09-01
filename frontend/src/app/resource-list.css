@@ -523,6 +523,16 @@ label span {
   white-space: nowrap;
 }
 
+.itinerary-preview-layout .missing-paths-column {
+  width: 92px;
+  white-space: normal;
+}
+
+.itinerary-preview-layout .missing-paths-column .sortable-header {
+  white-space: normal;
+  line-height: 1.15;
+}
+
 .itinerary-preview-layout .enabled-column,
 .poi-preview-layout .enabled-column {
   width: 72px;

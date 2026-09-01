@@ -108,7 +108,7 @@ interface ViewportBounds {
   east: number;
 }
 
-type ItinerarySortKey = 'stage' | 'title' | 'length' | 'draft';
+type ItinerarySortKey = 'stage' | 'title' | 'length' | 'missingPaths' | 'draft';
 type SortDirection = 'asc' | 'desc';
 
 declare const L: any;
@@ -224,6 +224,12 @@ declare const L: any;
                                 <span aria-hidden="true">{{ itinerarySortIndicator('length') }}</span>
                               </button>
                             </th>
+                            <th class="missing-paths-column">
+                              <button type="button" class="sortable-header" (click)="toggleItinerarySort('missingPaths')">
+                                <span>Missing paths?</span>
+                                <span aria-hidden="true">{{ itinerarySortIndicator('missingPaths') }}</span>
+                              </button>
+                            </th>
                             <th class="enabled-column">
                             <button type="button" class="sortable-header" (click)="toggleItinerarySort('draft')">
                               <span>Draft?</span>
@@ -247,6 +253,9 @@ declare const L: any;
                               <p class="point-preview">{{ firstPointName(itinerary) }} → {{ lastPointName(itinerary) }}</p>
                               </td>
                               <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
+                              <td class="missing-paths-column">
+                                {{ hasMissingPaths(itinerary) ? 'Yes' : 'No' }}
+                              </td>
                               <td class="enabled-column">
                                 {{ itinerary.enabled ? 'No' : 'Yes' }}
                               </td>
@@ -351,6 +360,12 @@ declare const L: any;
                     <span aria-hidden="true">{{ itinerarySortIndicator('length') }}</span>
                   </button>
                 </th>
+                <th class="missing-paths-column">
+                  <button type="button" class="sortable-header" (click)="toggleItinerarySort('missingPaths')">
+                    <span>Missing paths?</span>
+                    <span aria-hidden="true">{{ itinerarySortIndicator('missingPaths') }}</span>
+                  </button>
+                </th>
                 <th class="enabled-column">
                   <button type="button" class="sortable-header" (click)="toggleItinerarySort('draft')">
                     <span>Draft?</span>
@@ -403,13 +418,16 @@ declare const L: any;
                     </td>
                   }
                   <td class="length-column">{{ estimatedDistance(itinerary) }}</td>
+                  <td class="missing-paths-column">
+                    {{ hasMissingPaths(itinerary) ? 'Yes' : 'No' }}
+                  </td>
                   <td class="enabled-column">
                     {{ itinerary.enabled ? 'No' : 'Yes' }}
                   </td>
                 </tr>
               } @empty {
                 <tr>
-                  <td [attr.colspan]="routeSlug ? 3 : 4">{{ !routeSlug && listUpdatesWithMapView && currentItineraries.length ? 'No itineraries visible in the current map view.' : 'No itineraries found.' }}</td>
+                  <td [attr.colspan]="routeSlug ? 4 : 5">{{ !routeSlug && listUpdatesWithMapView && currentItineraries.length ? 'No itineraries visible in the current map view.' : 'No itineraries found.' }}</td>
                 </tr>
               }
             </tbody>
@@ -2488,6 +2506,19 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       : {};
   }
 
+  hasMissingPaths(itinerary: Itinerary): boolean {
+    const itineraryJson = this.itineraryJson(itinerary);
+    const points = Array.isArray(itineraryJson.points) ? itineraryJson.points : [];
+    if (points.length < 2) return false;
+    const segments = Array.isArray(itineraryJson.segments) ? itineraryJson.segments : [];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      if (!segments[index]?.selectedWalkingRoute?.geometry) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private pointName(point: PointExport | undefined): string {
     if (!point) return '-';
     if (point.title?.trim()) return point.title.trim();
@@ -2517,6 +2548,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
         comparison = (left.title || '').localeCompare(right.title || '');
       } else if (this.itinerarySortKey === 'length') {
         comparison = this.itineraryLengthMeters(left) - this.itineraryLengthMeters(right);
+      } else if (this.itinerarySortKey === 'missingPaths') {
+        comparison = Number(this.hasMissingPaths(left)) - Number(this.hasMissingPaths(right));
       } else if (this.itinerarySortKey === 'draft') {
         comparison = Number(left.enabled) - Number(right.enabled);
       } else {
