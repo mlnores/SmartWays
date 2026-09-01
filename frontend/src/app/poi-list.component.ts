@@ -7,6 +7,7 @@ import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, finalize, firstValueFrom, forkJoin, map, Observable, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Category, GeoJsonPolygonGeometry, Itinerary, Poi, PoiMapClusterResult, PoiMapResponse, PoiMedia, Translation } from './api.service';
+import { AuthService } from './auth.service';
 import { MediaManagerDialogComponent } from './media-manager-dialog.component';
 import { PageInstructionService } from './page-instruction.service';
 
@@ -109,7 +110,9 @@ declare const turf: any;
         </div>
         @if (!itineraryId) {
           <div class="list-actions">
-            <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
+            @if (isAdmin$ | async) {
+              <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
+            }
             <a class="primary" title="New POI" aria-label="New POI" routerLink="/pois/new" target="_blank" rel="noopener">New POI</a>
           </div>
         }
@@ -522,7 +525,7 @@ declare const turf: any;
                 <p class="dialog-status" [class.error]="categoryDialogStatusIsError">{{ categoryDialogStatusMessage }}</p>
               }
 
-              @if (editingCategory) {
+              @if (editingCategory && (isAdmin$ | async)) {
                 <section class="category-danger-zone">
                   <h3>Merge or delete</h3>
                   <div class="category-merge-row">
@@ -562,9 +565,11 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly auth = inject(AuthService);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly pageInstruction = inject(PageInstructionService);
   private readonly title = inject(Title);
+  readonly isAdmin$ = this.auth.isAdmin$;
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);
   readonly mapView$ = new BehaviorSubject(0);

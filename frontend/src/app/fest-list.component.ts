@@ -6,6 +6,7 @@ import { ActivatedRoute, Router, RouterLink, UrlTree } from '@angular/router';
 import { BehaviorSubject, catchError, combineLatest, debounceTime, finalize, firstValueFrom, map, Observable, of, startWith, switchMap } from 'rxjs';
 
 import { ApiService, Fest, FestCategory, FestCategoryPayload, FestMapClusterResult, FestMapResponse, FestMedia, Translation } from './api.service';
+import { AuthService } from './auth.service';
 import { PageInstructionService } from './page-instruction.service';
 
 interface FestListState {
@@ -40,7 +41,9 @@ declare const L: any;
           <h1>Fests</h1>
         </div>
         <div class="list-actions">
-          <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
+          @if (isAdmin$ | async) {
+            <button type="button" class="secondary" (click)="openCategoryManagerDialog()">Manage categories</button>
+          }
           <a class="primary" title="New fest" aria-label="New fest" routerLink="/fests/new" target="_blank" rel="noopener">New fest</a>
         </div>
       </header>
@@ -326,7 +329,7 @@ declare const L: any;
                 <p class="dialog-status" [class.error]="categoryDialogStatusIsError">{{ categoryDialogStatusMessage }}</p>
               }
 
-              @if (editingCategory) {
+              @if (editingCategory && (isAdmin$ | async)) {
                 <section class="category-danger-zone">
                   <h3>Merge or delete</h3>
                   <div class="category-merge-row">
@@ -364,9 +367,11 @@ export class FestListComponent implements AfterViewInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly activatedRoute = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly auth = inject(AuthService);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly pageInstruction = inject(PageInstructionService);
   private readonly title = inject(Title);
+  readonly isAdmin$ = this.auth.isAdmin$;
 
   readonly query$ = new BehaviorSubject('');
   readonly refresh$ = new BehaviorSubject(0);

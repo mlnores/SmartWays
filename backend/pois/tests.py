@@ -249,6 +249,8 @@ class POIAPITests(APITestCase):
         self.assertEqual(category_response.data["count"], 1)
 
     def test_category_merge_keeps_target_and_moves_poi_links(self):
+        admin = get_user_model().objects.create_user(username="admin", password="secret-password", is_staff=True)
+        self.client.force_authenticate(admin)
         source = Category.objects.create(slug="affittacamere")
         target = Category.objects.create(slug="bed-and-breakfast")
         CategoryTranslation.objects.create(category=source, language_code="it", name="Affittacamere")
@@ -266,6 +268,56 @@ class POIAPITests(APITestCase):
         self.assertFalse(Category.objects.filter(id=source.id).exists())
         self.assertTrue(Category.objects.filter(id=target.id).exists())
         self.assertEqual(list(self.poi.categories.values_list("id", flat=True)), [target.id])
+
+    def test_editor_cannot_delete_or_merge_categories(self):
+        source = Category.objects.create(slug="source")
+        target = Category.objects.create(slug="target")
+
+        merge_response = self.client.post(
+            reverse("category-merge", args=[source.id]),
+            {"target": target.id},
+            format="json",
+        )
+        delete_response = self.client.delete(reverse("category-detail", args=[source.id]))
+
+        self.assertEqual(merge_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(delete_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(Category.objects.filter(id=source.id).exists())
+        self.assertTrue(Category.objects.filter(id=target.id).exists())
+
+    def test_editor_cannot_create_or_update_categories(self):
+        category = Category.objects.create(slug="editable")
+        translation = CategoryTranslation.objects.create(category=category, language_code="en", name="Editable")
+
+        create_response = self.client.post(
+            reverse("category-list"),
+            {"slug": "new-category", "translations": [{"language_code": "en", "name": "New category"}]},
+            format="json",
+        )
+        update_response = self.client.patch(
+            reverse("category-detail", args=[category.id]),
+            {"slug": "changed"},
+            format="json",
+        )
+        translation_create_response = self.client.post(
+            reverse("category-translation-list"),
+            {"category": category.id, "language_code": "es", "name": "Editable"},
+            format="json",
+        )
+        translation_update_response = self.client.patch(
+            reverse("category-translation-detail", args=[translation.id]),
+            {"name": "Changed"},
+            format="json",
+        )
+
+        self.assertEqual(create_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(update_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(translation_create_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(translation_update_response.status_code, status.HTTP_403_FORBIDDEN)
+        category.refresh_from_db()
+        translation.refresh_from_db()
+        self.assertEqual(category.slug, "editable")
+        self.assertEqual(translation.name, "Editable")
 
     def test_category_list_language_selects_name_without_filtering_categories(self):
         english_only = Category.objects.create(slug="bed-and-breakfast")
@@ -1962,6 +2014,56 @@ class FestAPITests(APITestCase):
         ring = response.data["footprint"]["coordinates"][0][0]
         self.assertEqual(len(ring), 7)
         self.assertEqual(ring[0], ring[-1])
+
+    def test_editor_cannot_delete_or_merge_fest_categories(self):
+        source = FestCategory.objects.create(slug="source-fest-category")
+        target = FestCategory.objects.create(slug="target-fest-category")
+
+        merge_response = self.client.post(
+            reverse("fest-category-merge", args=[source.id]),
+            {"target": target.id},
+            format="json",
+        )
+        delete_response = self.client.delete(reverse("fest-category-detail", args=[source.id]))
+
+        self.assertEqual(merge_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(delete_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(FestCategory.objects.filter(id=source.id).exists())
+        self.assertTrue(FestCategory.objects.filter(id=target.id).exists())
+
+    def test_editor_cannot_create_or_update_fest_categories(self):
+        category = FestCategory.objects.create(slug="editable-fest-category")
+        translation = FestCategoryTranslation.objects.create(category=category, language_code="en", name="Editable")
+
+        create_response = self.client.post(
+            reverse("fest-category-list"),
+            {"slug": "new-fest-category", "translations": [{"language_code": "en", "name": "New category"}]},
+            format="json",
+        )
+        update_response = self.client.patch(
+            reverse("fest-category-detail", args=[category.id]),
+            {"slug": "changed-fest-category"},
+            format="json",
+        )
+        translation_create_response = self.client.post(
+            reverse("fest-category-translation-list"),
+            {"category": category.id, "language_code": "es", "name": "Editable"},
+            format="json",
+        )
+        translation_update_response = self.client.patch(
+            reverse("fest-category-translation-detail", args=[translation.id]),
+            {"name": "Changed"},
+            format="json",
+        )
+
+        self.assertEqual(create_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(update_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(translation_create_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(translation_update_response.status_code, status.HTTP_403_FORBIDDEN)
+        category.refresh_from_db()
+        translation.refresh_from_db()
+        self.assertEqual(category.slug, "editable-fest-category")
+        self.assertEqual(translation.name, "Editable")
 
     def test_fest_rejects_dates_outside_edition_year(self):
         payload = {

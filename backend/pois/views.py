@@ -17,7 +17,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.exceptions import ParseError, ValidationError
+from rest_framework.exceptions import ParseError, PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
@@ -705,6 +705,26 @@ class DraftParentOnlyMutationMixin(DraftOnlyMutationMixin):
     def ensure_instance_is_draft(self, instance):
         parent = getattr(instance, self.parent_attribute)
         ensure_draft(parent, self.draft_label)
+
+
+class AdminOnlyMutationMixin:
+    admin_mutation_message = "Only admins can edit categories."
+
+    def ensure_admin_mutation(self, request):
+        if user_role(request.user) != "admin":
+            raise PermissionDenied(self.admin_mutation_message)
+
+    def create(self, request, *args, **kwargs):
+        self.ensure_admin_mutation(request)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self.ensure_admin_mutation(request)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self.ensure_admin_mutation(request)
+        return super().destroy(request, *args, **kwargs)
 
 
 class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiViewSet):
@@ -1439,7 +1459,8 @@ class ItineraryTranslationViewSet(DraftParentOnlyMutationMixin, ManagementApiVie
         return queryset
 
 
-class CategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
+class CategoryViewSet(AdminOnlyMutationMixin, LanguageContextMixin, ManagementApiViewSet):
+    admin_mutation_message = "Only admins can edit categories."
     serializer_class = CategorySerializer
     queryset = (
         Category.objects
@@ -1453,6 +1474,7 @@ class CategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
 
     @action(detail=True, methods=["post"], url_path="merge")
     def merge(self, request, pk=None):
+        self.ensure_admin_mutation(request)
         source = self.get_object()
         target_id = request.data.get("target")
         if not target_id:
@@ -1475,7 +1497,8 @@ class CategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
         return Response(serializer.data)
 
 
-class CategoryTranslationViewSet(ManagementApiViewSet):
+class CategoryTranslationViewSet(AdminOnlyMutationMixin, ManagementApiViewSet):
+    admin_mutation_message = "Only admins can edit categories."
     serializer_class = CategoryTranslationSerializer
     queryset = CategoryTranslation.objects.select_related("category").all()
 
@@ -1492,7 +1515,8 @@ class CategoryTranslationViewSet(ManagementApiViewSet):
         return queryset
 
 
-class FestCategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
+class FestCategoryViewSet(AdminOnlyMutationMixin, LanguageContextMixin, ManagementApiViewSet):
+    admin_mutation_message = "Only admins can edit categories."
     serializer_class = FestCategorySerializer
     queryset = (
         FestCategory.objects
@@ -1506,6 +1530,7 @@ class FestCategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
 
     @action(detail=True, methods=["post"], url_path="merge")
     def merge(self, request, pk=None):
+        self.ensure_admin_mutation(request)
         source = self.get_object()
         target_id = request.data.get("target")
         if not target_id:
@@ -1528,7 +1553,8 @@ class FestCategoryViewSet(LanguageContextMixin, ManagementApiViewSet):
         return Response(serializer.data)
 
 
-class FestCategoryTranslationViewSet(ManagementApiViewSet):
+class FestCategoryTranslationViewSet(AdminOnlyMutationMixin, ManagementApiViewSet):
+    admin_mutation_message = "Only admins can edit categories."
     serializer_class = FestCategoryTranslationSerializer
     queryset = FestCategoryTranslation.objects.select_related("category").all()
 
