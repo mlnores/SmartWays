@@ -62,6 +62,10 @@ interface FootprintPoint {
 
 declare const L: any;
 
+const DEFAULT_FEST_FOOTPRINT_RADIUS_METERS = 5000;
+const DEFAULT_FEST_FOOTPRINT_SIDES = 6;
+const EARTH_RADIUS_METERS = 6371008.8;
+
 @Component({
   selector: 'app-fest-editor',
   standalone: true,
@@ -269,18 +273,19 @@ declare const L: any;
 
                 <div class="location-picker">
                   @if (canEditContent()) {
-                    <h2>{{ isEditingFootprint ? "Edit the Fest's footprint" : 'Pick location on map' }}</h2>
+                    <h2>{{ isEditingFootprint ? 'Edit area' : 'Pick location on map' }}</h2>
                   }
                   <div class="location-map-shell" [class.editing-area]="isEditingFootprint">
                     @if (isEditingFootprint) {
                       <aside class="footprint-edit-column" aria-label="Fest area editing controls">
+                        <p class="footprint-help">Add/remove polygons to delimit the fest's area; drag points to modify their shapes; double click to add new points.</p>
                         <button type="button" class="secondary" [disabled]="!hasValidCoordinates()" (click)="addFootprintPolygon()">Add polygon</button>
                         <button type="button" class="secondary danger-action" [disabled]="selectedFootprintPolygonIndex === null" (click)="removeSelectedFootprintPolygon()">Remove polygon</button>
                         <button type="button" class="secondary" (click)="fitFootprintView()">Fit view</button>
                         <button type="button" class="secondary" [disabled]="!canUndoFootprint()" (click)="undoFootprintEdit()">Undo</button>
                         <button type="button" class="secondary" [disabled]="!canRedoFootprint()" (click)="redoFootprintEdit()">Redo</button>
                         <button type="button" class="primary" (click)="saveFootprintEditor()">Done</button>
-                        <button type="button" class="secondary danger-action" [disabled]="editFootprintPolygons.length === 0" (click)="clearFootprintEditor()">Clear</button>
+                        <button type="button" class="secondary" [disabled]="!hasValidCoordinates()" (click)="resetFootprintEditorToDefault()">Back to default</button>
                         @if (footprintPointWarning()) {
                           <p class="footprint-warning">{{ footprintPointWarning() }}</p>
                         }
@@ -1113,10 +1118,10 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     return days;
   }
 
-  async saveFest(): Promise<void> {
+  async saveFest(): Promise<boolean> {
     if (!this.canSave()) {
       this.showStatus('There are no editable changes to save.', true);
-      return;
+      return false;
     }
 
     if (this.fest?.enabled && !this.enabled) {
@@ -1125,31 +1130,32 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         const updated = await firstValueFrom(this.api.updateFest(this.fest.id, { enabled: false }));
         this.loadFest(updated);
         this.showStatus('Fest saved as draft.', false);
+        return true;
       } catch (error) {
         this.showStatus(`Could not save Fest. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+        return false;
       } finally {
         this.saving = false;
       }
-      return;
     }
 
     const translations = this.normalizedTranslations();
     if (translations.length === 0 || translations.some(translation => !translation.language_code || !translation.title)) {
       this.showStatus('Every Fest translation needs a language and title.', true);
-      return;
+      return false;
     }
     if (!Number.isFinite(this.latitude) || !Number.isFinite(this.longitude)) {
       this.showStatus('Latitude and longitude are required.', true);
-      return;
+      return false;
     }
     const media = this.normalizedMedia();
     if (this.media.some(item => item.source === 'remote' && !item.url.trim())) {
       this.showStatus('Every remote media item needs a URL.', true);
-      return;
+      return false;
     }
     if (this.media.some(item => item.source === 'local' && !item.selectedFile)) {
       this.showStatus('Every local media item needs a selected file.', true);
-      return;
+      return false;
     }
 
     this.saving = true;
@@ -1181,8 +1187,10 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         });
       }
       this.showStatus(this.enabled ? 'Fest saved as public.' : 'Fest saved as draft.', false);
+      return true;
     } catch (error) {
       this.showStatus(`Could not save Fest. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      return false;
     } finally {
       this.saving = false;
     }
@@ -1192,10 +1200,17 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.isNewFest || !this.fest || !this.fest.enabled || !this.enabled;
   }
 
-  setPublicationState(enabled: boolean): void {
-    if (this.enabled === enabled) return;
+  async setPublicationState(enabled: boolean): Promise<void> {
+    if (this.saving || this.loading || this.enabled === enabled) return;
     if (!this.confirmPublicationStateChange(enabled)) return;
+    const previousEnabled = this.enabled;
     this.enabled = enabled;
+    if (enabled) {
+      const saved = await this.saveFest();
+      if (!saved) {
+        this.enabled = previousEnabled;
+      }
+    }
   }
 
   private confirmPublicationStateChange(enabled: boolean): boolean {
@@ -1455,8 +1470,9 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.footprintLayer = L.featureGroup().addTo(this.locationMap);
 
     if (!this.isEditingFootprint) {
-      if (this.footprint) {
-        L.geoJSON(this.footprint, {
+      const footprint = this.effectiveFootprint();
+      if (footprint) {
+        L.geoJSON(footprint, {
           style: {
             color: '#0f766e',
             fillColor: '#14b8a6',
@@ -1526,13 +1542,17 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   openFootprintEditor(): void {
     if (!this.canEditContent() || !this.hasValidCoordinates() || this.isEditingFootprint) return;
     this.isEditingFootprint = true;
-    this.editFootprintPolygons = this.polygonsFromFootprint(this.footprint);
+    this.editFootprintPolygons = this.polygonsFromFootprint(this.effectiveFootprint());
     this.selectedFootprintPolygonIndex = this.editFootprintPolygons.length > 0 ? 0 : null;
     this.footprintUndoStack = [];
     this.footprintRedoStack = [];
     this.footprintDragStart = null;
     this.clearStatus();
-    this.updateLocationMap(true);
+    this.updateLocationMap(false);
+    window.requestAnimationFrame(() => {
+      this.locationMap?.invalidateSize(false);
+      this.updateLocationMap(true);
+    });
   }
 
   addFootprintPolygon(): void {
@@ -1558,16 +1578,18 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.updateLocationMap(false);
   }
 
-  clearFootprintEditor(): void {
-    if (this.editFootprintPolygons.length === 0) return;
+  resetFootprintEditorToDefault(): void {
+    if (!this.hasValidCoordinates()) return;
+    const defaultPolygons = this.defaultFestFootprintPolygons();
+    if (defaultPolygons.length === 0) return;
     this.rememberFootprintEdit();
-    this.editFootprintPolygons = [];
-    this.selectedFootprintPolygonIndex = null;
-    this.updateLocationMap(false);
+    this.editFootprintPolygons = defaultPolygons;
+    this.selectedFootprintPolygonIndex = 0;
+    this.updateLocationMap(true);
   }
 
   saveFootprintEditor(): void {
-    this.footprint = this.footprintFromPolygons(this.editFootprintPolygons);
+    this.footprint = this.footprintFromPolygons(this.editFootprintPolygons) || this.defaultFestFootprint();
     this.resetFootprintEditorState();
     this.clearStatus();
     this.updateLocationMap(true);
@@ -1677,7 +1699,7 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     const latLng = this.latLngFromDomEvent(event);
     if (!latLng) return;
     const selectedPolygon = this.editFootprintPolygons[this.selectedFootprintPolygonIndex];
-    if (!selectedPolygon || !this.pointInFootprintPolygon(latLng, selectedPolygon)) return;
+    if (!selectedPolygon) return;
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
@@ -1688,7 +1710,7 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     if (!this.isEditingFootprint || this.selectedFootprintPolygonIndex === null) return;
     if (this.isFootprintVertexEvent(event)) return;
     const selectedPolygon = this.editFootprintPolygons[this.selectedFootprintPolygonIndex];
-    if (!selectedPolygon || !this.pointInFootprintPolygon(event.latlng, selectedPolygon)) return;
+    if (!selectedPolygon) return;
     if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
     this.insertFootprintVertex(this.selectedFootprintPolygonIndex, event.latlng);
   }
@@ -1827,9 +1849,13 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   private footprintForPayload(): GeoJsonPolygonGeometry | null {
     if (this.isEditingFootprint) {
-      return this.footprintFromPolygons(this.editFootprintPolygons);
+      return this.footprintFromPolygons(this.editFootprintPolygons) || this.defaultFestFootprint();
     }
-    return this.normalizedFootprint(this.footprint);
+    return this.effectiveFootprint();
+  }
+
+  private effectiveFootprint(): GeoJsonPolygonGeometry | null {
+    return this.normalizedFootprint(this.footprint) || this.defaultFestFootprint();
   }
 
   private normalizedFootprint(value: unknown): GeoJsonPolygonGeometry | null {
@@ -1922,6 +1948,52 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         lng: this.roundCoordinate(latLng.lng)
       };
     });
+  }
+
+  private defaultFestFootprint(): GeoJsonPolygonGeometry | null {
+    return this.footprintFromPolygons(this.defaultFestFootprintPolygons());
+  }
+
+  private defaultFestFootprintPolygons(): FootprintPoint[][] {
+    if (!Number.isFinite(this.latitude) || !Number.isFinite(this.longitude)) return [];
+    return [
+      this.regularPolygonAroundCoordinate(
+        Number(this.latitude),
+        Number(this.longitude),
+        DEFAULT_FEST_FOOTPRINT_RADIUS_METERS,
+        DEFAULT_FEST_FOOTPRINT_SIDES
+      )
+    ];
+  }
+
+  private regularPolygonAroundCoordinate(
+    latitude: number,
+    longitude: number,
+    radiusMeters: number,
+    sides: number
+  ): FootprintPoint[] {
+    return Array.from({ length: sides }, (_, index) => (
+      this.destinationPoint(latitude, longitude, radiusMeters, index * (360 / sides))
+    ));
+  }
+
+  private destinationPoint(latitude: number, longitude: number, distanceMeters: number, bearingDegrees: number): FootprintPoint {
+    const angularDistance = distanceMeters / EARTH_RADIUS_METERS;
+    const bearing = bearingDegrees * Math.PI / 180;
+    const startLat = latitude * Math.PI / 180;
+    const startLng = longitude * Math.PI / 180;
+    const endLat = Math.asin(
+      Math.sin(startLat) * Math.cos(angularDistance)
+      + Math.cos(startLat) * Math.sin(angularDistance) * Math.cos(bearing)
+    );
+    const endLng = startLng + Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(startLat),
+      Math.cos(angularDistance) - Math.sin(startLat) * Math.sin(endLat)
+    );
+    return {
+      lat: this.roundCoordinate(endLat * 180 / Math.PI),
+      lng: this.roundCoordinate(((endLng * 180 / Math.PI + 540) % 360) - 180)
+    };
   }
 
   private pointInAnyFootprintPolygon(point: FootprintPoint, polygons: FootprintPoint[][]): boolean {

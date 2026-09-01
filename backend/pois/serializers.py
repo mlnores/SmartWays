@@ -1,4 +1,5 @@
 import json
+import math
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -37,6 +38,9 @@ from .models import (
 
 ADMIN_GROUP_NAME = "Admins"
 EDITOR_GROUP_NAME = "Editors"
+DEFAULT_FEST_FOOTPRINT_RADIUS_METERS = 5000
+DEFAULT_FEST_FOOTPRINT_SIDES = 6
+EARTH_RADIUS_METERS = 6371008.8
 
 
 def user_role(user):
@@ -122,6 +126,44 @@ def geometry_as_geojson(geometry):
     if not geometry:
         return None
     return json.loads(geometry.geojson)
+
+
+def destination_coordinate(latitude, longitude, distance_meters, bearing_degrees):
+    angular_distance = distance_meters / EARTH_RADIUS_METERS
+    bearing = math.radians(bearing_degrees)
+    start_lat = math.radians(latitude)
+    start_lng = math.radians(longitude)
+    end_lat = math.asin(
+        math.sin(start_lat) * math.cos(angular_distance)
+        + math.cos(start_lat) * math.sin(angular_distance) * math.cos(bearing)
+    )
+    end_lng = start_lng + math.atan2(
+        math.sin(bearing) * math.sin(angular_distance) * math.cos(start_lat),
+        math.cos(angular_distance) - math.sin(start_lat) * math.sin(end_lat),
+    )
+    longitude = (math.degrees(end_lng) + 540) % 360 - 180
+    return [round(longitude, 7), round(math.degrees(end_lat), 7)]
+
+
+def default_fest_footprint_for_location(location):
+    if not location:
+        return None
+    coordinates = [
+        destination_coordinate(
+            location.y,
+            location.x,
+            DEFAULT_FEST_FOOTPRINT_RADIUS_METERS,
+            index * (360 / DEFAULT_FEST_FOOTPRINT_SIDES),
+        )
+        for index in range(DEFAULT_FEST_FOOTPRINT_SIDES)
+    ]
+    coordinates.append(coordinates[0])
+    polygon = GEOSGeometry(json.dumps({"type": "Polygon", "coordinates": [coordinates]}), srid=4326)
+    return MultiPolygon(polygon, srid=4326)
+
+
+def effective_fest_footprint(fest):
+    return fest.footprint or default_fest_footprint_for_location(fest.location)
 
 
 def itinerary_point_coordinate(point):
@@ -1225,7 +1267,7 @@ class FestSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        data["footprint"] = geometry_as_geojson(instance.footprint)
+        data["footprint"] = geometry_as_geojson(effective_fest_footprint(instance))
         return data
 
     def get_itinerary_traversals(self, obj):
@@ -1242,7 +1284,7 @@ class FestSerializer(serializers.ModelSerializer):
     def _build_fest_itinerary_traversals(self):
         traversals = {}
         language = self.context.get("language")
-        fests = list(Fest.objects.exclude(footprint__isnull=True).only("id", "footprint"))
+        fests = list(Fest.objects.only("id", "footprint", "location"))
         if not fests:
             return traversals
 
@@ -1263,7 +1305,8 @@ class FestSerializer(serializers.ModelSerializer):
                 "stage_number": stage.stage_number if stage else None,
             }
             for fest in fests:
-                if any(fest.footprint.intersects(line_geometry) for line_geometry in line_geometries):
+                footprint = effective_fest_footprint(fest)
+                if footprint and any(footprint.intersects(line_geometry) for line_geometry in line_geometries):
                     traversals.setdefault(fest.id, []).append(traversal)
         return traversals
 
@@ -1328,6 +1371,9 @@ class FestSerializer(serializers.ModelSerializer):
         editions = validated_data.pop("editions", [])
         categories = validated_data.pop("categories", [])
         fest = Fest.objects.create(**validated_data)
+        if not fest.footprint:
+            fest.footprint = default_fest_footprint_for_location(fest.location)
+            fest.save(update_fields=["footprint"])
         fest.categories.set(categories)
 
         for translation_data in translations:
@@ -1348,6 +1394,8 @@ class FestSerializer(serializers.ModelSerializer):
 
         for field, value in validated_data.items():
             setattr(instance, field, value)
+        if not instance.footprint:
+            instance.footprint = default_fest_footprint_for_location(instance.location)
         instance.save()
 
         if categories is not None:

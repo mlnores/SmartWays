@@ -716,7 +716,7 @@ class POIAPITests(APITestCase):
         self.poi.refresh_from_db()
         self.assertFalse(self.poi.enabled)
 
-    def test_poi_turned_to_draft_cascades_to_itineraries_and_routes(self):
+    def test_poi_turned_to_draft_keeps_itineraries_and_routes_public(self):
         itinerary = Itinerary.objects.create(
             enabled=True,
             itinerary_json={
@@ -734,10 +734,10 @@ class POIAPITests(APITestCase):
         itinerary.refresh_from_db()
         route.refresh_from_db()
         self.assertFalse(self.poi.enabled)
-        self.assertFalse(itinerary.enabled)
-        self.assertFalse(route.enabled)
+        self.assertTrue(itinerary.enabled)
+        self.assertTrue(route.enabled)
 
-    def test_poi_turned_to_draft_cascades_from_itinerary_poi_ids(self):
+    def test_poi_turned_to_draft_keeps_itinerary_poi_ids_public(self):
         itinerary = Itinerary.objects.create(
             enabled=True,
             itinerary_json={
@@ -752,10 +752,12 @@ class POIAPITests(APITestCase):
         response = self.client.patch(reverse("poi-detail", args=[self.poi.id]), {"enabled": False}, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.poi.refresh_from_db()
         itinerary.refresh_from_db()
         route.refresh_from_db()
-        self.assertFalse(itinerary.enabled)
-        self.assertFalse(route.enabled)
+        self.assertFalse(self.poi.enabled)
+        self.assertTrue(itinerary.enabled)
+        self.assertTrue(route.enabled)
 
     def test_poi_list_includes_itinerary_poi_ids_in_inclusions(self):
         itinerary = Itinerary.objects.create(
@@ -1880,6 +1882,23 @@ class FestAPITests(APITestCase):
         self.assertEqual(FestDate.objects.filter(edition__fest=fest).count(), 3)
         self.assertEqual(response.data["editions"][0]["dates"], ["2027-07-24", "2027-07-25"])
 
+    def test_fest_create_without_footprint_uses_default_hexagon(self):
+        payload = {
+            "gps_latitude": 42.2406,
+            "gps_longitude": -8.7207,
+            "translations": [{"language_code": "en", "title": "Default Area Fest"}],
+        }
+
+        response = self.client.post(reverse("fest-list"), payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        fest = Fest.objects.get(id=response.data["id"])
+        self.assertEqual(fest.footprint.geom_type, "MultiPolygon")
+        self.assertEqual(response.data["footprint"]["type"], "MultiPolygon")
+        ring = response.data["footprint"]["coordinates"][0][0]
+        self.assertEqual(len(ring), 7)
+        self.assertEqual(ring[0], ring[-1])
+
     def test_fest_rejects_dates_outside_edition_year(self):
         payload = {
             "gps_latitude": 42.2406,
@@ -2016,6 +2035,41 @@ class FestAPITests(APITestCase):
         self.assertEqual(traversal["route"], route.id)
         self.assertEqual(traversal["route_title"], "Crossing Route")
         self.assertEqual(traversal["stage_number"], 2)
+
+    def test_fest_list_returns_default_footprint_and_traversals_for_missing_footprint(self):
+        fest = Fest.objects.create(
+            enabled=True,
+            location=Point(-8.7207, 42.2406, srid=4326),
+        )
+        FestTranslation.objects.create(fest=fest, language_code="en", title="Default Footprint Fest", slug="default-footprint-fest")
+        route = Route.objects.create(enabled=True)
+        RouteTranslation.objects.create(route=route, language_code="en", title="Nearby Route", slug="nearby-route", is_reference=True)
+        itinerary = Itinerary.objects.create(
+            itinerary_json={
+                "points": [],
+                "segments": [
+                    {
+                        "selectedWalkingRoute": {
+                            "geometry": {
+                                "type": "LineString",
+                                "coordinates": [[-8.80, 42.2406], [-8.65, 42.2406]],
+                            }
+                        }
+                    }
+                ],
+            }
+        )
+        itinerary.translations.create(language_code="en", title="Nearby Stage", slug="nearby-stage", is_reference=True)
+        RouteStage.objects.create(route=route, itinerary=itinerary, stage_number=1)
+
+        response = self.client.get(reverse("fest-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result = next(item for item in response.data["results"] if item["id"] == fest.id)
+        self.assertEqual(result["footprint"]["type"], "MultiPolygon")
+        self.assertEqual(len(result["footprint"]["coordinates"][0][0]), 7)
+        self.assertEqual(len(result["itinerary_traversals"]), 1)
+        self.assertEqual(result["itinerary_traversals"][0]["itinerary"], itinerary.id)
 
 
 class ManagementCommandTests(APITestCase):

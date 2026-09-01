@@ -579,32 +579,6 @@ def remove_deleted_poi_from_itineraries(poi):
         itinerary.save(update_fields=["itinerary_json", "updated_at"])
 
 
-def itinerary_ids_containing_poi(poi_id, enabled=None):
-    queryset = Itinerary.objects.all()
-    if enabled is not None:
-        queryset = queryset.filter(enabled=enabled)
-    return [
-        itinerary.id
-        for itinerary in queryset.only("id", "itinerary_json")
-        if poi_id in poi_ids_from_itinerary_json(itinerary.itinerary_json)
-    ]
-
-
-def cascade_poi_to_draft(poi):
-    itinerary_ids = itinerary_ids_containing_poi(poi.id, enabled=True)
-    if not itinerary_ids:
-        return
-
-    Itinerary.objects.filter(id__in=itinerary_ids, enabled=True).update(enabled=False)
-    route_ids = (
-        RouteStage.objects
-        .filter(itinerary_id__in=itinerary_ids, route__enabled=True)
-        .values_list("route_id", flat=True)
-        .distinct()
-    )
-    Route.objects.filter(id__in=route_ids).update(enabled=False)
-
-
 def cascade_itinerary_to_public(itinerary):
     poi_ids = poi_ids_from_itinerary_json(itinerary.itinerary_json)
     if poi_ids:
@@ -672,15 +646,6 @@ class POIViewSet(DraftOnlyMutationMixin, LanguageContextMixin, ManagementApiView
             remove_deleted_poi_from_itineraries(poi)
             self.perform_destroy(poi)
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-    def update(self, request, *args, **kwargs):
-        if is_turn_to_draft_request(request.data):
-            with transaction.atomic():
-                poi = self.get_object()
-                response = super().update(request, *args, **kwargs)
-                cascade_poi_to_draft(poi)
-                return response
-        return super().update(request, *args, **kwargs)
 
     def get_queryset(self):
         queryset = (

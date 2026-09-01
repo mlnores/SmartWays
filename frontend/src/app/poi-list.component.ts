@@ -975,11 +975,7 @@ export class PoiListComponent implements AfterViewInit, OnDestroy {
   private confirmPoiDraftChange(pois: Poi[], enabled: boolean): boolean {
     const action = enabled ? 'make public' : 'turn to draft';
     const itemLabel = pois.length === 1 ? 'POI' : 'POIs';
-    let message = `Really ${action} ${pois.length} selected ${itemLabel}?`;
-    if (!enabled) {
-      message += '\n\nItineraries containing the selected POI(s), and routes containing those itineraries, will also be turned to draft.';
-    }
-    return window.confirm(message);
+    return window.confirm(`Really ${action} ${pois.length} selected ${itemLabel}?`);
   }
 
   private confirmItineraryStateChange(itinerary: Itinerary, enabled: boolean): boolean {

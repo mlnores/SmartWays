@@ -235,11 +235,12 @@ declare const L: any;
 
                 <div class="location-picker">
                   @if (canEditContent()) {
-                    <h2>{{ isEditingFootprint ? "Edit the POI's footprint" : 'Pick location on map' }}</h2>
+                    <h2>{{ isEditingFootprint ? 'Edit area' : 'Pick location on map' }}</h2>
                   }
                   <div class="location-map-shell" [class.editing-area]="isEditingFootprint">
                     @if (isEditingFootprint) {
                       <aside class="footprint-edit-column" aria-label="POI area editing controls">
+                        <p class="footprint-help">Add/remove polygons to delimit the POI's area; drag points to modify their shapes; double click to add new points.</p>
                         <button type="button" class="secondary" [disabled]="!hasValidCoordinates()" (click)="addFootprintPolygon()">Add polygon</button>
                         <button type="button" class="secondary danger-action" [disabled]="selectedFootprintPolygonIndex === null" (click)="removeSelectedFootprintPolygon()">Remove polygon</button>
                         <button type="button" class="secondary" (click)="fitFootprintView()">Fit view</button>
@@ -861,10 +862,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  async savePoi(): Promise<void> {
+  async savePoi(): Promise<boolean> {
     if (!this.canSave()) {
       this.showStatus('There are no editable changes to save.', true);
-      return;
+      return false;
     }
 
     if (this.poi?.enabled && !this.enabled) {
@@ -874,31 +875,32 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         this.loadPoi(updated);
         this.notifyItineraryEditorPoiSaved(updated);
         this.showStatus('POI saved as draft.', false);
+        return true;
       } catch (error) {
         this.showStatus(`Could not save POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+        return false;
       } finally {
         this.saving = false;
       }
-      return;
     }
 
     const translations = this.normalizedTranslations();
     if (translations.length === 0 || translations.some(translation => !translation.language_code || !translation.title)) {
       this.showStatus('Every POI translation needs a language and title.', true);
-      return;
+      return false;
     }
     if (!Number.isFinite(this.latitude) || !Number.isFinite(this.longitude)) {
       this.showStatus('Latitude and longitude are required.', true);
-      return;
+      return false;
     }
     const media = this.normalizedMedia();
     if (this.media.some(item => item.source === 'remote' && !item.url.trim())) {
       this.showStatus('Every remote media item needs a URL.', true);
-      return;
+      return false;
     }
     if (this.media.some(item => item.source === 'local' && !item.selectedFile)) {
       this.showStatus('Every local media item needs a selected file.', true);
-      return;
+      return false;
     }
 
     this.saving = true;
@@ -930,8 +932,10 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         });
       }
       this.showStatus(this.enabled ? 'POI saved as public.' : 'POI saved as draft.', false);
+      return true;
     } catch (error) {
       this.showStatus(`Could not save POI. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      return false;
     } finally {
       this.saving = false;
     }
@@ -941,10 +945,17 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.isNewPoi || !this.poi || !this.poi.enabled || !this.enabled;
   }
 
-  setPublicationState(enabled: boolean): void {
-    if (this.enabled === enabled) return;
+  async setPublicationState(enabled: boolean): Promise<void> {
+    if (this.saving || this.loading || this.enabled === enabled) return;
     if (!this.confirmPublicationStateChange(enabled)) return;
+    const previousEnabled = this.enabled;
     this.enabled = enabled;
+    if (enabled) {
+      const saved = await this.savePoi();
+      if (!saved) {
+        this.enabled = previousEnabled;
+      }
+    }
   }
 
   private confirmPublicationStateChange(enabled: boolean): boolean {
@@ -952,9 +963,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     if (enabled) {
       return window.confirm(`Really make POI "${this.poi.title || 'Untitled POI'}" public?`);
     }
-    return window.confirm(
-      `Really turn POI "${this.poi.title || 'Untitled POI'}" to draft?\n\nItineraries containing this POI, and routes containing those itineraries, will also be turned to draft.`
-    );
+    return window.confirm(`Really turn POI "${this.poi.title || 'Untitled POI'}" to draft?`);
   }
 
   canSave(): boolean {
@@ -1302,7 +1311,11 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.footprintRedoStack = [];
     this.footprintDragStart = null;
     this.clearStatus();
-    this.updateLocationMap(true);
+    this.updateLocationMap(false);
+    window.requestAnimationFrame(() => {
+      this.locationMap?.invalidateSize(false);
+      this.updateLocationMap(true);
+    });
   }
 
   addFootprintPolygon(): void {
@@ -1447,7 +1460,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     const latLng = this.latLngFromDomEvent(event);
     if (!latLng) return;
     const selectedPolygon = this.editFootprintPolygons[this.selectedFootprintPolygonIndex];
-    if (!selectedPolygon || !this.pointInFootprintPolygon(latLng, selectedPolygon)) return;
+    if (!selectedPolygon) return;
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
@@ -1458,7 +1471,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     if (!this.isEditingFootprint || this.selectedFootprintPolygonIndex === null) return;
     if (this.isFootprintVertexEvent(event)) return;
     const selectedPolygon = this.editFootprintPolygons[this.selectedFootprintPolygonIndex];
-    if (!selectedPolygon || !this.pointInFootprintPolygon(event.latlng, selectedPolygon)) return;
+    if (!selectedPolygon) return;
     if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
     this.insertFootprintVertex(this.selectedFootprintPolygonIndex, event.latlng);
   }
