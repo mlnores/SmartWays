@@ -308,11 +308,14 @@ SMARTWAYS_MEDIA_ENDPOINT=http://minio:9000
 SMARTWAYS_MEDIA_PUBLIC_URL=http://localhost:9000/smartways-media
 SMARTWAYS_MEDIA_ACCESS_KEY=smartways
 SMARTWAYS_MEDIA_SECRET_KEY=change-this
+SMARTWAYS_MAX_UPLOAD_SIZE=67108864
 ```
 
 `SMARTWAYS_MEDIA_ENDPOINT` is the internal URL used by the backend container. `SMARTWAYS_MEDIA_PUBLIC_URL` is the URL browsers use to load uploaded media. If MinIO runs on another machine, point `SMARTWAYS_MEDIA_ENDPOINT` to that server from Docker and set `SMARTWAYS_MEDIA_PUBLIC_URL` to the public media URL.
 
 The Docker MinIO service uses `SMARTWAYS_MEDIA_ACCESS_KEY`, `SMARTWAYS_MEDIA_SECRET_KEY`, and `SMARTWAYS_MEDIA_BUCKET` to create the local object-storage bucket. Use the same access key and secret to log into the MinIO console.
+
+`SMARTWAYS_MAX_UPLOAD_SIZE` is the maximum request size for media uploads in bytes. Docker defaults it to 64 MB, and the bundled frontend Nginx proxy is configured with the same 64 MB limit.
 
 Uploaded media is stored in the Docker volume `smartways_minio_data`, so it survives container rebuilds. Remove that volume only when you intentionally want to delete uploaded files.
 

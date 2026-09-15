@@ -1,4 +1,5 @@
 import { AfterViewInit, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -65,6 +66,9 @@ declare const L: any;
 const DEFAULT_FEST_FOOTPRINT_RADIUS_METERS = 5000;
 const DEFAULT_FEST_FOOTPRINT_SIDES = 6;
 const EARTH_RADIUS_METERS = 6371008.8;
+const IMAGE_COMPRESSION_TARGET_SIZE = 7 * 1024 * 1024;
+const IMAGE_COMPRESSION_MAX_DIMENSION = 2560;
+const IMAGE_COMPRESSION_QUALITY = 0.86;
 
 @Component({
   selector: 'app-fest-editor',
@@ -87,18 +91,14 @@ const EARTH_RADIUS_METERS = 6371008.8;
           </div>
         </div>
         <div class="list-actions poi-save-actions">
+          @if (statusMessage) {
+            <p class="inline-save-status" [class.error]="statusIsError">{{ statusMessage }}</p>
+          }
           <button type="button" class="primary" [disabled]="saving || loading || isReadOnlyPublicFest() || !canSave()" (click)="saveFest()">
             {{ saving ? 'Saving...' : 'Save' }}
           </button>
-          @if (statusMessage && !statusIsError) {
-            <p class="inline-save-status">{{ statusMessage }}</p>
-          }
         </div>
       </header>
-
-      @if (statusMessage && statusIsError) {
-        <p class="status" [class.error]="statusIsError">{{ statusMessage }}</p>
-      }
 
       @if (loading) {
         <p class="status">Loading Fest...</p>
@@ -733,7 +733,7 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         this.loadFest(fest);
       }
     } catch (error) {
-      this.showStatus(`Could not load Fest #${id}. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showStatus(`Could not load Fest #${id}. ${this.requestErrorMessage(error)}`, true);
     } finally {
       this.loading = false;
       window.setTimeout(() => this.initializeLocationMap(), 0);
@@ -1003,7 +1003,7 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       this.newFestCategoryName = '';
       this.clearStatus();
     } catch (error) {
-      this.showStatus(`Could not create category. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showStatus(`Could not create category. ${this.requestErrorMessage(error)}`, true);
     }
   }
 
@@ -1132,7 +1132,7 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
         this.showStatus('Fest saved as draft.', false);
         return true;
       } catch (error) {
-        this.showStatus(`Could not save Fest. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+        this.showStatus('Could not save Fest.', true);
         return false;
       } finally {
         this.saving = false;
@@ -1189,7 +1189,7 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       this.showStatus(this.enabled ? 'Fest saved as public.' : 'Fest saved as draft.', false);
       return true;
     } catch (error) {
-      this.showStatus(`Could not save Fest. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showStatus('Could not save Fest.', true);
       return false;
     } finally {
       this.saving = false;
@@ -1372,7 +1372,7 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       this.titleNeedsRefresh = false;
       this.clearStatus();
     } catch (error) {
-      this.showStatus(`Could not get place name. ${error instanceof Error ? error.message : 'Request failed.'}`, true);
+      this.showStatus(`Could not get place name. ${this.requestErrorMessage(error)}`, true);
     } finally {
       this.geocodingTitle = false;
     }
@@ -2178,10 +2178,11 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     for (const { item, index } of pending) {
       if (!item.selectedFile) continue;
       item.uploading = true;
+      const uploadFile = await this.fileForMediaUpload(item.selectedFile);
       if (item.id) {
         await firstValueFrom(this.api.updateFestMedia(
           item.id,
-          item.selectedFile,
+          uploadFile,
           item.media_type,
           Number.isFinite(Number(item.position)) ? Number(item.position) : index,
           item.is_primary,
@@ -2190,7 +2191,7 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       } else {
         await firstValueFrom(this.api.uploadFestMedia(
           fest.id,
-          item.selectedFile,
+          uploadFile,
           item.media_type,
           Number.isFinite(Number(item.position)) ? Number(item.position) : index,
           item.is_primary,
@@ -2201,6 +2202,59 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     return firstValueFrom(this.api.getFest(fest.id));
+  }
+
+  private async fileForMediaUpload(file: File): Promise<File> {
+    if (!file.type.startsWith('image/')) {
+      return file;
+    }
+    try {
+      return await this.compressedImageFile(file);
+    } catch {
+      return file;
+    }
+  }
+
+  private async compressedImageFile(file: File): Promise<File> {
+    const bitmap = await createImageBitmap(file);
+    try {
+      let bestBlob: Blob | null = null;
+      const maxDimensions = [IMAGE_COMPRESSION_MAX_DIMENSION, 2048, 1600, 1280];
+      const qualities = [IMAGE_COMPRESSION_QUALITY, 0.78, 0.7, 0.62];
+      for (const maxDimension of maxDimensions) {
+        const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+        const width = Math.max(1, Math.round(bitmap.width * scale));
+        const height = Math.max(1, Math.round(bitmap.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) return file;
+        context.drawImage(bitmap, 0, 0, width, height);
+        for (const quality of qualities) {
+          const blob = await new Promise<Blob | null>(resolve => {
+            canvas.toBlob(resolve, 'image/jpeg', quality);
+          });
+          if (!blob) continue;
+          if (!bestBlob || blob.size < bestBlob.size) {
+            bestBlob = blob;
+          }
+          if (blob.size <= IMAGE_COMPRESSION_TARGET_SIZE) {
+            bestBlob = blob;
+            break;
+          }
+        }
+        if (bestBlob && bestBlob.size <= IMAGE_COMPRESSION_TARGET_SIZE) break;
+      }
+      if (!bestBlob || bestBlob.size >= file.size) return file;
+      const filename = file.name.replace(/\.[^.]+$/, '') || 'image';
+      return new File([bestBlob], `${filename}.jpg`, {
+        type: 'image/jpeg',
+        lastModified: file.lastModified
+      });
+    } finally {
+      bitmap.close?.();
+    }
   }
 
   private mediaTypeFromFile(file: File): FestMedia['media_type'] {
@@ -2338,5 +2392,32 @@ export class FestEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   private showStatus(message: string, isError: boolean): void {
     this.statusMessage = message;
     this.statusIsError = isError;
+  }
+
+  private requestErrorMessage(error: unknown): string {
+    if (error instanceof HttpErrorResponse) {
+      return this.errorBodyMessage(error.error) || `Service returned ${error.status}.`;
+    }
+    return error instanceof Error ? error.message : 'Request failed.';
+  }
+
+  private errorBodyMessage(errorBody: unknown): string {
+    if (!errorBody) return '';
+    if (typeof errorBody === 'string') {
+      return errorBody.trim().startsWith('<') ? '' : errorBody;
+    }
+    if (Array.isArray(errorBody)) {
+      return errorBody.map(item => this.errorBodyMessage(item)).filter(Boolean).join(' ');
+    }
+    if (typeof errorBody === 'object') {
+      return Object.entries(errorBody)
+        .map(([field, value]) => {
+          const message = this.errorBodyMessage(value);
+          return field === 'detail' ? message : `${field}: ${message}`;
+        })
+        .filter(Boolean)
+        .join(' ');
+    }
+    return String(errorBody);
   }
 }

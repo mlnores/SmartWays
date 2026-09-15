@@ -60,15 +60,22 @@
 }
 
 .poi-save-actions {
-  align-items: start;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 
 .poi-save-actions .inline-save-status {
-  flex-basis: 100%;
-  margin: -2px 0 0;
+  max-width: min(42rem, 65vw);
+  margin: 0;
   color: #166534;
-  font-size: 0.82rem;
+  font-size: 0.86rem;
+  line-height: 1.25;
   text-align: right;
+}
+
+.poi-save-actions .inline-save-status.error {
+  color: #b42318;
 }
 
 @media (max-width: 920px) {

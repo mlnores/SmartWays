@@ -2043,6 +2043,75 @@ class FestAPITests(APITestCase):
         self.assertEqual(len(ring), 7)
         self.assertEqual(ring[0], ring[-1])
 
+    def test_fest_media_accepts_uploaded_file(self):
+        fest = Fest.objects.create(enabled=False, location=Point(-8.7207, 42.2406, srid=4326))
+        FestTranslation.objects.create(
+            fest=fest,
+            language_code="en",
+            title="Media fest",
+            description="Fest with media.",
+            slug="media-fest",
+            is_reference=True,
+        )
+        upload = SimpleUploadedFile("fest.jpg", b"fest image", content_type="image/jpeg")
+
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                response = self.client.post(
+                    reverse("fest-media-list"),
+                    {
+                        "fest": fest.id,
+                        "media_type": FestMedia.MediaType.IMAGE,
+                        "file": upload,
+                        "position": 1,
+                        "is_primary": True,
+                        "translations": json.dumps([
+                            {"language_code": "en", "caption": "Fest cover"},
+                        ]),
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        media = FestMedia.objects.get(id=response.data["id"])
+        self.assertEqual(media.fest, fest)
+        self.assertEqual(media.original_filename, "fest.jpg")
+        self.assertEqual(media.content_type, "image/jpeg")
+        self.assertTrue(media.file.name)
+        self.assertEqual(media.translations.get(language_code="en").caption, "Fest cover")
+        self.assertTrue(response.data["file_url"])
+
+    def test_fest_media_upload_can_replace_existing_primary_media(self):
+        fest = Fest.objects.create(enabled=False, location=Point(-8.7207, 42.2406, srid=4326))
+        existing = FestMedia.objects.create(
+            fest=fest,
+            media_type=FestMedia.MediaType.IMAGE,
+            url="https://example.com/old.jpg",
+            is_primary=True,
+        )
+        upload = SimpleUploadedFile("new-fest.jpg", b"new fest image", content_type="image/jpeg")
+
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                response = self.client.post(
+                    reverse("fest-media-list"),
+                    {
+                        "fest": fest.id,
+                        "media_type": FestMedia.MediaType.IMAGE,
+                        "file": upload,
+                        "position": 2,
+                        "is_primary": True,
+                        "translations": "[]",
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        existing.refresh_from_db()
+        media = FestMedia.objects.get(id=response.data["id"])
+        self.assertFalse(existing.is_primary)
+        self.assertTrue(media.is_primary)
+
     def test_editor_cannot_delete_or_merge_fest_categories(self):
         source = FestCategory.objects.create(slug="source-fest-category")
         target = FestCategory.objects.create(slug="target-fest-category")

@@ -672,6 +672,13 @@ def cascade_route_to_public(route):
         POI.objects.filter(id__in=poi_ids, enabled=False).update(enabled=True)
 
 
+def clear_existing_primary_media(media_model, parent_field, parent, excluded_pk=None):
+    queryset = media_model.objects.filter(**{parent_field: parent, "is_primary": True})
+    if excluded_pk:
+        queryset = queryset.exclude(pk=excluded_pk)
+    queryset.update(is_primary=False)
+
+
 class DraftOnlyMutationMixin:
     draft_label = "item"
 
@@ -1588,14 +1595,14 @@ class POIMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        if serializer.validated_data.get("is_primary"):
+            clear_existing_primary_media(POIMedia, "poi", serializer.validated_data.get("poi"))
         media = serializer.save()
-        if media.is_primary:
-            POIMedia.objects.filter(poi=media.poi, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
     def perform_update(self, serializer):
+        if serializer.validated_data.get("is_primary"):
+            clear_existing_primary_media(POIMedia, "poi", serializer.instance.poi, serializer.instance.pk)
         media = serializer.save()
-        if media.is_primary:
-            POIMedia.objects.filter(poi=media.poi, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
 
 class FestMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
@@ -1615,14 +1622,14 @@ class FestMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        if serializer.validated_data.get("is_primary"):
+            clear_existing_primary_media(FestMedia, "fest", serializer.validated_data.get("fest"))
         media = serializer.save()
-        if media.is_primary:
-            FestMedia.objects.filter(fest=media.fest, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
     def perform_update(self, serializer):
+        if serializer.validated_data.get("is_primary"):
+            clear_existing_primary_media(FestMedia, "fest", serializer.instance.fest, serializer.instance.pk)
         media = serializer.save()
-        if media.is_primary:
-            FestMedia.objects.filter(fest=media.fest, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
 
 class RouteMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
@@ -1640,14 +1647,14 @@ class RouteMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        if serializer.validated_data.get("is_primary"):
+            clear_existing_primary_media(RouteMedia, "route", serializer.validated_data.get("route"))
         media = serializer.save()
-        if media.is_primary:
-            RouteMedia.objects.filter(route=media.route, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
     def perform_update(self, serializer):
+        if serializer.validated_data.get("is_primary"):
+            clear_existing_primary_media(RouteMedia, "route", serializer.instance.route, serializer.instance.pk)
         media = serializer.save()
-        if media.is_primary:
-            RouteMedia.objects.filter(route=media.route, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
 
 class ItineraryMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
@@ -1665,11 +1672,11 @@ class ItineraryMediaViewSet(DraftParentOnlyMutationMixin, ManagementApiViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        if serializer.validated_data.get("is_primary"):
+            clear_existing_primary_media(ItineraryMedia, "itinerary", serializer.validated_data.get("itinerary"))
         media = serializer.save()
-        if media.is_primary:
-            ItineraryMedia.objects.filter(itinerary=media.itinerary, is_primary=True).exclude(pk=media.pk).update(is_primary=False)
 
     def perform_update(self, serializer):
+        if serializer.validated_data.get("is_primary"):
+            clear_existing_primary_media(ItineraryMedia, "itinerary", serializer.instance.itinerary, serializer.instance.pk)
         media = serializer.save()
-        if media.is_primary:
-            ItineraryMedia.objects.filter(itinerary=media.itinerary, is_primary=True).exclude(pk=media.pk).update(is_primary=False)

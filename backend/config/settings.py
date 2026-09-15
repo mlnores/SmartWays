@@ -5,6 +5,17 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BASE_DIR.parent
 
+
+def env_int(name, default):
+    raw_value = os.environ.get(name)
+    if raw_value in (None, ""):
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "unsafe-dev-key-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = [
@@ -101,11 +112,16 @@ STATIC_ROOT = os.environ.get("DJANGO_STATIC_ROOT", BASE_DIR / "staticfiles")
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 MEDIA_URL = os.environ.get("DJANGO_MEDIA_URL", "/media/")
 MEDIA_ROOT = os.environ.get("DJANGO_MEDIA_ROOT", BASE_DIR / "media")
+SMARTWAYS_MAX_UPLOAD_SIZE = env_int("SMARTWAYS_MAX_UPLOAD_SIZE", 64 * 1024 * 1024)
+DATA_UPLOAD_MAX_MEMORY_SIZE = SMARTWAYS_MAX_UPLOAD_SIZE
+FILE_UPLOAD_MAX_MEMORY_SIZE = min(SMARTWAYS_MAX_UPLOAD_SIZE, 2_500_000)
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 SMARTWAYS_PUBLIC_BASE_URL = os.environ.get("SMARTWAYS_PUBLIC_BASE_URL", "").rstrip("/")
 COUNTRY_BOUNDARIES_PATH = os.environ.get("COUNTRY_BOUNDARIES_PATH", "")
 
 if os.environ.get("SMARTWAYS_MEDIA_STORAGE", "local").lower() == "s3":
+    from boto3.s3.transfer import TransferConfig
+
     AWS_STORAGE_BUCKET_NAME = os.environ.get("SMARTWAYS_MEDIA_BUCKET", "smartways-media")
     AWS_S3_ENDPOINT_URL = os.environ.get("SMARTWAYS_MEDIA_ENDPOINT", "")
     AWS_ACCESS_KEY_ID = os.environ.get("SMARTWAYS_MEDIA_ACCESS_KEY", "")
@@ -114,6 +130,7 @@ if os.environ.get("SMARTWAYS_MEDIA_STORAGE", "local").lower() == "s3":
     AWS_S3_ADDRESSING_STYLE = os.environ.get("SMARTWAYS_MEDIA_ADDRESSING_STYLE", "path")
     AWS_QUERYSTRING_AUTH = os.environ.get("SMARTWAYS_MEDIA_QUERYSTRING_AUTH", "0") == "1"
     AWS_DEFAULT_ACL = os.environ.get("SMARTWAYS_MEDIA_DEFAULT_ACL", "public-read")
+    AWS_S3_TRANSFER_CONFIG = TransferConfig(multipart_threshold=SMARTWAYS_MAX_UPLOAD_SIZE + 1)
     public_url = os.environ.get("SMARTWAYS_MEDIA_PUBLIC_URL", "").rstrip("/")
     if public_url:
         AWS_S3_CUSTOM_DOMAIN = public_url.replace("https://", "").replace("http://", "")
