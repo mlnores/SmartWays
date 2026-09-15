@@ -105,6 +105,7 @@ interface PreviewRenderOptions {
   showMarkers?: boolean;
   fitItineraryIds?: Set<number>;
   markerClickFor?: (itinerary: Itinerary) => void;
+  markerNumberFor?: (itinerary: Itinerary, index: number) => number | null;
 }
 
 interface ViewportBounds {
@@ -1781,7 +1782,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     this.previewItinerary = selected.length === 1 ? selected[0] : null;
     this.renderPreviewItineraries(selected, shouldFit, 'selected itinerary', undefined, {
       showMarkers: Boolean(this.routeSlug),
-      markerClickFor: this.routeSlug ? itinerary => this.selectItineraryFromPreviewMarker(itinerary) : undefined
+      markerClickFor: this.routeSlug ? itinerary => this.selectItineraryFromPreviewMarker(itinerary) : undefined,
+      markerNumberFor: this.routeSlug ? (itinerary, index) => this.previewMarkerNumberForRouteStage(itinerary, index) : undefined
     });
   }
 
@@ -1813,7 +1815,8 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       undefined,
       {
         showMarkers: true,
-        markerClickFor: itinerary => this.selectItineraryFromPreviewMarker(itinerary)
+        markerClickFor: itinerary => this.selectItineraryFromPreviewMarker(itinerary),
+        markerNumberFor: (itinerary, index) => this.previewMarkerNumberForRouteStage(itinerary, index)
       }
     );
   }
@@ -1836,11 +1839,14 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     let hasPointCoordinates = false;
 
     itineraries.forEach((itinerary, index) => {
+      const markerNumber = options.showMarkers
+        ? options.markerNumberFor?.(itinerary, index) ?? index + 1
+        : null;
       const result = this.drawItineraryPreview(
         itinerary,
         PREVIEW_COLORS[index % PREVIEW_COLORS.length],
         lineStyleFor?.(itinerary, index),
-        options.showMarkers ? index + 1 : null,
+        markerNumber,
         options.markerClickFor ? () => options.markerClickFor?.(itinerary) : undefined
       );
       if (result.bounds.isValid()) bounds.extend(result.bounds);
@@ -1868,6 +1874,11 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     } else {
       this.previewMessage = '';
     }
+  }
+
+  private previewMarkerNumberForRouteStage(itinerary: Itinerary, index: number): number {
+    const stageNumber = itinerary.stage_number;
+    return Number.isFinite(stageNumber) && stageNumber !== null && stageNumber > 0 ? stageNumber : index + 1;
   }
 
   private drawItineraryPreview(
