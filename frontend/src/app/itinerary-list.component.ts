@@ -16,6 +16,12 @@ interface ItineraryGroup {
   items: Itinerary[];
 }
 
+interface ItineraryDefinitionGroup {
+  key: 'defined' | 'undefined';
+  title: string;
+  items: Itinerary[];
+}
+
 interface AssignmentDraft {
   routeId: number | null;
   stageNumber: number | null;
@@ -189,8 +195,30 @@ declare const L: any;
         } @else {
           <div class="preview-layout itinerary-preview-layout">
             <div class="preview-list">
-              @if (routeSlug || viewMode === 'flat') {
-                <ng-container *ngTemplateOutlet="itineraryTable; context: { items: routeSlug ? state.items : displayedItineraries, routes: state.routes }"></ng-container>
+              @if (routeSlug) {
+                <ng-container *ngTemplateOutlet="itineraryTable; context: { items: state.items, routes: state.routes }"></ng-container>
+              } @else if (viewMode === 'flat') {
+                <div class="route-group-list">
+                  @for (group of itineraryDefinitionGroups(); track groupKey(group)) {
+                    <section class="route-group">
+                      <header class="route-group-header">
+                        <button
+                          type="button"
+                          class="route-group-toggle"
+                          [attr.aria-expanded]="!isGroupCollapsed(group)"
+                          (click)="toggleGroup(group)"
+                        >
+                          <span class="route-group-caret" aria-hidden="true">{{ isGroupCollapsed(group) ? '▶' : '▼' }}</span>
+                          <span>{{ group.title }}</span>
+                          <span class="muted">{{ group.items.length }} {{ group.items.length === 1 ? 'itinerary' : 'itineraries' }}</span>
+                        </button>
+                      </header>
+                      @if (!isGroupCollapsed(group)) {
+                        <ng-container *ngTemplateOutlet="itineraryTable; context: { items: group.items, routes: state.routes, emptyMessage: itineraryDefinitionGroupEmptyMessage(group) }"></ng-container>
+                      }
+                    </section>
+                  }
+                </div>
               } @else {
                 <div class="route-group-list">
               @for (group of groupsFor(displayedItineraries); track groupKey(group)) {
@@ -340,7 +368,7 @@ declare const L: any;
         }
       }
 
-      <ng-template #itineraryTable let-items="items" let-routes="routes">
+      <ng-template #itineraryTable let-items="items" let-routes="routes" let-emptyMessage="emptyMessage">
         <div class="table-wrap">
           <table class="resource-table">
             <thead>
@@ -427,7 +455,7 @@ declare const L: any;
                 </tr>
               } @empty {
                 <tr>
-                  <td [attr.colspan]="routeSlug ? 4 : 5">{{ !routeSlug && listUpdatesWithMapView && currentItineraries.length ? 'No itineraries visible in the current map view.' : 'No itineraries found.' }}</td>
+                  <td [attr.colspan]="routeSlug ? 4 : 5">{{ emptyMessage || (!routeSlug && listUpdatesWithMapView && currentItineraries.length ? 'No itineraries visible in the current map view.' : 'No itineraries found.') }}</td>
                 </tr>
               }
             </tbody>
@@ -2236,15 +2264,40 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     }));
   }
 
-  groupKey(group: ItineraryGroup): string {
+  itineraryDefinitionGroups(): ItineraryDefinitionGroup[] {
+    const groups: ItineraryDefinitionGroup[] = [
+      {
+        key: 'defined',
+        title: 'Defined itineraries',
+        items: this.displayedItineraries.filter(itinerary => this.isDefinedItinerary(itinerary))
+      },
+      {
+        key: 'undefined',
+        title: 'Undefined itineraries',
+        items: this.currentItineraries.filter(itinerary => !this.isDefinedItinerary(itinerary))
+      }
+    ];
+    return groups;
+  }
+
+  itineraryDefinitionGroupEmptyMessage(group: ItineraryDefinitionGroup): string {
+    if (group.key === 'undefined') return 'No undefined itineraries found.';
+    if (!this.currentItineraries.length) return 'No itineraries found.';
+    return this.currentItineraries.some(itinerary => this.isDefinedItinerary(itinerary))
+      ? 'No defined itineraries visible in the current map view.'
+      : 'No defined itineraries found.';
+  }
+
+  groupKey(group: ItineraryGroup | ItineraryDefinitionGroup): string {
+    if ('key' in group) return `definition:${group.key}`;
     return group.routeId === null ? 'unassigned' : String(group.routeId);
   }
 
-  isGroupCollapsed(group: ItineraryGroup): boolean {
+  isGroupCollapsed(group: ItineraryGroup | ItineraryDefinitionGroup): boolean {
     return this.collapsedGroupKeys.has(this.groupKey(group));
   }
 
-  toggleGroup(group: ItineraryGroup): void {
+  toggleGroup(group: ItineraryGroup | ItineraryDefinitionGroup): void {
     const key = this.groupKey(group);
     if (this.collapsedGroupKeys.has(key)) {
       this.collapsedGroupKeys.delete(key);
@@ -2259,7 +2312,11 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     return groups;
   }
 
-  private collapseNewGroupsByDefault(groups: ItineraryGroup[]): void {
+  private isDefinedItinerary(itinerary: Itinerary): boolean {
+    return this.itineraryCoordinates(itinerary).length > 0;
+  }
+
+  private collapseNewGroupsByDefault(groups: Array<ItineraryGroup | ItineraryDefinitionGroup>): void {
     groups.forEach(group => {
       const key = this.groupKey(group);
       if (this.initializedCollapsedGroupKeys.has(key)) return;

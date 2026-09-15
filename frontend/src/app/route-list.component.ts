@@ -1,4 +1,4 @@
-import { AsyncPipe } from '@angular/common';
+import { AsyncPipe, NgTemplateOutlet } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Title } from '@angular/platform-browser';
@@ -47,6 +47,12 @@ interface ItineraryJsonExport {
   segments?: SegmentExport[];
 }
 
+interface RouteDefinitionGroup {
+  key: 'defined' | 'undefined';
+  title: string;
+  routes: Route[];
+}
+
 interface ViewportBounds {
   south: number;
   west: number;
@@ -77,7 +83,7 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
 @Component({
   selector: 'app-route-list',
   standalone: true,
-  imports: [AsyncPipe, FormsModule, RouterLink, MediaManagerDialogComponent],
+  imports: [AsyncPipe, FormsModule, NgTemplateOutlet, RouterLink, MediaManagerDialogComponent],
   template: `
     <section class="page">
       <header class="page-header">
@@ -106,62 +112,26 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
         } @else {
           <div class="preview-layout route-preview-layout">
             <div class="preview-list">
-              <div class="table-wrap">
-                <table class="resource-table">
-                  <thead>
-                    <tr>
-                      <th>
-                        <button type="button" class="sortable-header" (click)="toggleRouteSort('title')">
-                          <span>Title</span>
-                          <span aria-hidden="true">{{ routeSortIndicator('title') }}</span>
-                        </button>
-                      </th>
-                      <th>
-                        <button type="button" class="sortable-header" (click)="toggleRouteSort('stages')">
-                          <span>Stages</span>
-                          <span aria-hidden="true">{{ routeSortIndicator('stages') }}</span>
-                        </button>
-                      </th>
-                      <th class="enabled-column">
-                        <button type="button" class="sortable-header" (click)="toggleRouteSort('draft')">
-                          <span>Draft?</span>
-                          <span aria-hidden="true">{{ routeSortIndicator('draft') }}</span>
-                        </button>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    @for (route of state.routes; track route.id) {
-                      <tr
-                        [attr.id]="routeRowId(route)"
-                        [class.highlight-row]="highlightedRouteId === route.id"
-                        [class.preview-selected-row]="previewRoute?.id === route.id"
-                        (click)="togglePreviewRoute(route)"
-                        (dblclick)="openRouteItineraries(route)"
+              <div class="route-group-list">
+                @for (group of routeDefinitionGroups(); track group.key) {
+                  <section class="route-group">
+                    <header class="route-group-header">
+                      <button
+                        type="button"
+                        class="route-group-toggle"
+                        [attr.aria-expanded]="!isRouteDefinitionGroupCollapsed(group)"
+                        (click)="toggleRouteDefinitionGroup(group)"
                       >
-                        <td>
-                          <strong>{{ route.title || 'Untitled route' }}</strong>
-                          <p class="description-preview">{{ route.description || 'No description' }}</p>
-                        </td>
-                        <td>
-                          <span>{{ route.itinerary_count }}</span>
-                          <span
-                            class="route-color-swatch"
-                            [style.backgroundColor]="previewColorForRoute(route)"
-                            aria-hidden="true"
-                          ></span>
-                        </td>
-                        <td class="enabled-column">
-                          {{ route.enabled ? 'No' : 'Yes' }}
-                        </td>
-                      </tr>
-                    } @empty {
-                      <tr>
-                        <td colspan="3">{{ currentRoutes.length ? 'No routes visible in the current map view.' : 'No routes found.' }}</td>
-                      </tr>
+                        <span class="route-group-caret" aria-hidden="true">{{ isRouteDefinitionGroupCollapsed(group) ? '▶' : '▼' }}</span>
+                        <span>{{ group.title }}</span>
+                        <span class="muted">{{ group.routes.length }} {{ group.routes.length === 1 ? 'route' : 'routes' }}</span>
+                      </button>
+                    </header>
+                    @if (!isRouteDefinitionGroupCollapsed(group)) {
+                      <ng-container *ngTemplateOutlet="routeTable; context: { routes: group.routes, emptyMessage: routeGroupEmptyMessage(group) }"></ng-container>
                     }
-                  </tbody>
-                </table>
+                  </section>
+                }
               </div>
             </div>
             <aside class="preview-panel" aria-label="Route map preview">
@@ -210,6 +180,66 @@ const PREVIEW_COLORS = ['#1f6feb', '#d97706', '#16a34a', '#dc2626', '#7c3aed', '
           </div>
         }
       }
+
+      <ng-template #routeTable let-routes="routes" let-emptyMessage="emptyMessage">
+        <div class="table-wrap">
+          <table class="resource-table">
+            <thead>
+              <tr>
+                <th>
+                  <button type="button" class="sortable-header" (click)="toggleRouteSort('title')">
+                    <span>Title</span>
+                    <span aria-hidden="true">{{ routeSortIndicator('title') }}</span>
+                  </button>
+                </th>
+                <th>
+                  <button type="button" class="sortable-header" (click)="toggleRouteSort('stages')">
+                    <span>Stages</span>
+                    <span aria-hidden="true">{{ routeSortIndicator('stages') }}</span>
+                  </button>
+                </th>
+                <th class="enabled-column">
+                  <button type="button" class="sortable-header" (click)="toggleRouteSort('draft')">
+                    <span>Draft?</span>
+                    <span aria-hidden="true">{{ routeSortIndicator('draft') }}</span>
+                  </button>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (route of routes; track route.id) {
+                <tr
+                  [attr.id]="routeRowId(route)"
+                  [class.highlight-row]="highlightedRouteId === route.id"
+                  [class.preview-selected-row]="previewRoute?.id === route.id"
+                  (click)="togglePreviewRoute(route)"
+                  (dblclick)="openRouteItineraries(route)"
+                >
+                  <td>
+                    <strong>{{ route.title || 'Untitled route' }}</strong>
+                    <p class="description-preview">{{ route.description || 'No description' }}</p>
+                  </td>
+                  <td>
+                    <span>{{ route.itinerary_count }}</span>
+                    <span
+                      class="route-color-swatch"
+                      [style.backgroundColor]="previewColorForRoute(route)"
+                      aria-hidden="true"
+                    ></span>
+                  </td>
+                  <td class="enabled-column">
+                    {{ route.enabled ? 'No' : 'Yes' }}
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="3">{{ emptyMessage }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </ng-template>
 
       <app-media-manager-dialog #mediaManagerDialog (saved)="refreshList()"></app-media-manager-dialog>
 
@@ -375,6 +405,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   highlightedRouteId: number | null = null;
   currentRoutes: Route[] = [];
   displayedRoutes: Route[] = [];
+  readonly collapsedRouteDefinitionGroupKeys = new Set<string>();
   routeSortKey: RouteSortKey = 'title';
   routeSortDirection: SortDirection = 'asc';
   previewRoute: Route | null = null;
@@ -385,6 +416,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
   private previewRequestId = 0;
   private previewFitRequestId = 0;
   private routePreviewBounds = new Map<number, ViewportBounds>();
+  private routePreviewDefinitionsReady = false;
 
   readonly state$ = combineLatest([
     this.query$.pipe(debounceTime(250)),
@@ -408,7 +440,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
         }
         return this.mapView$.pipe(map(() => {
           this.displayedRoutes = this.visibleRoutesForCurrentMap(routes);
-          this.scheduleHighlight(highlightedRouteId, this.displayedRoutes);
+          this.scheduleHighlight(highlightedRouteId, this.routeRowsForCurrentList());
           return {
             routes: this.displayedRoutes,
             error: ''
@@ -498,6 +530,50 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   routeRowId(route: Route): string {
     return `route-row-${route.id}`;
+  }
+
+  routeDefinitionGroups(): RouteDefinitionGroup[] {
+    return [
+      {
+        key: 'defined',
+        title: 'Defined routes',
+        routes: this.displayedRoutes
+      },
+      {
+        key: 'undefined',
+        title: 'Undefined routes',
+        routes: this.undefinedRoutes()
+      }
+    ];
+  }
+
+  isRouteDefinitionGroupCollapsed(group: RouteDefinitionGroup): boolean {
+    return this.collapsedRouteDefinitionGroupKeys.has(group.key);
+  }
+
+  toggleRouteDefinitionGroup(group: RouteDefinitionGroup): void {
+    if (this.collapsedRouteDefinitionGroupKeys.has(group.key)) {
+      this.collapsedRouteDefinitionGroupKeys.delete(group.key);
+    } else {
+      this.collapsedRouteDefinitionGroupKeys.add(group.key);
+    }
+  }
+
+  routeGroupEmptyMessage(group: RouteDefinitionGroup): string {
+    if (group.key === 'undefined') return 'No undefined routes found.';
+    if (!this.currentRoutes.length) return 'No routes found.';
+    return this.routePreviewDefinitionsReady && this.routePreviewBounds.size === 0
+      ? 'No defined routes found.'
+      : 'No defined routes visible in the current map view.';
+  }
+
+  private undefinedRoutes(): Route[] {
+    if (!this.routePreviewDefinitionsReady) return [];
+    return this.currentRoutes.filter(route => !this.routePreviewBounds.has(route.id));
+  }
+
+  private routeRowsForCurrentList(): Route[] {
+    return [...this.displayedRoutes, ...this.undefinedRoutes()];
   }
 
   async createRoute(): Promise<void> {
@@ -760,7 +836,10 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   private async renderVisibleRoutesPreview(routes: Route[]): Promise<void> {
     this.previewRoute = null;
+    this.routePreviewDefinitionsReady = false;
+    this.routePreviewBounds.clear();
     if (routes.length === 0) {
+      this.routePreviewDefinitionsReady = true;
       this.previewLayer?.clearLayers();
       this.previewMessage = 'No routes found.';
       this.fitPreviewMapToWorld();
@@ -782,6 +861,8 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       );
     } catch (error) {
       if (requestId !== this.previewRequestId) return;
+      this.routePreviewDefinitionsReady = false;
+      this.routePreviewBounds.clear();
       this.previewMessage = `Could not load route previews. ${error instanceof Error ? error.message : 'Request failed.'}`;
       this.previewLayer?.clearLayers();
     }
@@ -813,6 +894,7 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
       straightSegmentCount += result.straightSegmentCount;
       hasPointCoordinates ||= result.hasPointCoordinates;
     });
+    this.routePreviewDefinitionsReady = true;
 
     if (shouldFit) {
       this.fitPreviewMap(bounds);
@@ -909,7 +991,9 @@ export class RouteListComponent implements AfterViewInit, OnDestroy {
 
   private visibleRoutesForCurrentMap(routes: Route[]): Route[] {
     const bounds = this.currentPreviewBounds();
-    if (!bounds || this.routePreviewBounds.size === 0) return routes;
+    if (!this.routePreviewDefinitionsReady) return routes;
+    if (this.routePreviewBounds.size === 0) return [];
+    if (!bounds) return routes.filter(route => this.routePreviewBounds.has(route.id));
     return routes.filter(route => {
       const routeBounds = this.routePreviewBounds.get(route.id);
       return routeBounds ? this.boundsOverlap(routeBounds, bounds) : false;
