@@ -2176,17 +2176,36 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
   estimatedDistance(itinerary: Itinerary): string {
     const totalMeters = this.itineraryLengthMeters(itinerary);
 
-    if (totalMeters <= 0) return 'Not estimated';
+    if (totalMeters <= 0) return 'N/A';
     if (totalMeters >= 1000) return `~${(totalMeters / 1000).toFixed(1)} km`;
     return `~${Math.round(totalMeters)} m`;
   }
 
   private itineraryLengthMeters(itinerary: Itinerary): number {
-    const segments = this.itineraryJson(itinerary).segments || [];
-    return segments.reduce((total, segment) => {
-      const distance = segment.selectedWalkingRoute?.distanceMeters;
-      return Number.isFinite(distance) ? total + Number(distance) : total;
-    }, 0);
+    const json = this.itineraryJson(itinerary);
+    const segments = json.segments || [];
+    const pointCoordinates = (json.points || []).map(point => {
+      const lat = point.coordinates?.lat ?? point.lat;
+      const lng = point.coordinates?.lng ?? point.lng;
+      return Number.isFinite(lat) && Number.isFinite(lng)
+        ? { lat: Number(lat), lng: Number(lng) }
+        : null;
+    });
+    const segmentCount = Math.max(segments.length, Math.max(0, pointCoordinates.length - 1));
+    let totalMeters = 0;
+    for (let index = 0; index < segmentCount; index += 1) {
+      const distance = segments[index]?.selectedWalkingRoute?.distanceMeters;
+      if (Number.isFinite(distance) && Number(distance) > 0) {
+        totalMeters += Number(distance);
+        continue;
+      }
+      const start = pointCoordinates[index];
+      const end = pointCoordinates[index + 1];
+      if (start && end) {
+        totalMeters += this.coordinateDistance(start, end);
+      }
+    }
+    return totalMeters;
   }
 
   routeMembershipsFor(itinerary: Itinerary): ItineraryRouteMembership[] {
