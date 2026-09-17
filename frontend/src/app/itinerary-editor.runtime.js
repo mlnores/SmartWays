@@ -466,7 +466,6 @@
           try {
             const data = await editorApi.searchPois({
               query,
-              language: "en",
               bbox: searchBbox
             });
             if (requestId !== searchRequestId) return;

@@ -502,6 +502,28 @@ class POIAPITests(APITestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["id"], self.poi.id)
 
+    def test_poi_search_without_language_finds_reference_translation_in_any_language(self):
+        poi = POI.objects.create(
+            enabled=False,
+            location=Point(-8.7100, 42.2500, srid=4326),
+        )
+        POITranslation.objects.create(
+            poi=poi,
+            language_code="es",
+            title="Ermita recien anadida",
+            description="",
+            slug="ermita-recien-anadida",
+            is_reference=True,
+        )
+
+        response = self.client.get(reverse("poi-list"), {"q": "Ermita recien"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], poi.id)
+        self.assertEqual(response.data["results"][0]["title"], "Ermita recien anadida")
+        self.assertFalse(response.data["results"][0]["enabled"])
+
     def test_buffer_poi_lookup_returns_pois_inside_buffer(self):
         disabled_poi = POI.objects.create(
             enabled=False,

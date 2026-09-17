@@ -45,9 +45,11 @@ export class EditorApiService {
   }
 
   async searchPois(request: EditorPoiSearchRequest): Promise<{ results?: unknown[] }> {
-    let params = new HttpParams()
-      .set('q', request.query)
-      .set('language', request.language || 'en');
+    let params = new HttpParams().set('q', request.query);
+
+    if (request.language) {
+      params = params.set('language', request.language);
+    }
 
     if (request.enabled !== undefined) {
       params = params.set('enabled', String(request.enabled));
