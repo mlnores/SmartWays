@@ -235,7 +235,19 @@ declare const L: any;
 
                 <div class="location-picker">
                   @if (canEditContent()) {
-                    <h2>{{ isEditingFootprint ? 'Edit area' : 'Pick location on map' }}</h2>
+                    <div class="location-picker-heading">
+                      <h2>{{ isEditingFootprint ? 'Edit area' : 'Pick location on map' }}</h2>
+                      @if (!isEditingFootprint) {
+                        <button
+                          type="button"
+                          class="secondary center-map-button"
+                          [disabled]="!hasValidCoordinates()"
+                          (click)="centerLocationMap()"
+                        >
+                          Center view
+                        </button>
+                      }
+                    </div>
                   }
                   <div class="location-map-shell" [class.editing-area]="isEditingFootprint">
                     @if (isEditingFootprint) {
@@ -1099,6 +1111,7 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
   coordinatesChanged(): void {
     if (!this.canEditContent()) return;
     this.updateLocationMap(false);
+    this.centerLocationMap();
     void this.updateCountryFromCoordinates();
     if (!this.referenceTranslation()?.title.trim()) {
       void this.refreshTitleFromGeocoder();
@@ -1113,6 +1126,14 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   hasValidCoordinates(): boolean {
     return Number.isFinite(this.latitude) && Number.isFinite(this.longitude);
+  }
+
+  centerLocationMap(): void {
+    if (!this.locationMap || !this.hasValidCoordinates()) return;
+    this.locationMap.panTo(
+      [Number(this.latitude), Number(this.longitude)],
+      { animate: false }
+    );
   }
 
   async refreshTitleFromGeocoder(): Promise<void> {

@@ -431,6 +431,26 @@
   gap: 12px;
 }
 
+.location-picker-heading {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.location-picker-heading h2 {
+  margin: 0;
+  color: #111827;
+  font-size: 1rem;
+}
+
+.center-map-button {
+  min-height: 32px;
+  padding: 5px 10px;
+  border-radius: 7px;
+}
+
 .location-map-shell {
   min-height: 0;
   display: grid;
@@ -488,7 +508,6 @@
   gap: 8px;
 }
 
-.location-picker > h2,
 .basic-media-preview h2 {
   margin: 0;
   color: #111827;
