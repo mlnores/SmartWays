@@ -37,6 +37,15 @@ PY
 fi
 
 python manage.py migrate --noinput
+
+if [ "${AUTO_IMPORT_COUNTRY_BOUNDARIES:-1}" = "1" ]; then
+  if [ -f "${COUNTRY_BOUNDARIES_PATH:-}" ]; then
+    python manage.py import_country_boundaries "${COUNTRY_BOUNDARIES_PATH}" --if-empty
+  else
+    echo "Country boundaries not found at ${COUNTRY_BOUNDARIES_PATH:-<not configured>}; live country lookup will be unavailable." >&2
+  fi
+fi
+
 python manage.py collectstatic --noinput
 
 exec "$@"

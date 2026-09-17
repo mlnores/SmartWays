@@ -277,6 +277,19 @@ COUNTRY_BOUNDARIES_PATH=/data/geoboundaries_adm0.geojson
 
 If you deploy with a different mount path, update `COUNTRY_BOUNDARIES_PATH` accordingly.
 
+On Docker startup, the backend imports the full-resolution boundary polygons into PostGIS when the
+`pois_countryboundary` table is empty. Country lookup and map-bound calculations then use indexed
+spatial database queries; web workers never load the 383 MB GeoJSON file. To rerun the import after
+replacing the source file:
+
+```bash
+docker compose run --rm backend python manage.py import_country_boundaries \
+  /data/geoboundaries_adm0.geojson
+docker compose restart backend
+```
+
+Set `AUTO_IMPORT_COUNTRY_BOUNDARIES=0` only when boundary loading is managed separately.
+
 ### Build And Start
 
 ```bash

@@ -1,12 +1,10 @@
 import json
 import math
-from functools import lru_cache
-from pathlib import Path
 
-from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.contrib.gis.db.models import Extent
 from django.contrib.gis.geos import GEOSGeometry, Point, Polygon
 from django.db import transaction
 from django.http import JsonResponse
@@ -21,10 +19,10 @@ from rest_framework.exceptions import ParseError, PermissionDenied, ValidationEr
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
-from .country_codes import alpha3_to_alpha2
 from .models import (
     Category,
     CategoryTranslation,
+    CountryBoundary,
     Fest,
     FestCategory,
     FestCategoryTranslation,
@@ -65,20 +63,7 @@ from .serializers import (
     user_role,
 )
 
-DEFAULT_COUNTRY_BOUNDARIES_PATH = Path(__file__).resolve().parent / "data" / "geoboundaries_adm0.geojson"
 POI_LOCATION_ROUTE_INVALIDATION_METERS = 5
-COUNTRY_CODE_PROPERTY_NAMES = (
-    "ISO_A2",
-    "iso_a2",
-    "country_code",
-    "COUNTRY_CODE",
-    "code",
-    "shapeISO",
-    "shapeGroup",
-    "ISO_A3",
-    "iso_a3",
-    "ADM0_A3",
-)
 COUNTRY_BOUNDS_OVERRIDES = {
     # Keep map previews focused on the regions users expect here, not overseas territories.
     "AU": [[-43.75, 112.90], [-10.00, 153.70]],
@@ -192,86 +177,22 @@ class UserViewSet(ManagementApiViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-def country_code_from_boundary_properties(properties):
-    for property_name in COUNTRY_CODE_PROPERTY_NAMES:
-        value = (properties.get(property_name) or "").strip().upper()
-        if len(value) == 2 and value.isalpha():
-            return value
-        if len(value) == 3:
-            code = alpha3_to_alpha2(value)
-            if code:
-                return code
-    return ""
-
-
-@lru_cache(maxsize=1)
-def country_bounds_by_code():
-    country_boundaries_path = configured_country_boundaries_path()
-    if not country_boundaries_path.exists():
-        return {}
-
-    with country_boundaries_path.open(encoding="utf-8") as geojson_file:
-        payload = json.load(geojson_file)
-
-    raw_features = payload.get("features") if payload.get("type") == "FeatureCollection" else [payload]
-    bounds = {}
-    for feature in raw_features or []:
-        properties = feature.get("properties") or {}
-        geometry = feature.get("geometry")
-        country_code = country_code_from_boundary_properties(properties)
-        if not country_code or not geometry:
-            continue
-
-        boundary = GEOSGeometry(json.dumps(geometry), srid=4326)
-        if boundary.empty:
-            continue
-
-        min_lon, min_lat, max_lon, max_lat = boundary.extent
-        bounds[country_code] = [[min_lat, min_lon], [max_lat, max_lon]]
-    bounds.update(FULL_COUNTRY_BOUNDS_OVERRIDES)
-    return bounds
-
-
-@lru_cache(maxsize=1)
-def country_boundaries_by_code():
-    country_boundaries_path = configured_country_boundaries_path()
-    if not country_boundaries_path.exists():
-        return {}
-
-    with country_boundaries_path.open(encoding="utf-8") as geojson_file:
-        payload = json.load(geojson_file)
-
-    raw_features = payload.get("features") if payload.get("type") == "FeatureCollection" else [payload]
-    boundaries = {}
-    for feature in raw_features or []:
-        properties = feature.get("properties") or {}
-        geometry = feature.get("geometry")
-        country_code = country_code_from_boundary_properties(properties)
-        if not country_code or not geometry:
-            continue
-
-        boundary = GEOSGeometry(json.dumps(geometry), srid=4326)
-        if boundary.empty:
-            continue
-        boundaries.setdefault(country_code, []).append((boundary.extent, boundary))
-    return boundaries
-
-
-def configured_country_boundaries_path():
-    configured_path = getattr(settings, "COUNTRY_BOUNDARIES_PATH", "")
-    return Path(configured_path) if configured_path else DEFAULT_COUNTRY_BOUNDARIES_PATH
+def country_bounds_for_code(country_code):
+    extent = CountryBoundary.objects.filter(country_code=country_code).aggregate(extent=Extent("geometry"))["extent"]
+    if not extent:
+        return FULL_COUNTRY_BOUNDS_OVERRIDES.get(country_code)
+    min_lon, min_lat, max_lon, max_lat = extent
+    return [[min_lat, min_lon], [max_lat, max_lon]]
 
 
 def country_code_for_point(latitude, longitude):
     point = Point(longitude, latitude, srid=4326)
-    for country_code, boundaries in country_boundaries_by_code().items():
-        for extent, boundary in boundaries:
-            min_lon, min_lat, max_lon, max_lat = extent
-            if not (min_lon <= longitude <= max_lon and min_lat <= latitude <= max_lat):
-                continue
-            if boundary.covers(point):
-                return country_code
-    return ""
+    return (
+        CountryBoundary.objects.filter(geometry__covers=point)
+        .values_list("country_code", flat=True)
+        .first()
+        or ""
+    )
 
 
 def point_inside_bounds(latitude, longitude, bounds):
@@ -280,10 +201,10 @@ def point_inside_bounds(latitude, longitude, bounds):
 
 
 def focused_or_full_country_bounds(country_code, latitude=None, longitude=None):
-    full_bounds = country_bounds_by_code().get(country_code)
+    full_bounds = country_bounds_for_code(country_code)
     focused_bounds = COUNTRY_BOUNDS_OVERRIDES.get(country_code)
     if not full_bounds:
-        return None
+        return focused_bounds
     if not focused_bounds:
         return full_bounds
     if latitude is not None and longitude is not None and not point_inside_bounds(latitude, longitude, focused_bounds):

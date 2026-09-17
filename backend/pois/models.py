@@ -19,6 +19,22 @@ country_code_validator = RegexValidator(
 )
 
 
+class CountryBoundary(models.Model):
+    country_code = models.CharField(max_length=2, validators=[country_code_validator])
+    name = models.CharField(max_length=255, blank=True)
+    geometry = models.PolygonField(srid=4326)
+
+    class Meta:
+        ordering = ["country_code", "id"]
+        indexes = [
+            models.Index(fields=["country_code"], name="pois_country_code_idx"),
+        ]
+        verbose_name_plural = "country boundaries"
+
+    def __str__(self):
+        return self.name or self.country_code
+
+
 class POI(models.Model):
     enabled = models.BooleanField(default=True)
     country_code = models.CharField(max_length=2, blank=True, validators=[country_code_validator])

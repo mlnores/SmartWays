@@ -27,6 +27,7 @@ from .management.commands.rurallure_import_romea_strata_official_with_pois impor
 from .models import (
     Category,
     CategoryTranslation,
+    CountryBoundary,
     Fest,
     FestCategory,
     FestCategoryTranslation,
@@ -171,6 +172,39 @@ class AuthAPITests(APITestCase):
         self.assertTrue(user.check_password("secret-password"))
 
 
+class CountryBoundaryImportTests(APITestCase):
+    def test_imports_polygon_components_and_replaces_existing_rows(self):
+        CountryBoundary.objects.create(
+            country_code="ZZ",
+            geometry=Polygon(((0, 0), (1, 0), (1, 1), (0, 1), (0, 0)), srid=4326),
+        )
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {"shapeGroup": "ESP", "shapeName": "Spain"},
+                    "geometry": {
+                        "type": "MultiPolygon",
+                        "coordinates": [
+                            [[[-10, 35], [5, 35], [5, 44], [-10, 44], [-10, 35]]],
+                            [[[-18, 27], [-13, 27], [-13, 30], [-18, 30], [-18, 27]]],
+                        ],
+                    },
+                }
+            ],
+        }
+        with NamedTemporaryFile(mode="w", suffix=".geojson") as source:
+            json.dump(payload, source)
+            source.flush()
+            call_command("import_country_boundaries", source.name)
+
+        boundaries = CountryBoundary.objects.order_by("id")
+        self.assertEqual(boundaries.count(), 2)
+        self.assertEqual(set(boundaries.values_list("country_code", flat=True)), {"ES"})
+        self.assertEqual(set(boundaries.values_list("name", flat=True)), {"Spain"})
+
+
 class POIAPITests(APITestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -179,6 +213,11 @@ class POIAPITests(APITestCase):
             password="secret-password",
         )
         self.client.login(username="editor", password="secret-password")
+        CountryBoundary.objects.create(
+            country_code="ES",
+            name="Spain",
+            geometry=Polygon(((-10, 35), (5, 35), (5, 44), (-10, 44), (-10, 35)), srid=4326),
+        )
         self.category = Category.objects.create(slug="heritage")
         CategoryTranslation.objects.create(
             category=self.category,
