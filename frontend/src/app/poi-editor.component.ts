@@ -455,7 +455,7 @@ declare const L: any;
                     <div class="media-fields">
                       <label>
                         <span>Type</span>
-                        <select [(ngModel)]="item.media_type" [name]="'mediaType' + $index" [disabled]="!canEditContent()">
+                        <select [(ngModel)]="item.media_type" (ngModelChange)="mediaTypeChanged($index)" [name]="'mediaType' + $index" [disabled]="!canEditContent()">
                           @for (type of mediaTypes; track type) {
                             <option [value]="type">{{ mediaTypeLabel(type) }}</option>
                           }
@@ -471,10 +471,12 @@ declare const L: any;
                       </label>
                       <fieldset class="metadata-full-row media-source-fieldset">
                         <legend>Media source</legend>
-                        <div class="view-toggle media-source-toggle" aria-label="Media source">
-                          <button type="button" [class.active]="item.source === 'local'" [disabled]="!canEditContent()" (click)="setMediaSource($index, 'local')">Local file</button>
-                          <button type="button" [class.active]="item.source === 'remote'" [disabled]="!canEditContent()" (click)="setMediaSource($index, 'remote')">Remote URL</button>
-                        </div>
+                        @if (item.media_type !== 'link') {
+                          <div class="view-toggle media-source-toggle" aria-label="Media source">
+                            <button type="button" [class.active]="item.source === 'local'" [disabled]="!canEditContent()" (click)="setMediaSource($index, 'local')">Local file</button>
+                            <button type="button" [class.active]="item.source === 'remote'" [disabled]="!canEditContent()" (click)="setMediaSource($index, 'remote')">Remote URL</button>
+                          </div>
+                        }
                         @if (item.source === 'remote') {
                           <label>
                             <span>URL</span>
@@ -713,6 +715,12 @@ export class PoiEditorComponent implements OnInit, AfterViewInit, OnDestroy {
       this.revokeMediaPreviewUrl(this.media[index]);
       this.media[index].selectedFile = undefined;
       this.media[index].selectedPreviewUrl = undefined;
+    }
+  }
+
+  mediaTypeChanged(index: number): void {
+    if (this.media[index]?.media_type === 'link') {
+      this.setMediaSource(index, 'remote');
     }
   }
 

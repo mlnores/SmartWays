@@ -626,7 +626,7 @@ declare const L: any;
             <label>
               <span>Language</span>
               <select [(ngModel)]="newItinerary.language_code" name="newItineraryLanguage" required>
-                @for (language of languageOptions; track language.code) {
+                @for (language of newItineraryLanguageOptions(); track language.code) {
                   <option [value]="language.code">{{ language.label }}</option>
                 }
               </select>
@@ -1143,6 +1143,7 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
       this.showStatus('New stages can only be added to draft routes.', true);
       return;
     }
+    this.newItinerary.language_code = this.currentRouteReferenceLanguageCode();
     this.newItinerary.routeId = this.currentRouteId;
     this.newItinerary.stageNumber = null;
     this.newItineraryDialog?.nativeElement.showModal();
@@ -1197,7 +1198,13 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
           is_reference: true
         }]
       }));
-      this.newItinerary = { language_code: 'en', title: '', description: '', routeId: null, stageNumber: null };
+      this.newItinerary = {
+        language_code: this.defaultNewItineraryLanguageCode(),
+        title: '',
+        description: '',
+        routeId: null,
+        stageNumber: null
+      };
       this.closeNewItineraryDialog();
       this.showStatus(`Created itinerary "${itinerary.title || title}".`, false);
       this.pendingHighlightItineraryId = itinerary.id;
@@ -2323,6 +2330,17 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
     return groups;
   }
 
+  newItineraryLanguageOptions(): Array<{ code: string; label: string }> {
+    const code = this.newItinerary.language_code.trim();
+    if (!code || this.languageOptions.some(language => language.code === code)) {
+      return this.languageOptions;
+    }
+    return [
+      ...this.languageOptions,
+      { code, label: code }
+    ];
+  }
+
   private isDefinedItinerary(itinerary: Itinerary): boolean {
     return this.itineraryCoordinates(itinerary).length > 0;
   }
@@ -2355,6 +2373,16 @@ export class ItineraryListComponent implements AfterViewInit, OnDestroy {
 
   private routeForId(routeId: number): Route | undefined {
     return this.availableRoutes.find(candidate => candidate.id === routeId);
+  }
+
+  private currentRouteReferenceLanguageCode(): string {
+    const referenceTranslation = this.currentRoute?.translations.find(translation => translation.is_reference)
+      || this.currentRoute?.translations[0];
+    return referenceTranslation?.language_code?.trim() || 'en';
+  }
+
+  private defaultNewItineraryLanguageCode(): string {
+    return this.routeSlug ? this.currentRouteReferenceLanguageCode() : 'en';
   }
 
   private currentRouteCanBeEdited(): boolean {
