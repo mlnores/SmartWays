@@ -24,6 +24,7 @@ routes_data/wp6_routes
 routes_data/wp7_routes
 .DS_Store
 geoboundaries_adm0.geojson
+demo/
 demo/Diapositiva1.png
 demo/Diapositiva2.png
 demo/Diapositiva3.png
