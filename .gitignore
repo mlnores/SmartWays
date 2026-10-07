@@ -10,12 +10,18 @@ docker-data/
 POI_data.zip
 routes_data.zip
 .env
-POI_data/dataset_metadata.jsonld
+# POI_data/dataset_metadata.jsonld
 POI_data/dump-rurallure_db.sql
 POI_data/ECHOES_D7.1.pdf
 POI_data/poi.jsonld
 backend/pois/data/geoboundaries_adm0.geojson
-routes_data/
+routes_data/romea_strata_official
+routes_data/romea_strata_official.zip
+routes_data/via_francigena_official
+routes_data/wp4_routes
+routes_data/wp5_routes
+routes_data/wp6_routes
+routes_data/wp7_routes
 .DS_Store
 geoboundaries_adm0.geojson
 demo/Diapositiva1.png
@@ -36,3 +42,5 @@ demo/Diapositiva15.png
 demo/Diapositiva16.png
 demo/Diapositiva17.png
 demo.pptx
+POI_data/dump-rurallure_db.sql
+POI_data/poi.jsonld

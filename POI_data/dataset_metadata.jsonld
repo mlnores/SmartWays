@@ -1,0 +1,58 @@
+{
+  "@context": {
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "dcterms": "http://purl.org/dc/terms/",
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "vcard": "http://www.w3.org/2006/vcard/ns#",
+    "id": "@id", "type": "@type"
+  },
+  "id": "https://rurallure.eu/dataset/poi",
+  "type": "dcat:Dataset",
+
+  "dcterms:title": "RurAllure Points of Interest",
+  "dcterms:description": "Cultural and natural points of interest in the vicinity of European pilgrimage routes, collected by the rurAllure project (H2020 GA no 101004887). Multilingual (EN/DE/ES/IT/FR and others). Contributed to ECHOES via the SMARTWAYS cascading-grant project.",
+
+  "dcterms:identifier": "https://rurallure.eu/dataset/poi",
+  "dcterms:hasVersion": "2025-03-17",
+  "dcterms:modified": "2025-03-17T10:49:00Z",
+
+  "dcterms:license": "https://creativecommons.org/licenses/by/4.0/",
+  "dcterms:rights": "https://creativecommons.org/licenses/by/4.0/",
+
+  "dcterms:source": "https://doi.org/10.5281/zenodo.7611876",
+
+  "dcterms:creator": [
+    {
+      "type": "foaf:Person",
+      "foaf:name": "Martín López Nores",
+      "@id": "https://orcid.org/0000-0002-4802-607X",
+      "foaf:member": { "type": "foaf:Organization", "foaf:name": "Universidade de Vigo" }
+    },
+    {
+      "type": "foaf:Person",
+      "foaf:name": "Ákos Lencsés",
+      "@id": "https://orcid.org/0000-0003-4461-1105"
+    },
+    {
+      "type": "foaf:Person",
+      "foaf:name": "Alberto Gil Solla",
+      "@id": "https://orcid.org/0000-0002-9641-4149",
+      "foaf:member": { "type": "foaf:Organization", "foaf:name": "Universidade de Vigo" }
+    }
+  ],
+
+  "dcterms:publisher": { "type": "foaf:Organization", "foaf:name": "Universidade de Vigo / rurAllure" },
+
+  "dcat:contactPoint": {
+    "type": "vcard:Individual",
+    "vcard:fn": "Martín López Nores",
+    "vcard:hasEmail": "mailto:mlnores@det.uvigo.es"
+  },
+
+  "dcat:distribution": {
+    "type": "dcat:Distribution",
+    "dcterms:title": "POI dataset as JSON-LD dump",
+    "dcat:mediaType": "application/ld+json",
+    "dcat:downloadURL": "https://rurallure.eu/dataset/poi/poi.jsonld"
+  }
+}
